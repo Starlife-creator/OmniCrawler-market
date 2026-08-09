@@ -37,7 +37,7 @@
 | `signature_algorithm` | string | ✓ | 当前固定 `ed25519` |
 | `permissions` | array[string] | ✓ | 插件声明的权限列表（空数组表示无） |
 | `compatible_core` | string | ✓ | 兼容的核心版本约束，如 `>=2.7.0` |
-| `license` | string | | 许可协议（如 `MIT`） |
+| `license` | string | | 许可协议（如 `MIT`）。**缺省回退 `OmniCrawler-MIT`**（与模板一致，避免"未知许可"）；显式声明则原样透传 |
 | `tags` | array[string] | | 标签，便于检索 |
 | `updated_at` | string (date) | | 最近更新日期 |
 | `homepage` | string (URL) | | 插件主页（可选） |

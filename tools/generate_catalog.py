@@ -151,6 +151,8 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"清单包含未知字段 {sorted(unknown)}: {source}")
     entry = {key: manifest[key] for key in _ENTRY_KEYS if key in manifest}
+    # 许可证缺省回退：与模板分支一致，未声明时落为默认条款，避免"未知许可"
+    entry.setdefault("license", "OmniCrawler-MIT")
     if not re.match(_ID_RE_PREFIX, str(entry["id"])):
         raise ValueError(f"非法插件 ID（须匹配 {_ID_RE_PREFIX}）: {entry['id']}")
     return entry
