@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# 本工具代码以 MIT License 授权（见 tools/LICENSE）。
 """从 ``registry/plugins/*/plugin.yaml`` 聚合生成 ``catalog.json``（git-as-registry）。
 
 目录结构即索引：每个插件一个 YAML 清单（唯一元数据源），``catalog.json`` 是

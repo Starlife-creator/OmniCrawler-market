@@ -37,6 +37,17 @@ git clone https://github.com/<owner>/OmniCrawler-market
 只 clone 主仓库时应用完全可用（无市场目录即视为未配置市场）；使用插件市场需同时
 clone 两个仓库到同一父目录。
 
+## 许可证（双层结构）
+
+| 范围 | 许可 | 说明 |
+|---|---|---|
+| 仓库根元数据与内容 | **CC0 1.0**（`LICENSE`） | plugin.yaml 清单、authors/ 作者记录、catalog.json、文档、公钥、CI 配置——公共领域，自由复制/修改/分发/镜像 |
+| `tools/` 工具代码 | **MIT**（`tools/LICENSE`） | generate_catalog.py、scan_plugin.py，文件头含 SPDX 声明 |
+| `plugins/*/` 插件代码 | 各插件自声明 | 以各插件 `plugin.yaml` 的 `license` 字段为准（如 example_news 为 MIT） |
+
+选择依据：元数据是**生态公共资产**（镜像、离线、审查零摩擦），故 CC0；工具代码
+保留署名与免责声明，故 MIT；插件代码归各作者自行决定。
+
 ## 目录结构
 
 ```
@@ -44,7 +55,7 @@ OmniCrawler-market/
 ├── catalog.json                 # 【派生物】索引：由生成器从 plugin.yaml 聚合（勿手改）
 ├── CATALOG_SCHEMA.md            # catalog.json + plugin.yaml 字段说明
 ├── README.md                    # 本文件
-├── LICENSE                      # CC0 1.0（生态元数据公共领域）
+├── LICENSE                      # CC0 1.0（生态元数据公共领域；tools/ 例外见下）
 ├── CONTRIBUTING.md              # 贡献指南（插件提交流程 + DCO）
 ├── CODE_OF_CONDUCT.md           # Contributor Covenant 2.1
 ├── SECURITY.md                  # 信任模型、私钥红线、漏洞报告
@@ -55,6 +66,7 @@ OmniCrawler-market/
 ├── keys/
 │   └── plugin_trust.pub.pem     # 信任根公钥副本（与主仓库 configs/ 同内容，公钥公开）
 ├── tools/
+│   ├── LICENSE                  # MIT（本目录工具代码的单独许可）
 │   ├── generate_catalog.py      # 【自包含】生成/校验工具（仅依赖 PyYAML + cryptography）
 │   └── scan_plugin.py           # 【自包含】发布前安全扫描（纯标准库）
 ├── authors/                     # 发布者公钥指纹记录（信任身份目录）

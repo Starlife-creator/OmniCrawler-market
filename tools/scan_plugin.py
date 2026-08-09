@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# 本工具代码以 MIT License 授权（见 tools/LICENSE）。
 """发布前安全扫描（git-as-registry 生态工具，随 registry/ 自包含）。
 
 用法：
