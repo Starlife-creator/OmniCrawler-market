@@ -1,0 +1,42 @@
+# Git 忽略策略（插件生态目录）
+
+# --- 敏感文件（绝不进仓库）---
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+id_rsa
+id_rsa.pub
+.env
+.env.*
+!.env.example
+credentials.json
+secrets.yaml
+key_store.yaml
+*.secret
+
+# --- Python 缓存与构建产物 ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+*.whl
+
+# --- 签名与打包临时产物 ---
+*.hpkg
+plugins_installed/
+
+# --- IDE / 操作系统 ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 说明：私钥/凭据文件用 glob 模式拦截，无论命名如何变化都不会入库。
+# keys/plugin_trust.pub.pem（公钥）通过下面的反向规则保留：
+!keys/
+!keys/plugin_trust.pub.pem

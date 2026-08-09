@@ -1,0 +1,45 @@
+name: validate
+
+# 独立仓库 CI（拆库后生效）：把本文件复制到独立仓库根 .github/workflows/ 即用。
+# 校验插件清单合法、与 catalog.json 一致、作者指纹匹配、签名有效。
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    paths:
+      - "plugins/**"
+      - "authors/**"
+      - "keys/**"
+      - "tools/**"
+      - "catalog.json"
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "authors/**"
+      - "keys/**"
+      - "tools/**"
+      - "catalog.json"
+
+jobs:
+  validate-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install PyYAML cryptography
+      - name: Catalog 一致性 + 签名校验
+        run: python tools/generate_catalog.py --check
+      - name: 发布前安全扫描（全部插件）
+        run: |
+          for plugin_dir in plugins/*/; do
+            if [ -f "$plugin_dir/plugin.py" ]; then
+              python tools/scan_plugin.py scan "$plugin_dir" || exit 1
+            fi
+          done

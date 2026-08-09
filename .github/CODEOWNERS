@@ -1,0 +1,7 @@
+# 插件生态 CODEOWNERS（拆库独立后生效）
+# 路径相对新仓库根。默认由维护者负责全部审核。
+
+/plugins/                @starlife
+/authors/                @starlife
+/tools/                  @starlife
+*                        @starlife
