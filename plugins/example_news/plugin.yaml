@@ -13,7 +13,7 @@ id: example_news
 name: 示例新闻站点适配器
 version: 1.0.0
 publisher: Starlife-creator
-author_fingerprint: 56248399d92b840247a03888f7de25b3
+author_fingerprint: d92fa9fbf75e823a5d606211bf10fed1
 category: source
 summary: 为示例新闻站点强制附加 XHR 请求头并打站点标记，复用通用发现逻辑。
 description_file: plugins/example_news/listing.md
@@ -21,8 +21,8 @@ plugin_file: plugins/example_news/plugin.py
 signature_file: plugins/example_news/plugin.py.sig
 signature_algorithm: ed25519
 permissions: []
-compatible_core: ">=2.7.0"
+compatible_core: ">=0.6.0"
 license: MIT
 tags: [example, source, news, template]
 updated_at: "2026-08-07"
-homepage: https://github.com/Starlife-creator/omnicrawler/tree/main/registry/plugins/example_news
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/example_news

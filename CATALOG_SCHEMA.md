@@ -80,7 +80,7 @@
 | `username` | string | 发布者用户名 |
 | `display_name` | string | 展示名（可带后缀区分同名用户） |
 | `pubkey_ref` | string | 签名公钥 PEM 的相对路径（相对于 `authors/` 目录） |
-| `fingerprint` | string | 公钥 SHA-256（对 PEM 文件字节）前 16 字节 hex |
+| `fingerprint` | string | 公钥 SHA-256（ed25519 公钥原始 32 字节）前 16 字节 hex |
 | `roles` | array[string] | 角色，如 `[publisher]` |
 
 生成器会计算 `pubkey_ref` 指向公钥的实际指纹，与声明的 `fingerprint` 比对，二者必须一致。
