@@ -26,7 +26,7 @@ template:
   description: ...
   publisher: <username>     # 必须与 authors/ 记录一致
   author_fingerprint: <fp>  # 创作者公钥指纹（32 位 hex）
-  min_core_version: '2.7.0' # 生成 compatible_core = >=2.7.0
+  min_core_version: '0.6.0' # 生成 compatible_core = >=0.6.0
 ```
 
 ## 签名与发布

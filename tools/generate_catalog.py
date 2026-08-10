@@ -28,6 +28,7 @@ cryptography（ed25519 验签内联实现，不 import 应用包）。把整个 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import re
@@ -67,6 +68,8 @@ _ENTRY_KEYS = [
     "tags",
     "updated_at",
     "homepage",
+    "creator_signature_file",
+    "creator_identity_file",
 ]
 _REQUIRED_KEYS = [
     "id",
@@ -105,13 +108,21 @@ _TEMPLATE_ID_RE_PREFIX = "^[a-z][a-z0-9_-]*(/[a-z0-9_-]+)*$"
 _TOP_LEVEL_EXTRA = {"author_fingerprint"}
 
 
-def _pem_fingerprint(pem_path: Path) -> str:
-    """作者公钥指纹：SHA-256(PEM 文件字节) 前 16 字节 hex（生态唯一标识）。
+def _raw_fingerprint(pem_path: Path) -> str:
+    """作者公钥指纹 = SHA-256(ed25519 公钥原始 32 字节) 前 16 字节 hex。
 
-    先归一化行尾（\\r\\n → \\n）再哈希：PEM 是文本文件，Windows 检出（autocrlf）
-    与 CI Linux 检出字节不同，直接哈希会让同一把公钥在两端得出不同指纹。
+    **与运行时（omnicrawl.plugins.identity.derive_fingerprint）完全同源**：
+    从 PEM 解析出密钥对象后取 ``public_bytes_raw()`` —— 输入是密钥的规范
+    字节表示，与文本编码、行尾（CRLF/LF）、base64 折行完全无关，跨平台
+    跨语言可复现。
+
+    历史上这里是「SHA-256(PEM 文本字节, CRLF 归一化)」（_pem_fingerprint），
+    已于 2026-08 统一中废弃：需要靠行尾归一化才能稳定的哈希输入本身就是
+    设计缺陷；且双轨造成两套互不认证的信任命名空间（运行时只信客户端轨、
+    本 CI 只信 PEM 轨，两边永不互查）。
     """
-    return hashlib.sha256(pem_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:32]
+    key = _load_public_key(str(pem_path))
+    return hashlib.sha256(key.public_bytes_raw()).hexdigest()[:32]
 
 
 def _load_public_key(trust_source: str) -> Any:
@@ -227,7 +238,7 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
             pem = (authors_dir / str(pubkey_ref)).resolve()
             if not pem.is_file():
                 raise ValueError(f"作者 {username} 的 pubkey_ref 不存在: {pubkey_ref}")
-            actual = _pem_fingerprint(pem)
+            actual = _raw_fingerprint(pem)
             if fingerprint and str(fingerprint) != actual:
                 raise ValueError(f"作者 {username} 声明指纹 {fingerprint} 与公钥实际指纹 {actual} 不一致")
             record["_fingerprint"] = actual
@@ -257,6 +268,33 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
         raise ValueError(
             f"插件 {manifest.get('id')} 的 author_fingerprint {fingerprint} "
             f"与作者 {record.get('username')} 实际指纹不一致"
+        )
+
+
+def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
+    """跨轨一致性：``author_fingerprint`` 必须等于 creator.identity 公钥现场推导的指纹。
+
+    修复前两条指纹轨互不认证（审查报告 S46）：市场 CI 只校验 PEM 轨、运行时
+    只信客户端轨，两边永不互查。此处把声明值、作者公钥文件、创作者身份三处
+    钉在同一把密钥上——任何一个环节对不上立即失败。
+    """
+    if not entry.get("creator_identity_file"):
+        return  # 无创作者身份轨（纯维护者签名）时无跨轨可查
+    ident_path = registry / str(entry["creator_identity_file"])
+    if not ident_path.is_file():
+        raise ValueError(f"插件 {entry.get('id', '?')} 声明了 creator_identity_file 但文件不存在")
+    try:
+        creator = json.loads(ident_path.read_text(encoding="utf-8"))
+        raw = base64.b64decode(str(creator["public_key"]), validate=True)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"插件 {entry.get('id', '?')} 的 creator.identity 非法: {exc}") from exc
+    derived = hashlib.sha256(raw).hexdigest()[:32]
+    declared = str(entry.get("author_fingerprint", ""))
+    if declared != derived:
+        raise ValueError(
+            f"插件 {entry.get('id', '?')} 的 author_fingerprint {declared} "
+            f"与 creator.identity 公钥实际指纹 {derived} 不一致（跨轨校验失败，"
+            "疑似身份冒充或双轨残留）"
         )
 
 
@@ -325,10 +363,30 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
         _check_author(market, authors)
 
     for entry in entries:
-        for key in ("description_file", "plugin_file", "signature_file"):
+        _check_creator_rail(registry, entry)
+        for key in ("description_file", "plugin_file"):
             rel = entry.get(key)
             if rel and not (registry / str(rel)).is_file():
                 raise ValueError(f"插件 {entry['id']} 的 {key} 不存在: {rel}")
+        # 签名轨完整性：维护者签名（signature_file）与创作者签名
+        # （creator_signature_file + creator_identity_file）至少一条完备。
+        # 修复前 GUI 上传包声明 signature_file 却不出产该文件（审查报告 S50），
+        # 此处把"声明但缺失"显式判为待补签状态而非静默错误。
+        sig = entry.get("signature_file")
+        has_sig = bool(sig) and (registry / str(sig)).is_file()
+        c_sig = entry.get("creator_signature_file")
+        c_id = entry.get("creator_identity_file")
+        has_creator_rail = (
+            bool(c_sig)
+            and bool(c_id)
+            and (registry / str(c_sig)).is_file()
+            and (registry / str(c_id)).is_file()
+        )
+        if not has_sig and not has_creator_rail:
+            raise ValueError(
+                f"插件 {entry['id']} 缺少完整签名轨：需要 plugin.py.sig（维护者补签）"
+                f"或 creator.sig + creator.identity（创作者签名）"
+            )
     for entry in template_entries:
         for key in ("template_file", "signature_file", "description_file"):
             rel = entry.get(key)
@@ -367,29 +425,57 @@ def _verify_signatures(
     registry: Path,
     catalog: dict[str, Any],
     trust_source: str | None,
-) -> list[str]:
-    """验签插件与模板；cryptography 不可用或信任根缺失时降级为警告。"""
-    warnings: list[str] = []
+) -> None:
+    """验签插件与模板（**fail-closed**：缺依赖/缺信任根即失败，绝不跳过）。
+
+    修复前缺 cryptography 或缺信任根时只警告并返回 0（审查报告 S7）——
+    等于签名门禁在关键环境下"看起来开着、实际是空的"。
+    """
     try:
         import cryptography  # noqa: F401
-    except ImportError:
-        return ["cryptography 不可用，跳过签名校验（仅一致性校验）"]
+    except ImportError as exc:
+        raise ValueError(
+            "cryptography 不可用，无法进行签名校验。"
+            "为保证市场签名门禁不失效，CI 必须安装 cryptography。"
+        ) from exc
     trust = _resolve_trust(registry, trust_source)
     if not trust:
-        return [f"未找到信任根公钥（查找链: {', '.join(_KEYS_FALLBACK)}），跳过签名校验"]
+        raise ValueError(
+            f"未找到信任根公钥（查找链: {', '.join(_KEYS_FALLBACK)}），"
+            "无法校验维护者签名，CI 拒绝通过。"
+        )
     for entry in catalog.get("plugins", []):
-        plugin_path = registry / str(entry["plugin_file"])
-        sig_path = registry / str(entry["signature_file"])
-        ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
-        if not ok:
-            raise ValueError(f"插件 {entry['id']} 签名校验失败（fail-closed）")
+        sig = entry.get("signature_file")
+        if sig:
+            plugin_path = registry / str(entry["plugin_file"])
+            sig_path = registry / str(sig)
+            ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
+            if not ok:
+                raise ValueError(f"插件 {entry['id']} 维护者签名校验失败（fail-closed）")
+            continue
+        # 创作者轨：验 creator.sig 对 creator.identity 公钥（跨轨指纹已在
+        # build_catalog 校验）。注意：创作者签名≠市场审核——目录仍应等待
+        # 维护者补签 plugin.py.sig 后才视为"已发布"。
+        c_sig = registry / str(entry["creator_signature_file"])
+        c_id = registry / str(entry["creator_identity_file"])
+        creator = json.loads(c_id.read_text(encoding="utf-8"))
+        raw = base64.b64decode(str(creator["public_key"]), validate=True)
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = Ed25519PublicKey.from_public_bytes(raw)
+        try:
+            public_key.verify(
+                c_sig.read_bytes(),
+                (registry / str(entry["plugin_file"])).read_bytes(),
+            )
+        except Exception:  # noqa: BLE001 - 验签失败即视为不可信
+            raise ValueError(f"插件 {entry['id']} 创作者签名校验失败（fail-closed）")
     for entry in catalog.get("templates", []):
         template_path = registry / str(entry["template_file"])
         sig_path = registry / str(entry["signature_file"])
         ok = _verify_signature(template_path.read_bytes(), sig_path.read_bytes(), trust)
         if not ok:
             raise ValueError(f"模板 {entry['id']} 签名校验失败（fail-closed）")
-    return warnings
 
 
 def generate(registry: Path, *, publisher_override: str | None = None) -> Path:
@@ -416,22 +502,17 @@ def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
 
 
 def check(registry: Path, *, trust_source: str | None = None) -> int:
-    """CI 门禁：校验 YAML 源合法、与 catalog.json 一致、签名有效。"""
+    """CI 门禁：校验 YAML 源合法、与 catalog.json 一致、签名有效（fail-closed）。"""
     try:
         catalog = build_catalog(registry)
         _check_consistency(registry, catalog)
-        warnings = _verify_signatures(registry, catalog, trust_source)
+        _verify_signatures(registry, catalog, trust_source)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"FAIL registry: {exc}")
         return 1
-    for warning in warnings:
-        print(f"WARN {warning}")
     plugins = len(catalog["plugins"])
     templates = len(catalog["templates"])
-    print(
-        f"OK registry: {plugins} 个插件 + {templates} 个模板清单一致，"
-        f"签名校验{'完成' if not warnings else '跳过'}"
-    )
+    print(f"OK registry: {plugins} 个插件 + {templates} 个模板清单一致，签名校验完成")
     return 0
 
 

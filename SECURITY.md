@@ -30,8 +30,11 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
 ## 报告漏洞
 
 - 插件本身的漏洞：请直接向该插件作者报告，并抄送生态维护者。
-- 生态基础设施（签名/验签/索引）漏洞：**请勿公开**。通过私有渠道向维护者报告
-  （GitHub Security Advisory 或维护者公开的联系方式），处置披露期限 90 天。
+- 生态基础设施（签名/验签/索引）漏洞：**请勿公开**。通过 GitHub Private
+  Vulnerability Reporting 提交（仓库 Settings → Security 已开启），处置披露
+  期限 90 天：
+  https://github.com/Starlife-creator/OmniCrawler-market/security/advisories/new
+  若 PVR 不可用，可改用 zqx666666@tutamail.com 直接联系维护者。
 - 报告时请包含：影响范围、复现步骤、受影响的插件/版本、修复建议。
 
 ## 密钥轮换与灾难恢复
