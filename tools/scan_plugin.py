@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # 本工具代码以 MIT License 授权（见 tools/LICENSE）。
-"""发布前安全扫描（git-as-registry 生态工具，随 registry/ 自包含）。
+"""发布前**凭据泄漏检查**（git-as-registry 生态工具，随 registry/ 自包含）。
 
 用法：
   python registry/tools/scan_plugin.py scan <plugin_dir>... [--manifest <yaml>]
@@ -13,6 +13,10 @@
   3. API Token 模式匹配：AWS / GitHub / Slack / OpenAI / 私钥头；
   4. 私钥/凭据字段检测：YAML/JSON 中 private_key / secret_key / api_key 等键；
   5. 允许列表（可选 --manifest）：清单声明 files 之外存在文件 → 报错。
+
+**边界（审查报告 S48）**：本工具只做凭据泄漏检查，**不分析恶意代码**——
+危险调用（os.system / subprocess / eval 等）由客户端加载期的 AST 预检
+（主仓 _preflight_forbidden_patterns）承担，两套规则互不替代。
 
 退出码：0 干净；1 发现问题。
 """
