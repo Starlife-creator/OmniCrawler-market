@@ -56,6 +56,10 @@ _TOKEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b")),
 ]
 
+# 作者公钥指纹（SHA-256 前 16 字节 hex）是公开元数据而非凭据；
+# 去掉后避免 32 位十六进制串被高熵检测误报为疑似密钥。
+_FINGERPRINT_VALUE_RE = re.compile(r"author_fingerprint:\s*[0-9a-f]{32}", re.IGNORECASE)
+
 _SECRET_FIELD_RE = re.compile(
     r"^\s*(private_key|secret_key|api_key|apikey|access_key|access_token|"
     r"client_secret|auth_token|password|passwd)\s*[:=]\s*\S+",
@@ -98,6 +102,7 @@ def _high_entropy_tokens(text: str, threshold: float) -> list[str]:
 def scan_text_content(text: str, threshold: float) -> list[str]:
     """对单个文本内容执行高熵 + Token 模式扫描，返回问题描述列表。"""
     problems: list[str] = []
+    text = _FINGERPRINT_VALUE_RE.sub("", text)
     for token in _high_entropy_tokens(text, threshold):
         problems.append(f"高熵字符串（熵>{threshold}）: {token[:64]}...")
     for name, pattern in _TOKEN_PATTERNS:

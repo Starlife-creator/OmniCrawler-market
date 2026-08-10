@@ -10,5 +10,7 @@
 username: Starlife-creator
 display_name: Starlife-creator
 pubkey_ref: ../keys/plugin_trust.pub.pem
-fingerprint: 13f96b55b69d0f27e71f1122b3b2ebef
+# 指纹 = SHA-256(LF 归一化 PEM 字节) 前 16 字节 hex（与 tools/generate_catalog.py
+# _pem_fingerprint 归一化规则一致，平台无关；勿用 Windows 检出后的 CRLF 字节计算）。
+fingerprint: 56248399d92b840247a03888f7de25b3
 roles: [publisher]

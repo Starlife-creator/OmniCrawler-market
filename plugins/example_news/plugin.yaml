@@ -13,7 +13,7 @@ id: example_news
 name: 示例新闻站点适配器
 version: 1.0.0
 publisher: Starlife-creator
-author_fingerprint: 13f96b55b69d0f27e71f1122b3b2ebef
+author_fingerprint: 56248399d92b840247a03888f7de25b3
 category: source
 summary: 为示例新闻站点强制附加 XHR 请求头并打站点标记，复用通用发现逻辑。
 description_file: plugins/example_news/listing.md

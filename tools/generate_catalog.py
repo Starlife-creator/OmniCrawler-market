@@ -106,8 +106,12 @@ _TOP_LEVEL_EXTRA = {"author_fingerprint"}
 
 
 def _pem_fingerprint(pem_path: Path) -> str:
-    """作者公钥指纹：SHA-256(PEM 文件字节) 前 16 字节 hex（生态唯一标识）。"""
-    return hashlib.sha256(pem_path.read_bytes()).hexdigest()[:32]
+    """作者公钥指纹：SHA-256(PEM 文件字节) 前 16 字节 hex（生态唯一标识）。
+
+    先归一化行尾（\\r\\n → \\n）再哈希：PEM 是文本文件，Windows 检出（autocrlf）
+    与 CI Linux 检出字节不同，直接哈希会让同一把公钥在两端得出不同指纹。
+    """
+    return hashlib.sha256(pem_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:32]
 
 
 def _load_public_key(trust_source: str) -> Any:
