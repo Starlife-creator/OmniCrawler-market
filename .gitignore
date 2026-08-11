@@ -37,6 +37,6 @@ plugins_installed/
 Thumbs.db
 
 # 说明：私钥/凭据文件用 glob 模式拦截，无论命名如何变化都不会入库。
-# keys/plugin_trust.pub.pem（公钥）通过下面的反向规则保留：
+# keys/*.pub.pem（作者/信任根公钥，公开可分发，用于签名校验）通过下面的反向规则保留：
 !keys/
-!keys/plugin_trust.pub.pem
+!keys/*.pub.pem
