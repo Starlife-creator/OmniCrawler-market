@@ -21,7 +21,7 @@ plugin_file: plugins/example_news/plugin.py
 signature_file: plugins/example_news/plugin.py.sig
 signature_algorithm: ed25519
 permissions: []
-compatible_core: ">=0.6.0"
+compatible_core: ">=0.7.0"
 license: MIT
 tags: [example, source, news, template]
 updated_at: "2026-08-07"
