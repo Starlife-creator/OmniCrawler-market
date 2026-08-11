@@ -6,10 +6,10 @@
 ```
 templates/<market_id>/
 ├── template.yaml          # 模板源（现有模板格式；template: 块含市场字段）
-├── template.yaml.sig      # 签名（维护者签名；创作者签名时另有 creator.sig）
+├── template.yaml.sig      # 最终分发签名（信任根验签；创作者签名时另有 creator.sig）
 ├── creator.identity       # 创作者身份（可选，P2P 分发形态）
 ├── creator.sig            # 创作者签名（可选）
-├── maintainer.sig         # 维护者签名（市场分发必带）
+├── maintainer.sig         # 【已废弃】下载端不校验，请勿依赖（正确补签用 sign 生成 template.yaml.sig）
 └── listing.md             # 功能说明（推荐）
 ```
 
@@ -36,8 +36,8 @@ template:
 ```bash
 # 创作者签名（创建即签名，P2P 可用）
 python tools/sign_plugin.py creator-sign templates/<id>/ --file template.yaml --username <你>
-# 维护者签名（市场分发必带，冷机器执行）
-python tools/sign_plugin.py maintainer-sign templates/<id>/ --file template.yaml --private-key <冷存储私钥>
+# 市场分发签名（信任根冷私钥签，下载端/CI 校验它；勿用 maintainer-sign）
+python tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>
 ```
 
 生成目录索引：
