@@ -8,6 +8,7 @@
 | 内容 | 存放位置 | 说明 |
 |------|----------|------|
 | 插件 | `plugins/<plugin_id>/` | plugin.py + plugin.py.sig + listing.md + plugin.yaml |
+| 模板 | `templates/<market_id>/` | template.yaml + template.yaml.sig + listing.md（+ 可选 creator.sig/identity） |
 | 作者身份 | `authors/<username>.yaml` | 首次发布前必须提交 |
 
 ## 提交一个新插件（完整流程）
@@ -20,20 +21,22 @@
 5. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`。
 6. 提交 PR。**所有提交必须 `git commit --signoff`（DCO）**。
 
-> 签名流程（两步签名）：
-> 1. **创作者签名（创建即签名）**：创作者用本地身份签名，生成
->    `creator.sig` + `creator.identity`（三件套之二，P2P 分发可用）：
+> 签名流程：
+> 1. **创作者签名（创建即签名，可选）**：创作者用本地身份签名，生成
+>    `creator.sig` + `creator.identity`（P2P 分发可用）：
 >    `python tools/sign_plugin.py creator-sign plugins/<id>/ --username <你的用户名>`
-> 2. **维护者签名（市场分发）**：PR 审核合并后，由持有冷私钥的维护者在离线机器
->    生成 `maintainer.sig`（仅市场分发携带，用户下载后自动信任）：
->    `python tools/sign_plugin.py maintainer-sign plugins/<id>/ --private-key <冷存储私钥>`
-> 3. 创作者无法自签维护者签名；签名即背书。
+> 2. **市场分发签名（必做）**：PR 审核合并后，由持有信任根冷私钥的维护者在离线机器
+>    用 `sign` 覆盖生成 `template.yaml.sig` / `plugin.py.sig`（下载端/CI 校验的唯一签名）：
+>    `python tools/sign_plugin.py sign plugins/<id>/plugin.py --private-key <冷存储私钥>`
+>    `python tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>`
+> 3. **不要用 `maintainer-sign`**：其产物 `maintainer.sig` 下载端不校验、会被静默忽略
+>    （已废弃，详见 `README.md`）。信任根签名即背书。
 
 ## 三层信任模型
 
 | 层级 | 签名 | 用户行为 | 加载策略 |
 |------|------|----------|----------|
-| 1 | `maintainer.sig`（信任根验签） | 无需操作 | 直接加载（自动信任） |
+| 1 | `template.yaml.sig` / `plugin.py.sig`（信任根验签） | 无需操作 | 直接加载（自动信任） |
 | 2 | `creator.sig` + 指纹在信任列表 | 首次使用已授权 | 直接加载 |
 | 2b | `creator.sig` + 未信任 | 弹出信任提示 | 信任则加载，否则拒绝 |
 | 3 | 无签名 | — | 拒绝加载（配置信任根时） |
@@ -60,6 +63,16 @@
   公钥例外放行）、`.env`、`*.key` 等。
 - 提交前请运行 `python tools/scan_plugin.py scan plugins/<plugin_id>/` 做发布前安全扫描。
 - 插件只应声明运行所需的最小权限（`permissions` 字段）。
+
+## 模板数据来源条款（站点类模板准入标准）
+
+采集第三方平台数据的**站点类模板**，发布者必须在 `listing.md` 与 `template.yaml` 中声明数据来源条款：
+
+- 数据来自哪个平台 / API，受何种服务条款约束；
+- 是否需 API Key、匿名可用额度与速率限制；
+- 礼貌参数（如 Crossref 的 `mailto`、GitHub 的 2s 延迟）与用量预算。
+
+未声明数据来源条款的站点类模板，维护者审核时**不予合并**（合规风险前置拦截）。
 
 ## 行为准则
 
