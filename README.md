@@ -81,10 +81,10 @@ OmniCrawler-market/
     ├── README.md                # 模板市场说明（结构 + 市场字段 + 签名流程）
     └── <market_id>/             # 每个模板一个目录（id 允许层级命名，如 demo/template）
         ├── template.yaml        # 模板源（template: 块含 publisher/author_fingerprint）
-        ├── template.yaml.sig    # detached ed25519 签名
+        ├── template.yaml.sig    # 最终分发签名（维护者用冷密钥 `sign` 覆盖此文件；下载端/CI 校验它）
         ├── creator.identity     # 创作者身份（可选，P2P 形态）
         ├── creator.sig          # 创作者签名（可选）
-        ├── maintainer.sig       # 维护者签名（市场分发必带）
+        ├── maintainer.sig       # 【已废弃】下载端不校验此文件，请勿依赖（正确补签见步骤 6）
         └── listing.md           # 功能说明（推荐）
 ```
 
@@ -134,15 +134,18 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
    `authors/<username>.yaml`）。
 4. 通过插件契约测试（主仓库 `tests/unit/plugin/`）。
 5. 提交 PR；维护者审核 `listing.md` 与代码。
-6. 审核通过后，由持有冷私钥的发布者在**冷机器**上签名：
-   `python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
-    （私钥位于维护者冷存储介质，绝不入库）。
+6. 审核通过后，由持有冷私钥的发布者在**冷机器**上签名（覆盖 `<file>.sig`，
+   该文件即下载端/CI 校验的最终分发签名；**不要用 `maintainer-sign`**，其产出
+   `maintainer.sig` 下载端不校验，会被静默忽略）：
+   - 插件：`python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
+   - 模板：`python tools/sign_plugin.py sign templates/<template_id>/template.yaml`
+   （私钥位于维护者冷存储介质，绝不入库。）
 7. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`，一并合并。
 
 > CI 门禁（`.github/workflows/validate.yml`）：PR 若修改 `plugins/`、`authors/`、
 > `keys/` 或 `catalog.json`，自动执行 `tools/generate_catalog.py --check`——校验
-> plugin.yaml 合法、与 `catalog.json` 一致、`author_fingerprint` 有作者记录且与
-> 公钥实际指纹相符、`plugin.py.sig` 能通过信任根验签，否则阻断合并。
+> plugin.yaml / template.yaml 合法、与 `catalog.json` 一致、`author_fingerprint` 有作者记录且与
+> 公钥实际指纹相符、`plugin.py.sig` / `template.yaml.sig` 能通过信任根验签，否则阻断合并。
 
 ## 自建镜像 / 离线使用
 

@@ -341,12 +341,18 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
 
     template_entries: list[dict[str, Any]] = []
     template_markets: dict[str, dict[str, Any]] = {}
+    seen_template_ids: set[str] = set()
     templates_dir = registry / _TEMPLATES_DIR
     if templates_dir.is_dir():
         for template_yaml in sorted(templates_dir.glob("*/template.yaml")):
             entry, market = _entry_from_template_yaml(template_yaml)
+            tid = str(entry["id"])
+            # G7：重复模板 ID 静默后者覆盖 → 改为 fail-closed 显式报错
+            if tid in seen_template_ids:
+                raise ValueError(f"重复模板 ID（禁止静默覆盖）: {tid}（{template_yaml}）")
+            seen_template_ids.add(tid)
             template_entries.append(entry)
-            template_markets[str(entry["id"])] = market
+            template_markets[tid] = market
             publisher = str(entry.get("publisher", ""))
             if publisher and publisher not in publishers:
                 publishers.append(publisher)

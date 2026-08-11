@@ -12,6 +12,7 @@ on:
     paths:
       - "plugins/**"
       - "authors/**"
+      - "templates/**"
       - "keys/**"
       - "tools/**"
       - "catalog.json"
@@ -19,6 +20,7 @@ on:
     paths:
       - "plugins/**"
       - "authors/**"
+      - "templates/**"
       - "keys/**"
       - "tools/**"
       - "catalog.json"
