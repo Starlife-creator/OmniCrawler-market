@@ -84,7 +84,6 @@ OmniCrawler-market/
         ├── template.yaml.sig    # 最终分发签名（维护者用冷密钥 `sign` 覆盖此文件；下载端/CI 校验它）
         ├── creator.identity     # 创作者身份（可选，P2P 形态）
         ├── creator.sig          # 创作者签名（可选）
-        ├── maintainer.sig       # 【已废弃】下载端不校验此文件，请勿依赖（正确补签见步骤 6）
         └── listing.md           # 功能说明（推荐）
 ```
 
@@ -135,8 +134,7 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
 4. 通过插件契约测试（主仓库 `tests/unit/plugin/`）。
 5. 提交 PR；维护者审核 `listing.md` 与代码。
 6. 审核通过后，由持有冷私钥的发布者在**冷机器**上签名（覆盖 `<file>.sig`，
-   该文件即下载端/CI 校验的最终分发签名；**不要用 `maintainer-sign`**，其产出
-   `maintainer.sig` 下载端不校验，会被静默忽略）：
+   该文件即下载端/CI 校验的最终分发签名，也是下载端/CI 校验的唯一签名）：
    - 插件：`python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
    - 模板：`python tools/sign_plugin.py sign templates/<template_id>/template.yaml`
    （私钥位于维护者冷存储介质，绝不入库。）

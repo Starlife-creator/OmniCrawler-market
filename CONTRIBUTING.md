@@ -29,8 +29,8 @@
 >    用 `sign` 覆盖生成 `template.yaml.sig` / `plugin.py.sig`（下载端/CI 校验的唯一签名）：
 >    `python tools/sign_plugin.py sign plugins/<id>/plugin.py --private-key <冷存储私钥>`
 >    `python tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>`
-> 3. **不要用 `maintainer-sign`**：其产物 `maintainer.sig` 下载端不校验、会被静默忽略
->    （已废弃，详见 `README.md`）。信任根签名即背书。
+> 3. **市场分发签名统一用 `plugin.py.sig`**（由 `sign` 生成并覆盖）；旧版 `maintainer-sign`
+>    命令已删除，其产物 `maintainer.sig` 不再产生、验证器也不兼容。信任根签名即背书。
 
 ## 三层信任模型
 
