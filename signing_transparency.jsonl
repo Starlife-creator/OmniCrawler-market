@@ -1,0 +1,1 @@
+{"timestamp": "2026-08-12T06:29:00+00:00", "plugin": "plugins\\example_news\\plugin.py", "plugin_sha256": "3433e7af48a6f677abe0f0a97047dd9164ddf70f5e8879067369dfe3d5f41b8f", "operator": "Lenovo", "operation": "sign", "note": "签名者私钥未导出；本日志仅记录公开元数据"}

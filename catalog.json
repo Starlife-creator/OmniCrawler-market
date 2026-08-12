@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-11T18:02:07+00:00",
+  "generated_at": "2026-08-12T06:29:14+00:00",
   "publisher": "Starlife-creator",
   "trust_model": "single-root-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
