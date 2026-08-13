@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # 本工具代码以 MIT License 授权（见 tools/LICENSE）。
-"""从 ``registry/plugins/*/plugin.yaml`` 聚合生成 ``catalog.json``（git-as-registry）。
+"""从 ``plugins/*/plugin.yaml`` 聚合生成 ``catalog.json``（git-as-registry）。
 
 目录结构即索引：每个插件一个 YAML 清单（唯一元数据源），``catalog.json`` 是
 由本工具生成的**派生物**，随仓库提交，应用端（``market_client`` / GUI 市场面板 /
 ``tools/market.py``）继续只读 ``catalog.json``，**零改动**。
 
-本工具位于 ``registry/tools/`` 下，**随生态目录自包含**：只依赖 PyYAML 与
-cryptography（ed25519 验签内联实现，不 import 应用包）。把整个 ``registry/``
-子树复制到独立仓库后，本工具原样可用——拆库 = 复制 + 改应用 ``catalog_url``。
+本工具位于本仓库 ``tools/`` 下，**随生态目录自包含**：只依赖 PyYAML 与
+cryptography（ed25519 验签内联实现，不 import 应用包）。把整个生态目录复制到
+独立仓库后，本工具原样可用——拆库 = 复制 + 改应用 ``catalog_url``。
 
 用法：
-  python registry/tools/generate_catalog.py [--registry registry] [--publisher NAME]
-      扫描 ``registry/plugins/*/plugin.yaml``，重写 ``registry/catalog.json``。
-  python registry/tools/generate_catalog.py --check [--registry registry]
+  python tools/generate_catalog.py [--publisher NAME]
+      扫描 ``plugins/*/plugin.yaml``，重写 ``catalog.json``。
+  python tools/generate_catalog.py --check
       只校验不写盘（CI 门禁）。校验项：
         1. catalog.json 与 YAML 源完全一致（``generated_at`` 除外）；
         2. 每个 plugin.yaml 必填字段齐全、id 合法、引用文件存在；
         3. ``author_fingerprint`` 在 ``authors/`` 有记录，且与 ``pubkey_ref``
            指向公钥的实际指纹一致；
-        4. 签名文件可用信任根公钥验签（``--trust`` > ``registry/keys/`` >
+        4. 签名文件可用信任根公钥验签（``--trust`` > ``keys/`` >
            主仓库 ``configs/`` 回退；cryptography 不可用时跳过并警告）。
   校验失败退出码 1，否则 0。
 """
@@ -38,7 +38,7 @@ from typing import Any
 
 import yaml
 
-# 本工具所在目录 = registry/tools/，其父级即生态目录根（自包含约定）
+# 本工具所在目录 = tools/，其父级即生态目录根（自包含约定）
 REGISTRY_DIR = Path(__file__).resolve().parents[1]
 # 主仓库根（仅用于回退查找信任根公钥；拆库独立后此路径失效，走 keys/ 或 --trust）
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -174,7 +174,7 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
 
 
 def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """把 registry/templates/<id>/template.yaml 转换为 catalog 模板条目。
+    """把 templates/<id>/template.yaml 转换为 catalog 模板条目。
 
     模板的 market 元数据放在 ``template:`` 块的 ``publisher`` /
     ``author_fingerprint`` 字段（内置模板不需要；市场模板必须声明）。
@@ -414,7 +414,7 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
 
 
 def _resolve_trust(registry: Path, trust_source: str | None) -> str:
-    """信任根查找链：--trust > registry/keys/ > 主仓库 configs/（回退）。"""
+    """信任根查找链：--trust > keys/ > 主仓库 configs/（回退）。"""
     if trust_source:
         return trust_source
     candidates = [
@@ -503,7 +503,7 @@ def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
     actual = {key: value for key, value in existing.items() if key != "generated_at"}
     if expected != actual:
         raise ValueError(
-            "catalog.json 与 plugin.yaml 源不一致（请运行 registry/tools/generate_catalog.py 重新生成）"
+            "catalog.json 与 plugin.yaml 源不一致（请运行 tools/generate_catalog.py 重新生成）"
         )
 
 
@@ -525,14 +525,14 @@ def check(registry: Path, *, trust_source: str | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="generate_catalog",
-        description="从 registry/plugins/*/plugin.yaml 与 registry/templates/*/template.yaml 聚合生成或校验 catalog.json",
+        description="从 plugins/*/plugin.yaml 与 templates/*/template.yaml 聚合生成或校验 catalog.json",
     )
     parser.add_argument("--registry", default=str(REGISTRY_DIR), help="registry 目录（默认本工具所在生态根）")
     parser.add_argument("--publisher", default=None, help="catalog 顶层 publisher（默认取首个插件发布者）")
     parser.add_argument(
         "--trust",
         default=None,
-        help="信任根公钥 PEM 路径（默认查找链: registry/keys/ → 主仓库 configs/）",
+        help="信任根公钥 PEM 路径（默认查找链: keys/ → 主仓库 configs/）",
     )
     parser.add_argument("--check", action="store_true", help="只校验不写盘（CI 门禁）")
     return parser

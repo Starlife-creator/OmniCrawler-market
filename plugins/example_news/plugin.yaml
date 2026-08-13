@@ -1,13 +1,13 @@
 # 插件清单源（git-as-registry：目录结构即索引）
 #
-# 本文件是插件 example_news 在生态中的唯一元数据源。registry/catalog.json
-# 由 tools/generate_catalog.py 从 registry/plugins/*/plugin.yaml 聚合生成，
+# 本文件是插件 example_news 在生态中的唯一元数据源。catalog.json
+# 由 tools/generate_catalog.py 从 plugins/*/plugin.yaml 聚合生成，
 # 提交/更新插件时只需改本文件，再运行生成器（或依赖 CI 校验一致）。
 #
-# 所有 *_file 路径均为相对于本仓库 registry/ 基址的相对路径，保持与
-# catalog.json 相同的迁移友好约定（整个 registry/ 子树可整体搬运）。
+# 所有 *_file 路径均为相对于本仓库（生态目录根）的相对路径，保持与
+# catalog.json 相同的迁移友好约定（整个生态目录可整体搬运）。
 #
-# 字段说明见 registry/CATALOG_SCHEMA.md。
+# 字段说明见 CATALOG_SCHEMA.md。
 
 id: example_news
 name: 示例新闻站点适配器

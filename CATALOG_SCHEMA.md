@@ -3,10 +3,10 @@
 `catalog.json` 是插件市场的**索引文件（派生物）**。应用端的「市场面板」读取它，向用户展示
 可安装插件，并据此下载、验签、安装。
 
-> ⚠️ **不要手改 `catalog.json`**。它是 `registry/tools/generate_catalog.py` 从
+> ⚠️ **不要手改 `catalog.json`**。它是 `tools/generate_catalog.py` 从
 > `plugins/<id>/plugin.yaml`（每个插件一个，唯一元数据源）与
 > `templates/<id>/template.yaml`（每个模板一个）聚合生成的。修改元数据
-> 请编辑对应的 YAML 后运行 `python registry/tools/generate_catalog.py`。
+> 请编辑对应的 YAML 后运行 `python tools/generate_catalog.py`。
 > CI（`.github/workflows/registry.yml`）会用 `--check` 校验生成物一致性。
 
 ## 顶层字段
@@ -89,7 +89,7 @@
 
 - `description_file` / `plugin_file` / `signature_file` 全部是**相对于 catalog 基址**的路径。
 - catalog 基址由应用配置 `plugins.catalog_url` 决定（默认主仓库 raw 地址）。
-- 因此移动整个 `registry/` 到新仓库/新服务后，只需改 `catalog_url`，条目内路径不变。
+- 因此移动整个生态目录到新仓库/新服务后，只需改 `catalog_url`，条目内路径不变。
 
 ## 签名与验签
 

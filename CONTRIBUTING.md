@@ -43,13 +43,13 @@
 
 ## CI 门禁（合并前自动执行）
 
-- `registry/tools/generate_catalog.py --check`：
+- `tools/generate_catalog.py --check`：
   - plugin.yaml 必填字段齐全、id 合法、无未知字段；
   - `catalog.json` 与 YAML 源完全一致（禁止手改派生物）；
   - `author_fingerprint` 与 `authors/` 记录及公钥实际指纹相符；
   - 插件文件存在；
   - 签名文件可通过信任根验签（已签名条目）。
-- 拆库演练：复制 `registry/` 至临时目录后可独立校验。
+- 拆库演练：复制本目录（`tools/` 等）至临时目录后可独立校验。
 
 ## 作者身份（用户名与指纹）
 

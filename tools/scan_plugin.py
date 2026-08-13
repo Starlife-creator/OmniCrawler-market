@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # 本工具代码以 MIT License 授权（见 tools/LICENSE）。
-"""发布前**凭据泄漏检查**（git-as-registry 生态工具，随 registry/ 自包含）。
+"""发布前**凭据泄漏检查**（git-as-registry 生态工具，随生态目录自包含）。
 
 用法：
-  python registry/tools/scan_plugin.py scan <plugin_dir>... [--manifest <yaml>]
+  python tools/scan_plugin.py scan <plugin_dir>... [--manifest <yaml>]
        [--json] [--entropy-threshold 4.5]
 
 扫描步骤（对齐 Helios 发布前五步扫描，适配 OmniCrawler 插件目录形态）：
