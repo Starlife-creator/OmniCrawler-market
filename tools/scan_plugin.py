@@ -47,7 +47,8 @@ SENSITIVE_NAMES = {
 }
 SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".ppk", ".secret", ".gpg")
 SKIP_DIRS = {"__pycache__"}
-SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".md")
+# .identity 是创作者公开公钥元数据（非凭据），与 .sig/.md 同类跳过内容扫描
+SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".md", ".identity")
 DEFAULT_ENTROPY_THRESHOLD = 4.5
 MIN_TOKEN_LEN = 16
 
@@ -129,7 +130,11 @@ def _scan_file(path: Path, *, threshold: float) -> list[str]:
         return problems
     if path.suffix in (".py", ".txt", ".cfg", ".ini", ".toml", ".sh", ".bat", ".html", ".js"):
         return scan_text_content(path.read_text(encoding="utf-8", errors="ignore"), threshold)
-    return []
+    # 未知后缀/无扩展名文件也做文本内容扫描（高熵 + Token 模式）：
+    # 防无扩展名凭据（creds）或 .dat/.bin 文本泄漏被后缀白名单漏掉（P3-5）。
+    # 二进制内容按 utf-8 errors=ignore 解码后，可打印 ASCII 连续段极少，
+    # 高熵误报风险低。
+    return scan_text_content(path.read_text(encoding="utf-8", errors="ignore"), threshold)
 
 
 def _scan_mapping_fields(data: Any, path: Path) -> list[str]:

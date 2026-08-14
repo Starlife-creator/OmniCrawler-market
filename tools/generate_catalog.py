@@ -20,8 +20,8 @@ cryptography（ed25519 验签内联实现，不 import 应用包）。把整个�
         2. 每个 plugin.yaml 必填字段齐全、id 合法、引用文件存在；
         3. ``author_fingerprint`` 在 ``authors/`` 有记录，且与 ``pubkey_ref``
            指向公钥的实际指纹一致；
-        4. 签名文件可用信任根公钥验签（``--trust`` > ``keys/`` >
-           主仓库 ``configs/`` 回退；cryptography 不可用时跳过并警告）。
+        4. 签名文件可用信任根公钥验签（``--trust`` > ``keys/``；
+           cryptography 不可用时跳过并警告）。
   校验失败退出码 1，否则 0。
 """
 
@@ -40,13 +40,13 @@ import yaml
 
 # 本工具所在目录 = tools/，其父级即生态目录根（自包含约定）
 REGISTRY_DIR = Path(__file__).resolve().parents[1]
-# 主仓库根（仅用于回退查找信任根公钥；拆库独立后此路径失效，走 keys/ 或 --trust）
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SCHEMA_VERSION = 1
 TRUST_MODEL = "single-root-ed25519"
 TRUST_KEY_REF = "keys/plugin_trust.pub.pem"
-_KEYS_FALLBACK = ("keys/plugin_trust.pub.pem", "../../configs/plugin_trust.pub.pem")
+# 信任根只认 keys/：拆库后主仓库不再是兄弟目录，「主仓库 configs/ 回退」
+# 的相对路径会解析到工作区外（P3-3），此前只是被 keys/ 存在而掩盖。
+_KEYS_FALLBACK = ("keys/plugin_trust.pub.pem",)
 
 _PLUGIN_DIR = "plugins"
 _AUTHORS_DIR = "authors"
@@ -105,7 +105,9 @@ _TEMPLATE_ENTRY_KEYS = [
 _ID_RE_PREFIX = "^[a-z][a-z0-9_-]{1,63}$"
 # 模板 ID 允许层级命名（如 generic/single-page），与内置模板目录一致
 _TEMPLATE_ID_RE_PREFIX = "^[a-z][a-z0-9_-]*(/[a-z0-9_-]+)*$"
-_TOP_LEVEL_EXTRA = {"author_fingerprint"}
+# 允许出现在 plugin.yaml 但**不进入 catalog.json 条目**的键：
+# author_fingerprint（跨轨校验用）、files（scan_plugin 允许列表，纯扫描期元数据）
+_TOP_LEVEL_EXTRA = {"author_fingerprint", "files"}
 
 
 def _raw_fingerprint(pem_path: Path) -> str:
@@ -414,29 +416,27 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
 
 
 def _resolve_trust(registry: Path, trust_source: str | None) -> str:
-    """信任根查找链：--trust > keys/ > 主仓库 configs/（回退）。"""
+    """信任根查找链：--trust > keys/plugin_trust.pub.pem（拆库后只认 keys/，P3-3）。"""
     if trust_source:
         return trust_source
-    candidates = [
-        registry / _KEYS_FALLBACK[0],
-        Path(__file__).resolve().parents[2] / _KEYS_FALLBACK[1],
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return ""
+    candidate = registry / _KEYS_FALLBACK[0]
+    return str(candidate) if candidate.is_file() else ""
 
 
 def _verify_signatures(
     registry: Path,
     catalog: dict[str, Any],
     trust_source: str | None,
-) -> None:
+) -> list[str]:
     """验签插件与模板（**fail-closed**：缺依赖/缺信任根即失败，绝不跳过）。
 
     修复前缺 cryptography 或缺信任根时只警告并返回 0（审查报告 S7）——
     等于签名门禁在关键环境下"看起来开着、实际是空的"。
+
+    返回 V1 警告列表：存量插件大概率无 creator 签名，V1 阶段仅警告不失败；
+    V2 将升级为强制（P3-1）。
     """
+    warnings: list[str] = []
     try:
         import cryptography  # noqa: F401
     except ImportError as exc:
@@ -451,37 +451,46 @@ def _verify_signatures(
             "无法校验维护者签名，CI 拒绝通过。"
         )
     for entry in catalog.get("plugins", []):
+        plugin_path = registry / str(entry["plugin_file"])
         sig = entry.get("signature_file")
-        if sig:
-            plugin_path = registry / str(entry["plugin_file"])
-            sig_path = registry / str(sig)
+        sig_path = registry / str(sig) if sig else None
+        has_maintainer_sig = sig_path is not None and sig_path.is_file()
+        if has_maintainer_sig:
             ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
             if not ok:
                 raise ValueError(f"插件 {entry['id']} 维护者签名校验失败（fail-closed）")
-            continue
-        # 创作者轨：验 creator.sig 对 creator.identity 公钥（跨轨指纹已在
-        # build_catalog 校验）。注意：创作者签名≠市场审核——目录仍应等待
-        # 维护者补签 plugin.py.sig 后才视为"已发布"。
-        c_sig = registry / str(entry["creator_signature_file"])
-        c_id = registry / str(entry["creator_identity_file"])
-        creator = json.loads(c_id.read_text(encoding="utf-8"))
-        raw = base64.b64decode(str(creator["public_key"]), validate=True)
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-        public_key = Ed25519PublicKey.from_public_bytes(raw)
-        try:
-            public_key.verify(
-                c_sig.read_bytes(),
-                (registry / str(entry["plugin_file"])).read_bytes(),
+        elif entry.get("creator_signature_file") and entry.get("creator_identity_file"):
+            # 创作者轨（此前 signature_file 必填使 `if sig:` 恒真 → 本块死代码，
+            # P3-1）：维护者 sig 文件缺失但 creator 轨完备时，验 creator.sig 对
+            # creator.identity 公钥。跨轨指纹一致性已在 build_catalog 校验。
+            c_sig = registry / str(entry["creator_signature_file"])
+            c_id = registry / str(entry["creator_identity_file"])
+            creator = json.loads(c_id.read_text(encoding="utf-8"))
+            raw = base64.b64decode(str(creator["public_key"]), validate=True)
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PublicKey,
             )
-        except Exception:  # noqa: BLE001 - 验签失败即视为不可信
-            raise ValueError(f"插件 {entry['id']} 创作者签名校验失败（fail-closed）")
+
+            public_key = Ed25519PublicKey.from_public_bytes(raw)
+            try:
+                public_key.verify(c_sig.read_bytes(), plugin_path.read_bytes())
+            except Exception:  # noqa: BLE001 - 验签失败即视为不可信
+                raise ValueError(f"插件 {entry['id']} 创作者签名校验失败（fail-closed）")
+        else:
+            # build_catalog 已要求至少一条签名轨，此兜底不应触发
+            raise ValueError(f"插件 {entry['id']} 缺少可验证的签名文件")
+        # V1：创作者签名缺失 → 仅警告（V2 将强制要求补齐）
+        if not (entry.get("creator_signature_file") and entry.get("creator_identity_file")):
+            warnings.append(
+                f"插件 {entry['id']} 缺少创作者签名（V1 警告；V2 将要求必须补签）"
+            )
     for entry in catalog.get("templates", []):
         template_path = registry / str(entry["template_file"])
         sig_path = registry / str(entry["signature_file"])
         ok = _verify_signature(template_path.read_bytes(), sig_path.read_bytes(), trust)
         if not ok:
             raise ValueError(f"模板 {entry['id']} 签名校验失败（fail-closed）")
+    return warnings
 
 
 def generate(registry: Path, *, publisher_override: str | None = None) -> Path:
@@ -499,8 +508,11 @@ def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
     if not existing_path.is_file():
         raise ValueError(f"catalog.json 缺失（先运行生成器）: {existing_path}")
     existing = json.loads(existing_path.read_text(encoding="utf-8"))
-    expected = {key: value for key, value in catalog.items() if key != "generated_at"}
-    actual = {key: value for key, value in existing.items() if key != "generated_at"}
+    # generated_at 是时间戳；publisher 是生成参数（--publisher 覆盖时顶层不同，
+    # 与源无关，排除以免 --check 误失败，P3-4）
+    parametric = {"generated_at", "publisher"}
+    expected = {key: value for key, value in catalog.items() if key not in parametric}
+    actual = {key: value for key, value in existing.items() if key not in parametric}
     if expected != actual:
         raise ValueError(
             "catalog.json 与 plugin.yaml 源不一致（请运行 tools/generate_catalog.py 重新生成）"
@@ -508,14 +520,19 @@ def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
 
 
 def check(registry: Path, *, trust_source: str | None = None) -> int:
-    """CI 门禁：校验 YAML 源合法、与 catalog.json 一致、签名有效（fail-closed）。"""
+    """CI 门禁：校验 YAML 源合法、与 catalog.json 一致、签名有效（fail-closed）。
+
+    V1：缺失创作者签名的插件打印警告（不失败）；V2 将升级为强制（P3-1）。
+    """
     try:
         catalog = build_catalog(registry)
         _check_consistency(registry, catalog)
-        _verify_signatures(registry, catalog, trust_source)
+        warnings = _verify_signatures(registry, catalog, trust_source)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"FAIL registry: {exc}")
         return 1
+    for warning in warnings:
+        print(f"  ! {warning}")
     plugins = len(catalog["plugins"])
     templates = len(catalog["templates"])
     print(f"OK registry: {plugins} 个插件 + {templates} 个模板清单一致，签名校验完成")
@@ -532,7 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trust",
         default=None,
-        help="信任根公钥 PEM 路径（默认查找链: keys/ → 主仓库 configs/）",
+        help="信任根公钥 PEM 路径（默认 keys/plugin_trust.pub.pem）",
     )
     parser.add_argument("--check", action="store_true", help="只校验不写盘（CI 门禁）")
     return parser
