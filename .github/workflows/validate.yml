@@ -49,3 +49,10 @@ jobs:
               python tools/scan_plugin.py scan "$plugin_dir" --manifest "$plugin_dir/plugin.yaml" || exit 1
             fi
           done
+      - name: 发布前安全扫描（全部模板）
+        run: |
+          for tpl_dir in templates/*/; do
+            if [ -f "$tpl_dir/template.yaml" ]; then
+              python tools/scan_plugin.py scan "$tpl_dir" --manifest "$tpl_dir/template.yaml" || exit 1
+            fi
+          done
