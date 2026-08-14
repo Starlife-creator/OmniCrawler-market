@@ -274,14 +274,18 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
 
 
 def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
-    """跨轨一致性：``author_fingerprint`` 必须等于 creator.identity 公钥现场推导的指纹。
+    """创作者轨完整性校验（方案 B：与维护者轨独立，不做跨轨相等）。
 
-    修复前两条指纹轨互不认证（审查报告 S46）：市场 CI 只校验 PEM 轨、运行时
-    只信客户端轨，两边永不互查。此处把声明值、作者公钥文件、创作者身份三处
-    钉在同一把密钥上——任何一个环节对不上立即失败。
+    多重信任模型下 ``author_fingerprint`` 属于**发布者/维护者轨**（由
+    _check_author 独立校验）；``creator.identity`` 属于**创作者轨**——
+    两个身份本就可以不同（创作者写插件、维护者背书），因此**绝不要求
+    两者指纹相等**。此处只做创作者轨自身的完整性：
+    1. ``creator.identity`` 文件存在且为合法 JSON；
+    2. 公钥现场推导指纹与 identity 自称指纹一致（防身份冒充/篡改）。
+    ``creator.sig`` 对 ``creator.identity`` 公钥的实际验签在 _verify_signatures。
     """
     if not entry.get("creator_identity_file"):
-        return  # 无创作者身份轨（纯维护者签名）时无跨轨可查
+        return  # 无创作者轨（纯维护者签名）时无需检查
     ident_path = registry / str(entry["creator_identity_file"])
     if not ident_path.is_file():
         raise ValueError(f"插件 {entry.get('id', '?')} 声明了 creator_identity_file 但文件不存在")
@@ -291,12 +295,11 @@ def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError(f"插件 {entry.get('id', '?')} 的 creator.identity 非法: {exc}") from exc
     derived = hashlib.sha256(raw).hexdigest()[:32]
-    declared = str(entry.get("author_fingerprint", ""))
-    if declared != derived:
+    declared = str(creator.get("key_fingerprint", "")).strip().lower()
+    if declared and declared != derived:
         raise ValueError(
-            f"插件 {entry.get('id', '?')} 的 author_fingerprint {declared} "
-            f"与 creator.identity 公钥实际指纹 {derived} 不一致（跨轨校验失败，"
-            "疑似身份冒充或双轨残留）"
+            f"插件 {entry.get('id', '?')} 的 creator.identity 自称指纹 {declared} "
+            f"与公钥实际指纹 {derived} 不一致（疑似身份冒充或文件被篡改）"
         )
 
 
@@ -455,16 +458,22 @@ def _verify_signatures(
         sig = entry.get("signature_file")
         sig_path = registry / str(sig) if sig else None
         has_maintainer_sig = sig_path is not None and sig_path.is_file()
+        # 多重信任模型（方案 B）：两条轨各自独立验签、互不替代——
+        # 维护者轨验 plugin.py.sig 对 trust 根；创作者轨验 creator.sig 对
+        # creator.identity 公钥。声明哪条就验哪条；两者可同时存在（创作者
+        # 签名 + 维护者背书），if/elif 互斥是错误语义。
         if has_maintainer_sig:
             ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
             if not ok:
                 raise ValueError(f"插件 {entry['id']} 维护者签名校验失败（fail-closed）")
-        elif entry.get("creator_signature_file") and entry.get("creator_identity_file"):
-            # 创作者轨（此前 signature_file 必填使 `if sig:` 恒真 → 本块死代码，
-            # P3-1）：维护者 sig 文件缺失但 creator 轨完备时，验 creator.sig 对
-            # creator.identity 公钥。跨轨指纹一致性已在 build_catalog 校验。
+        if entry.get("creator_signature_file") and entry.get("creator_identity_file"):
+            # 创作者轨独立验签：creator.sig 对 creator.identity 公钥
             c_sig = registry / str(entry["creator_signature_file"])
             c_id = registry / str(entry["creator_identity_file"])
+            if not c_sig.is_file():
+                raise ValueError(
+                    f"插件 {entry['id']} 声明了 creator_signature_file 但文件不存在"
+                )
             creator = json.loads(c_id.read_text(encoding="utf-8"))
             raw = base64.b64decode(str(creator["public_key"]), validate=True)
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -476,7 +485,9 @@ def _verify_signatures(
                 public_key.verify(c_sig.read_bytes(), plugin_path.read_bytes())
             except Exception:  # noqa: BLE001 - 验签失败即视为不可信
                 raise ValueError(f"插件 {entry['id']} 创作者签名校验失败（fail-closed）")
-        else:
+        if not has_maintainer_sig and not (
+            entry.get("creator_signature_file") and entry.get("creator_identity_file")
+        ):
             # build_catalog 已要求至少一条签名轨，此兜底不应触发
             raise ValueError(f"插件 {entry['id']} 缺少可验证的签名文件")
         # V1：创作者签名缺失 → 仅警告（V2 将强制要求补齐）

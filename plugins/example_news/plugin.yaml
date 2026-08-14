@@ -20,6 +20,10 @@ description_file: plugins/example_news/listing.md
 plugin_file: plugins/example_news/plugin.py
 signature_file: plugins/example_news/plugin.py.sig
 signature_algorithm: ed25519
+# 创作者轨：starlife（用户身份）对 plugin.py 的签名与公钥身份。
+# 与签名轨（维护者 Starlife-creator 背书）是两个独立身份、各自验签。
+creator_signature_file: plugins/example_news/creator.sig
+creator_identity_file: plugins/example_news/creator.identity
 permissions: []
 compatible_core: ">=0.7.0"
 license: MIT
