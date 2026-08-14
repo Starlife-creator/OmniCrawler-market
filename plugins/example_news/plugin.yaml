@@ -26,3 +26,10 @@ license: MIT
 tags: [example, source, news, template]
 updated_at: "2026-08-07"
 homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/example_news
+# scan_plugin 允许列表（发布前扫描：清单声明之外的文件 → 报错）。
+# .sig/.md/.pyc 等由扫描器 SKIP_SUFFIXES 排除，无需声明。
+files:
+  - plugin.py
+  - plugin.yaml
+  - creator.identity
+
