@@ -65,9 +65,12 @@ _TOKEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # 去掉后避免 32 位十六进制串被高熵检测误报为疑似密钥。
 _FINGERPRINT_VALUE_RE = re.compile(r"author_fingerprint:\s*[0-9a-f]{32}", re.IGNORECASE)
 
+# 私钥/凭据字段检测。豁免 secret:// 引用——那是主仓的凭据引用语法
+# （src/omnicrawl/core/credentials.py _SECRET_REF，形如 secret://<name>），
+# 值是密钥库条目名而非明文，不应误报为泄漏。
 _SECRET_FIELD_RE = re.compile(
     r"^\s*(private_key|secret_key|api_key|apikey|access_key|access_token|"
-    r"client_secret|auth_token|password|passwd)\s*[:=]\s*\S+",
+    r"client_secret|auth_token|password|passwd)\s*[:=]\s*(?!secret://)\S+",
     re.IGNORECASE,
 )
 
