@@ -12,8 +12,11 @@
 id: example_news
 name: 示例新闻站点适配器
 version: 1.0.0
-publisher: Starlife-creator
-author_fingerprint: d92fa9fbf75e823a5d606211bf10fed1
+# B02-028：author_fingerprint 按 templates/README.md 规范填【创作者公钥指纹】。
+# 本插件创作者为 starlife（creator.identity 指向 5dcd…），publisher 与之一致；
+# 维护者 starlife-creator 用信任根冷密钥对 plugin.py.sig 背书（独立身份）。
+publisher: starlife
+author_fingerprint: 5dcd59f72fc0ac05bbd4c989e997e0d8
 category: source
 summary: 为示例新闻站点强制附加 XHR 请求头并打站点标记，复用通用发现逻辑。
 description_file: plugins/example_news/listing.md
@@ -21,7 +24,7 @@ plugin_file: plugins/example_news/plugin.py
 signature_file: plugins/example_news/plugin.py.sig
 signature_algorithm: ed25519
 # 创作者轨：starlife（用户身份）对 plugin.py 的签名与公钥身份。
-# 与签名轨（维护者 Starlife-creator 背书）是两个独立身份、各自验签。
+# 与签名轨（维护者 starlife-creator 背书）是两个独立身份、各自验签。
 creator_signature_file: plugins/example_news/creator.sig
 creator_identity_file: plugins/example_news/creator.identity
 permissions: []
