@@ -1,13 +1,25 @@
 template_version: 1
 template:
-  id: sites/github-public-issues
+  id: sites/market/github-public-issues
   name: GitHub 公开仓库 Issues
   version: 1.0.0
   category: sites/development
   description: 使用 GitHub 官方 REST API 获取公开仓库 Issue/PR 列表，支持分页和并发控制以遵守速率额度
+  tags: [GitHub, Issues, REST, 开源项目]
+  capabilities: [rest, json, numbered-pagination, public-api]
+  domains: [api.github.com]
+  json_keys: [url, number, title, state]
+  placeholders:
+    owner: {label: 仓库所有者, required: true}
+    repository: {label: 仓库名称, required: true}
+    end_page: {label: 截止页码, default: 10}
+  source_urls:
+    - https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
+    - https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
   publisher: starlife
   author_fingerprint: 5dcd59f72fc0ac05bbd4c989e997e0d8
   min_core_version: 0.7.0
+  verified_at: '2026-07-18'
   license: GitHub API terms; repository content retains its original license
 project:
   name: github_public_issues

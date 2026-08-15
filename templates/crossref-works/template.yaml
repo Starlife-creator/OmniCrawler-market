@@ -1,13 +1,25 @@
 template_version: 1
 template:
-  id: sites/crossref-works
+  id: sites/market/crossref-works
   name: Crossref 学术文献元数据
   version: 1.0.0
   category: sites/academic
   description: 使用 Crossref 官方 REST API 按关键词检索论文元数据，并保留 DOI、作者、出版商等结构化信息
+  tags: [Crossref, DOI, 学术, 开放元数据]
+  capabilities: [rest, json, cursor-pagination, public-api]
+  domains: [api.crossref.org]
+  json_keys: [message, items, next-cursor]
+  placeholders:
+    query: {label: 检索词, required: true}
+    contact_email: {label: 维护者联系邮箱, required: true}
+  source_urls:
+    - https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+    - https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/
+    - https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/
   publisher: starlife
   author_fingerprint: 5dcd59f72fc0ac05bbd4c989e997e0d8
   min_core_version: 0.7.0
+  verified_at: '2026-07-18'
   license: Crossref metadata terms; abstracts may retain publisher copyright
 project:
   name: crossref_works
