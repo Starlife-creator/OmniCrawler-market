@@ -9,7 +9,7 @@ templates/<market_id>/
 ├── template.yaml.sig      # 最终分发签名（信任根验签；创作者签名时另有 creator.sig）
 ├── creator.identity       # 创作者身份（可选，P2P 分发形态）
 ├── creator.sig            # 创作者签名（可选）
-└── listing.md             # 功能说明（推荐）
+└── listing.md             # 功能说明（必需，generate_catalog 强制含 description_file）
 ```
 
 ## template: 块的市场字段
@@ -30,13 +30,14 @@ template:
 
 ## 签名与发布
 
-与插件完全一致：
+与插件完全一致。签名/验证工具 **`sign_plugin.py`、`market.py` 位于主仓库
+`OmniCrawler/tools/`**（不在本生态目录内）；从本仓库根执行时用相对路径引用：
 
 ```bash
 # 创作者签名（创建即签名，P2P 可用）
-python tools/sign_plugin.py creator-sign templates/<id>/ --file template.yaml --username <你>
+python ../OmniCrawler/tools/sign_plugin.py creator-sign templates/<id>/ --file template.yaml --username <你>
 # 市场分发签名（信任根冷私钥签，下载端/CI 校验它；统一生成 template.yaml.sig）
-python tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>
+python ../OmniCrawler/tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>
 ```
 
 生成目录索引：
@@ -49,6 +50,6 @@ CI 门禁自动覆盖：模板必填字段、作者指纹匹配、签名验签�
 
 ## 应用端消费
 
-- CLI：`python tools/market.py templates list|info|install|verify`
+- CLI：`python ../OmniCrawler/tools/market.py templates list|info|install|verify`
 - GUI：市场面板 →「模板」页
 - 安装到 `templates_installed/<id>/`，模板库（`TemplateCatalog` 用户目录）自动发现。

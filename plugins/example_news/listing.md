@@ -23,15 +23,15 @@
 无特殊权限（`permissions: []`）。它只通过平台提供的 `GenericSource` 接口操作自己的请求对象，不触达文件系统、网络出口或凭证。
 
 ## 兼容性
-- `compatible_core: ">=2.7.0"`
-- 仅依赖 `omnicrawl.models.CrawlRequest` 与 `omnicrawl.sources.GenericSource`（稳定 API）。
+- `compatible_core: ">=0.7.0"`（与 plugin.yaml 一致）
+- 仅依赖 `omnicrawl.sources.GenericSource`（稳定 API）。
 
 ## 使用方式
 1. 安装后，在任务的 `source.kind` 指向此插件注册的源名 `example_news`（或经由插件市场一键启用）。
 2. 平台加载时会在 `exec_module` 之前用信任根公钥验签；验签不通过则 fail-closed 拒载。
 
 ## 作者与版本
-- 作者 / 发布者：`Starlife-creator`
+- 作者 / 发布者：`starlife`（创作者；维护者 starlife-creator 背书）
 - 版本：`1.0.0`
 - 许可：`MIT`
 

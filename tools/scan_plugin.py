@@ -47,8 +47,13 @@ SENSITIVE_NAMES = {
 }
 SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".ppk", ".secret", ".gpg")
 SKIP_DIRS = {"__pycache__"}
-# .identity 是创作者公开公钥元数据（非凭据），与 .sig/.md 同类跳过内容扫描
-SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".md", ".identity")
+# B02-016：把「跳内容扫描」与「豁免允许列表」拆成两个集合。
+# - CONTENT_SKIP_SUFFIXES：结构化/派生物跳内容扫描（.sig 是 64 字节签名、.identity 是
+#   base64 公钥身份，必然高熵，扫了必误报；.pyc/.pyo 为编译产物）。
+# - ALLOWLIST_EXEMPT_SUFFIXES：无需在 manifest files 声明即可存在的文件（.md 说明正文必须
+#   **扫内容**——listing.md 是手写自由文本，是最常见的凭据泄漏载体）。
+CONTENT_SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".identity")
+ALLOWLIST_EXEMPT_SUFFIXES = (".pyc", ".pyo", ".sig", ".md", ".identity")
 DEFAULT_ENTROPY_THRESHOLD = 4.5
 MIN_TOKEN_LEN = 16
 
@@ -68,21 +73,29 @@ _FINGERPRINT_VALUE_RE = re.compile(r"author_fingerprint:\s*[0-9a-f]{32}", re.IGN
 # 私钥/凭据字段检测。豁免 secret:// 引用——那是主仓的凭据引用语法
 # （src/omnicrawl/core/credentials.py _SECRET_REF，形如 secret://<name>），
 # 值是密钥库条目名而非明文，不应误报为泄漏。
+# B02-017：键名允许可选双引号（JSON 引号键），值必须存在（防空值误报）。
 _SECRET_FIELD_RE = re.compile(
-    r"^\s*(private_key|secret_key|api_key|apikey|access_key|access_token|"
-    r"client_secret|auth_token|password|passwd)\s*[:=]\s*(?!secret://)\S+",
+    r"^\s*\"?(private_key|secret_key|api_key|apikey|access_key|access_token|"
+    r"client_secret|auth_token|password|passwd)\"?\s*[:=]\s*(?!secret://)\S+",
+    re.IGNORECASE,
+)
+
+# B02-017：结构化路径（YAML/JSON 解析后的 dict）用纯键名匹配，不再拼 "key:"。
+_SECRET_KEY_RE = re.compile(
+    r"^\"?(private_key|secret_key|api_key|apikey|access_key|access_token|"
+    r"client_secret|auth_token|password|passwd)\"?$",
     re.IGNORECASE,
 )
 
 
-def _iter_files(plugin_dir: Path) -> list[Path]:
+def _iter_files(plugin_dir: Path, *, skip_suffixes: tuple[str, ...]) -> list[Path]:
     files: list[Path] = []
     for path in plugin_dir.rglob("*"):
         if not path.is_file():
             continue
         if any(part in SKIP_DIRS for part in path.relative_to(plugin_dir).parts):
             continue
-        if path.suffix in SKIP_SUFFIXES:
+        if path.suffix in skip_suffixes:
             continue
         files.append(path)
     return sorted(files)
@@ -141,10 +154,17 @@ def _scan_file(path: Path, *, threshold: float) -> list[str]:
 
 
 def _scan_mapping_fields(data: Any, path: Path) -> list[str]:
+    """结构化扫描：解析后的 dict/list 中匹配敏感键名（B02-017 修复死代码）。
+
+    此前用 ``_SECRET_FIELD_RE.match(f"{key}:")`` 拼串，正则尾部 ``\\S+`` 永不匹配，
+    整条递归从未报出任何问题。现改为纯键名匹配 ``_SECRET_KEY_RE``。
+    """
     problems: list[str] = []
     if isinstance(data, dict):
         for key, value in data.items():
-            if _SECRET_FIELD_RE.match(f"{key}:"):
+            # 值为 secret://<name>（主仓密钥库引用，非明文）时豁免；
+            # 与文本行路径 _SECRET_FIELD_RE 的 (?!secret://) 负向前瞻一致。
+            if _SECRET_KEY_RE.match(str(key)) and not str(value).startswith("secret://"):
                 problems.append(f"{path.name}: 包含疑似私钥字段 {key}")
             problems += _scan_mapping_fields(value, path)
     elif isinstance(data, list):
@@ -162,9 +182,13 @@ def _scan_allowlist(plugin_dir: Path, manifest_path: Path | None) -> tuple[list[
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     allowed = manifest.get("files") if isinstance(manifest, dict) else None
     if not isinstance(allowed, list):
-        return ["manifest 未声明 files 允许列表（建议声明，从源头杜绝误打包敏感文件）"], errors
+        # B02-018：模板（template.yaml）schema 无 files 字段属预期，不强制；
+        # 插件若缺 files 仍建议声明。警告不影响退出码（仅 errors 计失败）。
+        return [
+            "manifest 未声明 files 允许列表（插件建议声明；模板 schema 无此字段属预期）"
+        ], errors
     allowed_set = {str(item) for item in allowed}
-    for path in _iter_files(plugin_dir):
+    for path in _iter_files(plugin_dir, skip_suffixes=ALLOWLIST_EXEMPT_SUFFIXES):
         if path.resolve() == manifest_path.resolve():
             continue  # 清单自身是元数据，不参与打包
         rel = path.relative_to(plugin_dir).as_posix()
@@ -185,7 +209,7 @@ def scan_plugin_dir(
         return 1
     errors: list[str] = []
     warnings: list[str] = []
-    for path in _iter_files(plugin_dir):
+    for path in _iter_files(plugin_dir, skip_suffixes=CONTENT_SKIP_SUFFIXES):
         name = path.name
         if name in SENSITIVE_NAMES or path.suffix.lower() in SENSITIVE_SUFFIXES:
             errors.append(f"敏感文件（黑名单）: {path.relative_to(plugin_dir)}")

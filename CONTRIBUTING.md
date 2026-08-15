@@ -21,14 +21,15 @@
 5. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`。
 6. 提交 PR。**所有提交必须 `git commit --signoff`（DCO）**。
 
-> 签名流程：
+> 签名流程（签名工具 `sign_plugin.py` 位于**主仓库** `OmniCrawler/tools/`，
+> 从本仓库根执行时用 `../OmniCrawler/tools/...` 引用）：
 > 1. **创作者签名（创建即签名，可选）**：创作者用本地身份签名，生成
 >    `creator.sig` + `creator.identity`（P2P 分发可用）：
->    `python tools/sign_plugin.py creator-sign plugins/<id>/ --username <你的用户名>`
+>    `python ../OmniCrawler/tools/sign_plugin.py creator-sign plugins/<id>/ --username <你的用户名>`
 > 2. **市场分发签名（必做）**：PR 审核合并后，由持有信任根冷私钥的维护者在离线机器
 >    用 `sign` 覆盖生成 `template.yaml.sig` / `plugin.py.sig`（下载端/CI 校验的唯一签名）：
->    `python tools/sign_plugin.py sign plugins/<id>/plugin.py --private-key <冷存储私钥>`
->    `python tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>`
+>    `python ../OmniCrawler/tools/sign_plugin.py sign plugins/<id>/plugin.py --private-key <冷存储私钥>`
+>    `python ../OmniCrawler/tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>`
 > 3. **市场分发签名统一用 `plugin.py.sig`**（由 `sign` 生成并覆盖）；旧版 `maintainer-sign`
 >    命令已删除，其产物 `maintainer.sig` 不再产生、验证器也不兼容。信任根签名即背书。
 
@@ -40,6 +41,11 @@
 | 2 | `creator.sig` + 指纹在信任列表 | 首次使用已授权 | 直接加载 |
 | 2b | `creator.sig` + 未信任 | 弹出信任提示 | 信任则加载，否则拒绝 |
 | 3 | 无签名 | — | 拒绝加载（配置信任根时） |
+
+> **B02-005 限定**：本表对插件与模板的**分发路径规则不同**——**模板强制要求
+> 维护者冷密钥签名**（`template.yaml.sig`，CI 拒无签名模板），层级 2/2b 的
+> 「仅创作者签名」只在 **P2P 分发**时成立，市场分发路径上不适用。插件则允许
+> 维护者轨或创作者轨二者有一即可。
 
 ## CI 门禁（合并前自动执行）
 

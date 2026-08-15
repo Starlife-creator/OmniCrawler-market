@@ -18,8 +18,8 @@ cryptography（ed25519 验签内联实现，不 import 应用包）。把整个�
       只校验不写盘（CI 门禁）。校验项：
         1. catalog.json 与 YAML 源完全一致（``generated_at`` 除外）；
         2. 每个 plugin.yaml 必填字段齐全、id 合法、引用文件存在；
-        3. ``author_fingerprint`` 在 ``authors/`` 有记录，且与 ``pubkey_ref``
-           指向公钥的实际指纹一致；
+        3. ``author_fingerprint`` 是**创作者公钥指纹**（与 templates/README.md
+           规范一致），须在 ``authors/`` 有记录且与 ``publisher`` 同名作者一致；
         4. 签名文件可用信任根公钥验签（``--trust`` > ``keys/``；
            cryptography 不可用时跳过并警告）。
   校验失败退出码 1，否则 0。
@@ -42,7 +42,9 @@ import yaml
 REGISTRY_DIR = Path(__file__).resolve().parents[1]
 
 SCHEMA_VERSION = 1
-TRUST_MODEL = "single-root-ed25519"
+# B02-020：双轨信任模型——维护者冷密钥背书（signature_file 对信任根）+
+# 创作者热密钥签名（creator.sig 对 creator.identity 公钥），两条轨独立验签。
+TRUST_MODEL = "dual-rail-ed25519"
 TRUST_KEY_REF = "keys/plugin_trust.pub.pem"
 # 信任根只认 keys/：拆库后主仓库不再是兄弟目录，「主仓库 configs/ 回退」
 # 的相对路径会解析到工作区外（P3-3），此前只是被 keys/ 存在而掩盖。
@@ -159,6 +161,18 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _require_contained(registry: Path, base: Path, rel: str, label: str) -> Path:
+    """B02-014：文件引用解析后必须仍在 registry 内（允许 ``..`` 但不越界）。
+
+    现有生产数据依赖 ``authors/../keys/x.pem`` 这种跨目录写法，所以不做
+    字面禁止 ``..``，只做最终落点的包含性判定。
+    """
+    resolved = (base / rel).resolve()
+    if not resolved.is_relative_to(registry.resolve()):
+        raise ValueError(f"{label} 解析后逃出 registry 根: {resolved}")
+    return resolved
+
+
 def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
     """把 plugin.yaml 转换为 catalog.json 条目（只透传 schema 字段）。"""
     missing = [key for key in _REQUIRED_KEYS if key not in manifest]
@@ -215,6 +229,15 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
         "tags": list(block.get("tags") or []),
         "updated_at": str(block.get("verified_at") or ""),
     }
+    # B02-002：模板创作者轨接入——creator.sig + creator.identity 随模板目录发布，
+    # catalog 条目声明两字段，校验与验签链路与插件创作者轨对齐。
+    if (template_dir / "creator.sig").is_file() and (template_dir / "creator.identity").is_file():
+        entry["creator_signature_file"] = (
+            f"{_TEMPLATES_DIR}/{template_dir.name}/creator.sig"
+        )
+        entry["creator_identity_file"] = (
+            f"{_TEMPLATES_DIR}/{template_dir.name}/creator.identity"
+        )
     if listing.is_file():
         entry["description_file"] = f"{_TEMPLATES_DIR}/{template_dir.name}/listing.md"
     for key in ("homepage",):
@@ -224,7 +247,11 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
 
 
 def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
-    """读取 authors/ 目录：username -> author 记录（含 pubkey 指纹）。"""
+    """读取 authors/ 目录：username -> author 记录（含 pubkey 指纹）。
+
+    B02-012：同 username 静默覆盖改为 fail-closed；并检查同一公钥指纹被
+    多个 username 登记（防止冒名顶替放大空间）。
+    """
     authors_dir = registry / _AUTHORS_DIR
     authors: dict[str, dict[str, Any]] = {}
     if not authors_dir.is_dir():
@@ -234,10 +261,16 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
         username = str(record.get("username", ""))
         if not username:
             raise ValueError(f"作者清单缺少 username: {yaml_file}")
+        if username in authors:
+            raise ValueError(
+                f"重复 username（禁止静默覆盖，B02-012）: {username}（{yaml_file} 与已有记录冲突）"
+            )
         pubkey_ref = record.get("pubkey_ref")
         fingerprint = record.get("fingerprint")
         if pubkey_ref:
-            pem = (authors_dir / str(pubkey_ref)).resolve()
+            pem = _require_contained(
+                registry, authors_dir, str(pubkey_ref), f"作者 {username} 的 pubkey_ref"
+            )
             if not pem.is_file():
                 raise ValueError(f"作者 {username} 的 pubkey_ref 不存在: {pubkey_ref}")
             actual = _raw_fingerprint(pem)
@@ -248,15 +281,31 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
         elif fingerprint:
             record["_fingerprint"] = str(fingerprint)
         authors[username] = record
+    # 同公钥多 username 检查（B02-012）：指纹是绝对唯一标识
+    by_fingerprint: dict[str, str] = {}
+    for username, record in sorted(authors.items()):
+        fp = str(record.get("_fingerprint", ""))
+        if not fp:
+            continue
+        if fp in by_fingerprint:
+            raise ValueError(
+                f"同一公钥指纹被多个 username 登记（B02-012）: "
+                f"{by_fingerprint[fp]} 与 {username} 共享指纹 {fp}"
+            )
+        by_fingerprint[fp] = username
     return authors
 
 
 def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) -> None:
     fingerprint = str(manifest.get("author_fingerprint", ""))
+    publisher = str(manifest.get("publisher", ""))
     if not fingerprint:
         raise ValueError(f"插件 {manifest.get('id', '?')} 缺少 author_fingerprint")
-    record = authors.get(str(manifest.get("publisher", "")))
+    record = authors.get(publisher)
     if record is None:
+        # B02-011：publisher 名未在 authors/ 登记时，按指纹找到唯一作者后
+        # 必须要求 publisher 与作者 username 严格一致（fail-closed），
+        # 杜绝「填不存在的 publisher 名 + 任意登记指纹」绕过严格比对。
         found = next(
             (author for author in authors.values() if author.get("_fingerprint") == fingerprint),
             None,
@@ -264,6 +313,11 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
         if found is None:
             raise ValueError(
                 f"插件 {manifest.get('id')} 的 author_fingerprint {fingerprint} 在 authors/ 无对应记录"
+            )
+        if found.get("username") != publisher:
+            raise ValueError(
+                f"插件 {manifest.get('id')} 的 publisher '{publisher}' 与作者 "
+                f"'{found.get('username')}' 不一致（author_fingerprint 属于后者，B02-011）"
             )
         return
     if record.get("_fingerprint") != fingerprint:
@@ -276,17 +330,20 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
 def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
     """创作者轨完整性校验（方案 B：与维护者轨独立，不做跨轨相等）。
 
-    多重信任模型下 ``author_fingerprint`` 属于**发布者/维护者轨**（由
-    _check_author 独立校验）；``creator.identity`` 属于**创作者轨**——
-    两个身份本就可以不同（创作者写插件、维护者背书），因此**绝不要求
-    两者指纹相等**。此处只做创作者轨自身的完整性：
+    ``author_fingerprint`` 是**创作者公钥指纹**（B02-013 对齐 templates/README.md
+    规范，由 _check_author 校验）；``creator.identity`` 属于创作者轨本身——
+    维护者用信任根冷密钥背书（plugin.py.sig / template.yaml.sig）是独立身份。
+    此处只做创作者轨自身的完整性：
     1. ``creator.identity`` 文件存在且为合法 JSON；
     2. 公钥现场推导指纹与 identity 自称指纹一致（防身份冒充/篡改）。
     ``creator.sig`` 对 ``creator.identity`` 公钥的实际验签在 _verify_signatures。
     """
     if not entry.get("creator_identity_file"):
         return  # 无创作者轨（纯维护者签名）时无需检查
-    ident_path = registry / str(entry["creator_identity_file"])
+    ident_path = _require_contained(
+        registry, registry, str(entry["creator_identity_file"]),
+        f"{entry.get('id', '?')} 的 creator_identity_file",
+    )
     if not ident_path.is_file():
         raise ValueError(f"插件 {entry.get('id', '?')} 声明了 creator_identity_file 但文件不存在")
     try:
@@ -296,7 +353,12 @@ def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
         raise ValueError(f"插件 {entry.get('id', '?')} 的 creator.identity 非法: {exc}") from exc
     derived = hashlib.sha256(raw).hexdigest()[:32]
     declared = str(creator.get("key_fingerprint", "")).strip().lower()
-    if declared and declared != derived:
+    if not declared:
+        # B02-022：key_fingerprint 列为 .identity 必填，缺失不得静默跳过一致性校验。
+        raise ValueError(
+            f"插件 {entry.get('id', '?')} 的 creator.identity 缺少 key_fingerprint（必填）"
+        )
+    if declared != derived:
         raise ValueError(
             f"插件 {entry.get('id', '?')} 的 creator.identity 自称指纹 {declared} "
             f"与公钥实际指纹 {derived} 不一致（疑似身份冒充或文件被篡改）"
@@ -336,9 +398,15 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
 
     entries: list[dict[str, Any]] = []
     publishers: list[str] = []
+    seen_plugin_ids: set[str] = set()
     for manifest_path in sorted(plugins_dir.glob("*/plugin.yaml")):
         manifest = _load_yaml(manifest_path)
         entry = _entry_from_yaml(manifest, manifest_path)
+        pid = str(entry["id"])
+        # B02-015：重复插件 ID 静默后者覆盖 → fail-closed 显式报错（对齐模板 G7）
+        if pid in seen_plugin_ids:
+            raise ValueError(f"重复插件 ID（禁止静默覆盖）: {pid}（{manifest_path}）")
+        seen_plugin_ids.add(pid)
         entries.append(entry)
         publisher = str(entry.get("publisher", ""))
         if publisher and publisher not in publishers:
@@ -377,8 +445,10 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
         _check_creator_rail(registry, entry)
         for key in ("description_file", "plugin_file"):
             rel = entry.get(key)
-            if rel and not (registry / str(rel)).is_file():
-                raise ValueError(f"插件 {entry['id']} 的 {key} 不存在: {rel}")
+            if rel:
+                resolved = _require_contained(registry, registry, str(rel), f"插件 {entry['id']} 的 {key}")
+                if not resolved.is_file():
+                    raise ValueError(f"插件 {entry['id']} 的 {key} 不存在: {rel}")
         # 签名轨完整性：维护者签名（signature_file）与创作者签名
         # （creator_signature_file + creator_identity_file）至少一条完备。
         # 修复前 GUI 上传包声明 signature_file 却不出产该文件（审查报告 S50），
@@ -399,10 +469,13 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
                 f"或 creator.sig + creator.identity（创作者签名）"
             )
     for entry in template_entries:
-        for key in ("template_file", "signature_file", "description_file"):
+        _check_creator_rail(registry, entry)
+        for key in ("template_file", "signature_file", "description_file", "creator_signature_file", "creator_identity_file"):
             rel = entry.get(key)
-            if rel and not (registry / str(rel)).is_file():
-                raise ValueError(f"模板 {entry['id']} 的 {key} 不存在: {rel}")
+            if rel:
+                resolved = _require_contained(registry, registry, str(rel), f"模板 {entry['id']} 的 {key}")
+                if not resolved.is_file():
+                    raise ValueError(f"模板 {entry['id']} 的 {key} 不存在: {rel}")
 
     entries.sort(key=lambda item: str(item["id"]))
     template_entries.sort(key=lambda item: str(item["id"]))
@@ -501,11 +574,34 @@ def _verify_signatures(
         ok = _verify_signature(template_path.read_bytes(), sig_path.read_bytes(), trust)
         if not ok:
             raise ValueError(f"模板 {entry['id']} 签名校验失败（fail-closed）")
+        # B02-002：模板创作者轨独立验签——creator.sig 对 creator.identity 公钥
+        if entry.get("creator_signature_file") and entry.get("creator_identity_file"):
+            c_sig = registry / str(entry["creator_signature_file"])
+            c_id = registry / str(entry["creator_identity_file"])
+            if not c_sig.is_file():
+                raise ValueError(
+                    f"模板 {entry['id']} 声明了 creator_signature_file 但文件不存在"
+                )
+            creator = json.loads(c_id.read_text(encoding="utf-8"))
+            raw = base64.b64decode(str(creator["public_key"]), validate=True)
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PublicKey,
+            )
+
+            public_key = Ed25519PublicKey.from_public_bytes(raw)
+            try:
+                public_key.verify(c_sig.read_bytes(), template_path.read_bytes())
+            except Exception:  # noqa: BLE001 - 验签失败即视为不可信
+                raise ValueError(f"模板 {entry['id']} 创作者签名校验失败（fail-closed）")
     return warnings
 
 
 def generate(registry: Path, *, publisher_override: str | None = None) -> Path:
     catalog = build_catalog(registry, publisher_override=publisher_override)
+    # B02-024：生成路径同样验签（fail-closed 一致）。build_catalog 已保证签名文件
+    # 存在（插件至少一条轨、模板强制维护者签名），此处只会在签名无效/信任根缺失时
+    # 失败，防止本地生成签名无效的 catalog.json 被提交、等到 CI 才暴露。
+    _verify_signatures(registry, catalog, None)
     output = registry / "catalog.json"
     output.write_text(
         json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
