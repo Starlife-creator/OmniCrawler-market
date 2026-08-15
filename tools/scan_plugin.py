@@ -48,10 +48,11 @@ SENSITIVE_NAMES = {
 SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".ppk", ".secret", ".gpg")
 SKIP_DIRS = {"__pycache__"}
 # B02-016：把「跳内容扫描」与「豁免允许列表」拆成两个集合。
-# - CONTENT_SKIP_SUFFIXES：二进制/派生物跳内容扫描（.sig 是 64 字节签名必然高熵，扫了必误报）。
+# - CONTENT_SKIP_SUFFIXES：结构化/派生物跳内容扫描（.sig 是 64 字节签名、.identity 是
+#   base64 公钥身份，必然高熵，扫了必误报；.pyc/.pyo 为编译产物）。
 # - ALLOWLIST_EXEMPT_SUFFIXES：无需在 manifest files 声明即可存在的文件（.md 说明正文必须
 #   **扫内容**——listing.md 是手写自由文本，是最常见的凭据泄漏载体）。
-CONTENT_SKIP_SUFFIXES = (".pyc", ".pyo", ".sig")
+CONTENT_SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".identity")
 ALLOWLIST_EXEMPT_SUFFIXES = (".pyc", ".pyo", ".sig", ".md", ".identity")
 DEFAULT_ENTROPY_THRESHOLD = 4.5
 MIN_TOKEN_LEN = 16
@@ -161,7 +162,9 @@ def _scan_mapping_fields(data: Any, path: Path) -> list[str]:
     problems: list[str] = []
     if isinstance(data, dict):
         for key, value in data.items():
-            if _SECRET_KEY_RE.match(str(key)):
+            # 值为 secret://<name>（主仓密钥库引用，非明文）时豁免；
+            # 与文本行路径 _SECRET_FIELD_RE 的 (?!secret://) 负向前瞻一致。
+            if _SECRET_KEY_RE.match(str(key)) and not str(value).startswith("secret://"):
                 problems.append(f"{path.name}: 包含疑似私钥字段 {key}")
             problems += _scan_mapping_fields(value, path)
     elif isinstance(data, list):
