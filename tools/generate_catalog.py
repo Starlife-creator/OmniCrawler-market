@@ -379,8 +379,9 @@ def _check_display_name_suffixes(authors: dict[str, dict[str, Any]]) -> None:
         head, _, tail = display_name.rpartition("-")
         if head and tail.isdigit():
             base, suffix = head, tail
-        groups.setdefault(base, []).append(suffix or "")
+        groups.setdefault(base.casefold(), []).append(suffix or "")
     for base, suffixes in sorted(groups.items()):
+        # B02-021：分组键 casefold——Foo 与 foo 视为同名，防大小写变体绕过后缀约束
         plain = [item for item in suffixes if item == ""]
         numbered = sorted(item for item in suffixes if item != "")
         if len(plain) > 1:
