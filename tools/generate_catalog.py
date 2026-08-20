@@ -472,6 +472,44 @@ def _check_display_name_suffixes(authors: dict[str, dict[str, Any]]) -> None:
             raise ValueError(f"显示名 {base!r} 的后缀不连续（应为 -01、-02…，实际 {numbered}）")
 
 
+def _load_tombstones(registry: Path) -> list[dict[str, Any]]:
+    """A5 tombstone：已下架插件/模板的墓碑条目（保留审计连续性）。
+
+    ``tombstones.json`` 为仓库根的可选文件，形如：
+    ``[{"id": "some_plugin", "removed_at": "2026-08-20", "reason": "恶意吊销"}]``。
+    校验：id/removed_at/reason 必填；与现存 plugin/template 目录冲突 → 拒（防
+    误把在线插件标为下架）。tombstone 不进入 plugins/templates 数组，单独成块，
+    应用端（market_client）据此在吊销检查时给出"已下架"提示而非静默缺失。
+    """
+    path = registry / "tombstones.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"tombstones.json 非法 JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise ValueError("tombstones.json 顶层必须是数组")
+    existing_plugin_ids = {p.name for p in (registry / _PLUGIN_DIR).glob("*") if p.is_dir()} if (registry / _PLUGIN_DIR).is_dir() else set()
+    existing_template_ids = {t.name for t in (registry / _TEMPLATES_DIR).glob("*") if t.is_dir()} if (registry / _TEMPLATES_DIR).is_dir() else set()
+    tombstones: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError(f"tombstone 条目必须是映射: {item!r}")
+        for key in ("id", "removed_at", "reason"):
+            if not str(item.get(key) or "").strip():
+                raise ValueError(f"tombstone 缺少必填字段 {key}: {item!r}")
+        tid = str(item["id"])
+        if tid in existing_plugin_ids or tid in existing_template_ids:
+            raise ValueError(f"tombstone {tid!r} 与现存插件/模板目录冲突（下架条目不得在线）")
+        tombstones.append({
+            "id": tid,
+            "removed_at": str(item["removed_at"]),
+            "reason": str(item["reason"]),
+        })
+    return tombstones
+
+
 def build_catalog(registry: Path, *, publisher_override: str | None = None) -> dict[str, Any]:
     plugins_dir = registry / _PLUGIN_DIR
     if not plugins_dir.is_dir():
@@ -561,7 +599,7 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     entries.sort(key=lambda item: str(item["id"]))
     template_entries.sort(key=lambda item: str(item["id"]))
     publisher = publisher_override or (publishers[0] if publishers else "unknown")
-    return {
+    catalog = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "publisher": publisher,
@@ -570,6 +608,10 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
         "plugins": entries,
         "templates": template_entries,
     }
+    tombstones = _load_tombstones(registry)
+    if tombstones:
+        catalog["tombstones"] = tombstones
+    return catalog
 
 
 def _resolve_trust(registry: Path, trust_source: str | None) -> str:

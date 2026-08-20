@@ -7,7 +7,7 @@
 > `plugins/<id>/plugin.yaml`（每个插件一个，唯一元数据源）与
 > `templates/<id>/template.yaml`（每个模板一个）聚合生成的。修改元数据
 > 请编辑对应的 YAML 后运行 `python tools/generate_catalog.py`。
-> CI（`.github/workflows/registry.yml`）会用 `--check` 校验生成物一致性。
+> CI（`.github/workflows/validate.yml`）会用 `--check` 校验生成物一致性。
 
 ## 顶层字段
 
@@ -16,7 +16,7 @@
 | `schema_version` | int | catalog 格式版本，当前 `1` |
 | `generated_at` | string (ISO8601) | 生成时间，便于缓存失效（一致性校验时忽略） |
 | `publisher` | string | 目录发布者（默认取首个插件的发布者，可用 `--publisher` 覆盖） |
-| `trust_model` | string | 信任模型，当前固定 `single-root-ed25519` |
+| `trust_model` | string | 信任模型，当前 `dual-rail-ed25519`（维护者冷签名 + 创作者热签名双轨，第 64/70 轮修正：原 `single-root-ed25519` 为过时描述） |
 | `trust_public_key_ref` | string | 验签公钥引用（相对 registry 基址的路径，本目录 `keys/plugin_trust.pub.pem`；与应用 `plugins.trust_public_key` 是同一把公钥） |
 | `plugins` | array | 已审核插件条目数组 |
 | `templates` | array | 已审核模板条目数组（可为空） |
@@ -37,7 +37,15 @@
 | `signature_algorithm` | string | ✓ | 当前固定 `ed25519` |
 | `permissions` | array[string] | ✓ | 插件声明的权限列表（空数组表示无） |
 | `compatible_core` | string | ✓ | 兼容的核心版本约束，如 `>=2.7.0` |
-| `license` | string | | 许可协议（如 `MIT`）。**缺省回退 `OmniCrawler-MIT`**（与模板一致，避免"未知许可"）；显式声明则原样透传 |
+| `license` | string | ✓ | **必填**（Phase 1 起无隐式默认）。插件须为 SPDX 白名单内标识（见门 2）：`AGPL-3.0-only/or-later`、`GPL-3.0-only/or-later`、`MIT`、`Apache-2.0`、`BSD-2-Clause/3-Clause`、`CC0-1.0`、`Unlicense`；白名单外（如 `GPL-2.0-*`/`CC-BY-NC-*`/`LicenseRef-*`）→ 拒绝。模板不适用白名单（license 为数据/服务条款自由文本，但必填） |
+| `execution_mode` | string | | `in_process` \| `subprocess`（Phase 1 B1）。**缺省 `subprocess`**（未声明即 subprocess，无兼容语义）；非法枚举拒绝 |
+| `domains` | array[string] | | network 权限的域名白名单（随 domains 同机制受门 1 校验） |
+| `input_files` | array[string] | | files:read 权限的路径白名单（第 82 轮更名：原 `files` 与 scan_plugin 扫描允许列表冲突） |
+| `release_channel` | string | | `stable` \| `beta`；beta 强制 subprocess + 界面标注"测试版" |
+| `dependencies` | array[object] | | `[{name, version, license}]`；空数组合法。门 3 校验声明↔实测导入图双向一致 + 许可白名单 |
+| `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |
+| `gates_evidence` | object | | tag 门禁证据摘要（四门通过状态 + 时间戳 + tag 哈希，随 catalog 签名覆盖；批准矩阵离线凭据，第 78 轮） |
+| `creator_signature_file` / `creator_identity_file` | string | | 创作者轨签名与公钥身份（与维护者轨独立验签，B02-020 双轨） |
 | `tags` | array[string] | | 标签，便于检索 |
 | `updated_at` | string (date) | | 最近更新日期 |
 | `homepage` | string (URL) | | 插件主页（可选） |
