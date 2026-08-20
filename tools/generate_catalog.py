@@ -72,6 +72,18 @@ _ENTRY_KEYS = [
     "homepage",
     "creator_signature_file",
     "creator_identity_file",
+    # Phase 1 第 2 条（B1 schema 扩展）：执行模式与网络域白名单入 catalog
+    "execution_mode",
+    "domains",
+    # 注：B1 方案字段名 files（files:read 路径白名单）与本仓既有的 files
+    # （scan_plugin 扫描允许列表，生产已用）同名冲突——第 82 轮落地时消歧为
+    # input_files（方案 B1/术语表已同步更名）；files 保留为扫描期元数据
+    # （_TOP_LEVEL_EXTRA，不进 catalog）。
+    "input_files",
+    "release_channel",
+    "dependencies",
+    "review_depth",
+    "gates_evidence",
 ]
 _REQUIRED_KEYS = [
     "id",
@@ -110,7 +122,9 @@ _ID_RE_PREFIX = "^[a-z][a-z0-9_-]{1,63}$"
 # 模板 ID 允许层级命名（如 generic/single-page），与内置模板目录一致
 _TEMPLATE_ID_RE_PREFIX = "^[a-z][a-z0-9_-]*(/[a-z0-9_-]+)*$"
 # 允许出现在 plugin.yaml 但**不进入 catalog.json 条目**的键：
-# author_fingerprint（跨轨校验用）、files（scan_plugin 允许列表，纯扫描期元数据）
+# author_fingerprint（跨轨校验用）、files（scan_plugin 允许列表，纯扫描期元数据）。
+# 注：B1 的 files:read 路径白名单字段落地时更名为 input_files（第 82 轮消歧），
+# 避免与本键冲突。
 _TOP_LEVEL_EXTRA = {"author_fingerprint", "files"}
 
 # 门 2（许可合规，Phase 1）：插件代码许可 SPDX 白名单（方案 A2）。
@@ -214,6 +228,37 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
         )
     if not re.match(_ID_RE_PREFIX, str(entry["id"])):
         raise ValueError(f"非法插件 ID（须匹配 {_ID_RE_PREFIX}）: {entry['id']}")
+    # Phase 1 第 2 条（B1）：execution_mode 缺省 subprocess（未声明按 subprocess，
+    # 无兼容语义）；显式声明须为合法枚举。in_process 是特权申请（3.2 批准矩阵
+    # 运行期裁决，catalog 侧只记录声明）。
+    declared_mode = entry.get("execution_mode")
+    if declared_mode is None:
+        entry["execution_mode"] = "subprocess"
+    elif str(declared_mode) not in ("in_process", "subprocess"):
+        raise ValueError(
+            f"插件 {entry['id']} 的 execution_mode 非法: {declared_mode!r}"
+            f"（仅 in_process | subprocess）"
+        )
+    # domains：network 权限的域名白名单（schema 层仅校验类型/格式，
+    # "有 network 权限必须有 domains" 的一致性属门 1，scan_plugin Phase 2）
+    domains = entry.get("domains")
+    if domains is not None:
+        if not isinstance(domains, list) or not all(
+            isinstance(d, str) and d.strip() for d in domains
+        ):
+            raise ValueError(f"插件 {entry['id']} 的 domains 必须是域名非空字符串列表")
+    # dependencies：[{name, version, license}]（第 67 轮必填语义在主仓门 3 校验，
+    # catalog 侧仅透传；未声明时缺省空列表）
+    deps = entry.get("dependencies")
+    if deps is not None:
+        if not isinstance(deps, list):
+            raise ValueError(f"插件 {entry['id']} 的 dependencies 必须是列表")
+        for dep in deps:
+            if not isinstance(dep, dict) or not dep.get("name"):
+                raise ValueError(
+                    f"插件 {entry['id']} 的 dependencies 条目非法: {dep!r}"
+                    f"（须为含 name 的映射）"
+                )
     return entry
 
 
@@ -735,7 +780,12 @@ def _check_version_rules(
         changed: list[str] = []
         if str(entry.get("license", "")) != str(prev.get("license", "")):
             changed.append("license")
-        if str(entry.get("execution_mode", "")) != str(prev.get("execution_mode", "")):
+        # execution_mode 比对前做 schema 迁移归一化：旧 catalog 无此字段时
+        # 等价于缺省 subprocess（Phase 1 语义），不算字段变更（防 schema
+        # 迁移首跑被门 4 误报为"变更未升版"）
+        new_mode = str(entry.get("execution_mode") or "subprocess")
+        old_mode = str(prev.get("execution_mode") or "subprocess")
+        if new_mode != old_mode:
             changed.append("execution_mode")
         if changed and _parse_version(new_version) <= _parse_version(old_version):
             raise ValueError(
