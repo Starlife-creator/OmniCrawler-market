@@ -24,7 +24,7 @@
 
 ## 兼容性
 - `compatible_core: ">=0.7.0"`（与 plugin.yaml 一致）
-- 仅依赖 `omnicrawl.sources.GenericSource`（稳定 API）。
+- 仅依赖 `omnicrawler.sources.GenericSource`（稳定 API）。
 
 ## 使用方式
 1. 安装后，在任务的 `source.kind` 指向此插件注册的源名 `example_news`（或经由插件市场一键启用）。

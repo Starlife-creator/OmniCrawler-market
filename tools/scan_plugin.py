@@ -71,7 +71,7 @@ _TOKEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _FINGERPRINT_VALUE_RE = re.compile(r"author_fingerprint:\s*[0-9a-f]{32}", re.IGNORECASE)
 
 # 私钥/凭据字段检测。豁免 secret:// 引用——那是主仓的凭据引用语法
-# （src/omnicrawl/core/credentials.py _SECRET_REF，形如 secret://<name>），
+# （src/omnicrawler/core/credentials.py _SECRET_REF，形如 secret://<name>），
 # 值是密钥库条目名而非明文，不应误报为泄漏。
 # B02-017：键名允许可选双引号（JSON 引号键），值必须存在（防空值误报）。
 _SECRET_FIELD_RE = re.compile(

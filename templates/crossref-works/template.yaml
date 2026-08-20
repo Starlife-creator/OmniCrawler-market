@@ -17,7 +17,7 @@ template:
     - https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/
     - https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/
   publisher: starlife
-  author_fingerprint: 5dcd59f72fc0ac05bbd4c989e997e0d8
+  author_fingerprint: 4c3014804d85de2568f85e62a3048429
   min_core_version: 0.7.0
   verified_at: '2026-07-18'
   license: Crossref metadata terms; abstracts may retain publisher copyright

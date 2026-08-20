@@ -17,7 +17,7 @@ template:
     - https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
     - https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
   publisher: starlife
-  author_fingerprint: 5dcd59f72fc0ac05bbd4c989e997e0d8
+  author_fingerprint: 4c3014804d85de2568f85e62a3048429
   min_core_version: 0.7.0
   verified_at: '2026-07-18'
   license: GitHub API terms; repository content retains its original license
