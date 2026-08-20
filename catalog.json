@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-20T08:35:53+00:00",
+  "generated_at": "2026-08-20T18:55:02+00:00",
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
