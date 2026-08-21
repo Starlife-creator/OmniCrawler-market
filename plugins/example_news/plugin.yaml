@@ -30,8 +30,11 @@ creator_identity_file: plugins/example_news/creator.identity
 permissions: []
 compatible_core: ">=0.7.0"
 license: MIT
-tags: [example, source, news, template]
-updated_at: "2026-08-07"
+# Phase 2a：契约 2 子进程样板——显式声明 subprocess（缺省亦为 subprocess，
+# 显式声明作样板意图说明）。契约 2 handle 形态运行于隔离沙箱。
+execution_mode: subprocess
+tags: [example, source, news, template, contract2]
+updated_at: "2026-08-21"
 homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/example_news
 # scan_plugin 允许列表（发布前扫描：清单声明之外的文件 → 报错）。
 # .sig/.md/.pyc 等由扫描器 SKIP_SUFFIXES 排除，无需声明。
