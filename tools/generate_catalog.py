@@ -587,6 +587,17 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
                 f"插件 {entry['id']} 缺少完整签名轨：需要 plugin.py.sig（维护者补签）"
                 f"或 creator.sig + creator.identity（创作者签名）"
             )
+        # G1（time-of-check 后门防线）：固化 plugin.py 当前内容 sha256——恶意
+        # 作者在 CI 绿后改内容，客户端下载校验即发现。写入 versions 映射，
+        # 历史版本哈希随发布历史累积（git-as-registry 单目录布局下当前版本
+        # 哈希由最新 tag 门禁生成）。
+        plugin_rel = entry.get("plugin_file")
+        if plugin_rel:
+            plugin_path = registry / str(plugin_rel)
+            if plugin_path.is_file():
+                digest = hashlib.sha256(plugin_path.read_bytes()).hexdigest()
+                versions = entry.setdefault("versions", {})
+                versions[str(entry["version"])] = {"sha256": digest}
     for entry in template_entries:
         _check_creator_rail(registry, entry)
         for key in ("template_file", "signature_file", "description_file", "creator_signature_file", "creator_identity_file"):
@@ -599,9 +610,14 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     entries.sort(key=lambda item: str(item["id"]))
     template_entries.sort(key=lambda item: str(item["id"]))
     publisher = publisher_override or (publishers[0] if publishers else "unknown")
+    generated_at = datetime.now(timezone.utc)
     catalog = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": generated_at.isoformat(timespec="seconds"),
+        # G3（catalog 防重放）：单调序列号 + 发布时间戳（均被签名覆盖）。
+        # 客户端拒绝序列号/时间旧于本地缓存的 catalog（decision:
+        # catalog_stale_rejected）——吊销不可被旧版 catalog 重放隐藏。
+        "sequence": int(generated_at.timestamp()),
         "publisher": publisher,
         "trust_model": TRUST_MODEL,
         "trust_public_key_ref": TRUST_KEY_REF,
