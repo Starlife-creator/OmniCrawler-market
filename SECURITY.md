@@ -52,5 +52,11 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
 
 ## 密钥轮换与灾难恢复
 
-- 密钥轮换：新公钥随应用发布内置，旧签名仍可验证。
-- 灾难恢复：私钥采用 Shamir Secret Sharing 分片（N-of-M 恢复），分片各自独立保管。
+- 密钥轮换（规划中）：远期目标为多信任根共存（新公钥随应用发布内置、旧签名仍可验证）。
+  **当前实态是单信任根 + 全量重签**——更换维护者冷私钥后，用主仓
+  `tools/ressign_market.py` 重签全部分发签名（`*.sig`），并同步信任根公钥、
+  `authors/` 记录与各 `plugin.yaml` 的 `author_fingerprint`；旧签名随之退役。
+- 灾难恢复：私钥 Shamir 分片恢复（N-of-M）为**远期设计，未实施**。当前做法是
+  口令加密的双份冷备份、异地存放。身份彻底丢失时的兜底路径：
+  重建作者身份 + `ressign_market.py` 全量重签，市场生态可整体续命
+  （流程见主仓《维护者全流程维护方案》§8）。

@@ -20,6 +20,8 @@
 | `trust_public_key_ref` | string | 验签公钥引用（相对 registry 基址的路径，本目录 `keys/plugin_trust.pub.pem`；与应用 `plugins.trust_public_key` 是同一把公钥） |
 | `plugins` | array | 已审核插件条目数组 |
 | `templates` | array | 已审核模板条目数组（可为空） |
+| `sequence` | int | 单调递增目录版本号（每次生成更新）。客户端防重放：拒绝接受 sequence 回退的 catalog |
+| `tombstones` | array | **可选**（仓库根存在 `tombstones.json` 时输出）。已下架条目 `[{id, removed_at, reason}]`；与现存插件/模板目录冲突会被生成器拒绝（下架条目不得在线）。应用端据此给出"已下架"提示而非静默缺失 |
 
 ## 插件条目字段（`plugins[]`）
 
