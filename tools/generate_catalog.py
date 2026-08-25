@@ -794,10 +794,11 @@ def _load_prev_catalog(registry: Path, explicit: str | None) -> dict[str, Any] |
             ["git", "show", "HEAD^:catalog.json"],
             cwd=str(registry),
             capture_output=True,
-            text=True,
+            encoding="utf-8",          # P2-5：显式 UTF-8，避免 Windows locale(GBK) 解码崩
+            errors="replace",          # 非 UTF-8 字节降级替换，绝不抛异常
             timeout=30,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
         return None
     if result.returncode != 0 or not result.stdout.strip():
         return None
