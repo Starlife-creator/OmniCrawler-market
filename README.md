@@ -89,12 +89,24 @@ OmniCrawler-market/
 
 ## 信任模型
 
-- **单信任根 ed25519**：签名用持有者冷存储的私钥生成，验签用随包分发的公钥
-  `configs/plugin_trust.pub.pem`（本目录 `keys/` 存有一份相同副本，拆库后独立可用）。
-- 应用加载插件前会 fail-closed 验签；验签失败直接拒载。
-- 贡献者无法自签——提交后由持有私钥的发布者审核并签名，签名即背书。
+双轨签名（2026-08 起），两条轨独立验签、互不替代：
+
+- **维护者轨（分发签名，单信任根 ed25519）**：`plugin.py.sig` /
+  `template.yaml.sig` 用维护者冷存储私钥生成，验签公钥随包分发
+  （`configs/plugin_trust.pub.pem`，本目录 `keys/` 存有相同副本，拆库后独立可用）。
+  应用加载前 fail-closed 验签；验签失败直接拒载。**模板强制此轨**；
+  插件可选（仅有创作者轨亦可通过生成器完整性校验）。
+- **创作者轨**：贡献者可用本地身份自签插件（`creator.identity` + `creator.sig`，
+  公钥指纹记录在 identity 中）。创作者签名可过生成器完整性校验，但**不构成
+  市场背书**：非市场来源（本地安装）按 CreatorTrusted/CreatorUntrusted 分级
+  （不在信任列表则拒绝或弹窗询问）；**市场来源**插件则只认维护者签名，
+  创作者签名在加载端一律拒绝。即："无法自签"仅对模板成立，且创作者轨
+  不能替代分发签名被最终用户加载。
 - `authors/<username>.yaml` 的 `fingerprint`（公钥 SHA-256 前 16 字节 hex）是
   生态中**绝对唯一标识**；插件清单必须声明 `author_fingerprint` 且与作者记录一致。
+- 已知边界：当前生成器不强制 `creator.identity` 与 `authors/` 记录交叉绑定，
+  创作者身份的真实性依赖人工审核——对外招募贡献者前应补齐该校验
+  （见 SECURITY.md 双轨说明与主仓审查报告 U-7）。
 
 ## catalog.json 是派生物
 
@@ -133,11 +145,18 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
    `authors/<username>.yaml`）。
 4. 通过插件契约测试（主仓库 `tests/unit/plugin/`）。
 5. 提交 PR；维护者审核 `listing.md` 与代码。
-6. 审核通过后，由持有冷私钥的发布者在**冷机器**上签名（覆盖 `<file>.sig`，
-   该文件即下载端/CI 校验的最终分发签名，也是下载端/CI 校验的唯一签名）：
-   - 插件：`python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
-   - 模板：`python tools/sign_plugin.py sign templates/<template_id>/template.yaml`
-   （私钥位于维护者冷存储介质，绝不入库。）
+6. 分发签名：
+   - **模板（必经此步）**：审核通过后，由持有冷私钥的发布者在**冷机器**上签名
+     （覆盖 `template.yaml.sig`，下载端/CI 校验的唯一分发签名）：
+     `python tools/sign_plugin.py sign templates/<template_id>/template.yaml`
+   - **插件（二选一）**：作者已附创作者轨（`creator.sig` + `creator.identity`）
+     即可通过生成器校验；若需要维护者分发背书，由发布者冷签：
+     `python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
+     （私钥位于维护者冷存储介质，绝不入库。）
+     ⚠️ 注意：仅创作者轨的插件虽能进入目录，但应用端对**市场来源**插件
+     只认维护者签名——未冷签的市场插件在用户端会被拒绝加载
+     （`plugins.py` is_market 分支）。因此对外分发的插件实际上仍需第 6 步冷签；
+     创作者轨的意义是让贡献者先入库待审，而非替代分发签名。
 7. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`，一并合并。
 
 > CI 门禁（`.github/workflows/validate.yml`）：PR 若修改 `plugins/`、`authors/`、
