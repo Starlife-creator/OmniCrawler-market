@@ -4,6 +4,12 @@
 目录结构即索引——每个插件一个 `plugin.yaml` 清单，`authors/` 记录发布者公钥指纹，
 `catalog.json` 是**派生物**（由 `tools/generate_catalog.py` 聚合生成，随仓库提交）。
 
+> 当前贡献协议：作者完成插件或模板后先生成可私下分享的整包签名目录，再自主选择是否把
+> 同一份字节投稿到 `submissions/`。外部贡献者不直接写正式目录。维护者审核后复签同一个
+> `package.manifest.json`，生成 `market.yaml`、稳定 `market_handle` 和带签名的 catalog。
+> 详细流程以 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md) 为准；
+> 下文中的 `plugin.yaml`/单文件签名描述也覆盖仍受支持的旧版存量条目。
+
 > 设计原则：**所有文件路径都是相对于本目录（catalog 基址）的相对路径**。本目录
 > **完全自包含**（公钥、校验工具都在目录内，不引用主仓库任何文件）。因此把本目录
 > 复制到任何位置、任何仓库、任何静态 HTTP 服务后，只要把应用配置里的
@@ -53,6 +59,8 @@ clone 两个仓库到同一父目录。
 ```
 OmniCrawler-market/
 ├── catalog.json                 # 【派生物】索引：由生成器从 plugin.yaml 聚合（勿手改）
+├── catalog.json.sig             # 目录原始字节的维护者签名；客户端解析前验证
+├── submissions/                 # 创作者签名投稿态；外部 PR 唯一内容入口
 ├── CATALOG_SCHEMA.md            # catalog.json + plugin.yaml 字段说明
 ├── README.md                    # 本文件
 ├── LICENSE                      # CC0 1.0（生态元数据公共领域；tools/ 例外见下）
@@ -73,6 +81,10 @@ OmniCrawler-market/
 │   └── <username>.yaml          # username / pubkey_ref / fingerprint（SHA-256 前 16 字节 hex）
 ├── plugins/
 │   └── <plugin_id>/             # 每个插件一个目录，id 用小写字母/数字/下划线/短横线
+│       ├── market.yaml          # 【现代条目】市场 overlay，不改写创作者包
+│       ├── package.manifest.json
+│       ├── package.manifest.creator.sig
+│       ├── package.manifest.maintainer.sig
 │       ├── plugin.yaml          # 【唯一元数据源】插件清单（机器可读）
 │       ├── plugin.py            # 插件代码（必须含 def register(registry)）
 │       ├── plugin.py.sig        # 与 plugin.py 同名的 detached ed25519 签名
@@ -89,24 +101,25 @@ OmniCrawler-market/
 
 ## 信任模型
 
-双轨签名（2026-08 起），两条轨独立验签、互不替代：
+双轨签名（2026-08 起），两条轨签署同一整包 manifest，独立验签、互不替代：
 
-- **维护者轨（分发签名，单信任根 ed25519）**：`plugin.py.sig` /
-  `template.yaml.sig` 用维护者冷存储私钥生成，验签公钥随包分发
+- **维护者轨（分发签名，单信任根 ed25519）**：现代包使用
+  `package.manifest.maintainer.sig`，旧包继续兼容 `plugin.py.sig` / `template.yaml.sig`；
+  签名用维护者冷存储私钥生成，验签公钥随包分发
   （`configs/plugin_trust.pub.pem`，本目录 `keys/` 存有相同副本，拆库后独立可用）。
   应用加载前 fail-closed 验签；验签失败直接拒载。**模板强制此轨**；
   插件可选（仅有创作者轨亦可通过生成器完整性校验）。
-- **创作者轨**：贡献者可用本地身份自签插件（`creator.identity` + `creator.sig`，
+- **创作者轨**：贡献者用本地身份签署整包 manifest
+  （`creator.identity` + `package.manifest.creator.sig`，`creator.sig` 为旧客户端兼容轨），
   公钥指纹记录在 identity 中）。创作者签名可过生成器完整性校验，但**不构成
   市场背书**：非市场来源（本地安装）按 CreatorTrusted/CreatorUntrusted 分级
   （不在信任列表则拒绝或弹窗询问）；**市场来源**插件则只认维护者签名，
   创作者签名在加载端一律拒绝。即："无法自签"仅对模板成立，且创作者轨
   不能替代分发签名被最终用户加载。
-- `authors/<username>.yaml` 的 `fingerprint`（公钥 SHA-256 前 16 字节 hex）是
+- `authors/<market_handle>.yaml` 的 `fingerprint`（公钥 SHA-256 前 16 字节 hex）是
   生态中**绝对唯一标识**；插件清单必须声明 `author_fingerprint` 且与作者记录一致。
-- 已知边界：当前生成器不强制 `creator.identity` 与 `authors/` 记录交叉绑定，
-  创作者身份的真实性依赖人工审核——对外招募贡献者前应补齐该校验
-  （见 SECURITY.md 双轨说明与主仓审查报告 U-7）。
+- 正式发布会把 `creator.identity` 派生指纹与作者记录、包归属和 market overlay 交叉校验；
+  用户名重复时在市场发布态分配稳定后缀，身份判断始终认指纹不认名字。
 
 ## catalog.json 是派生物
 
@@ -136,6 +149,10 @@ python tools/scan_plugin.py scan plugins/<plugin_id>/
 中止签名（`--skip-scan` 可跳过，不推荐）。
 
 ## 提交一个新插件（贡献流程）
+
+> 以下直接编辑正式目录的步骤仅适用于维护旧版存量条目。新插件和新模板必须按
+> [CONTRIBUTING.md](CONTRIBUTING.md) 进入 `submissions/`，再由维护者运行
+> `finalize_submission.py` 生成正式目录；贡献者不生成维护者签名或 catalog。
 
 1. 在 `plugins/` 下新建 `<plugin_id>/` 目录。
 2. 放入 `plugin.py`（含 `def register(registry)`）与 **强制的** `listing.md`

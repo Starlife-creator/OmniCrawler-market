@@ -13,6 +13,7 @@ import argparse
 import ast
 import hashlib
 import json
+import re
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -34,6 +35,28 @@ from catalog_lib.cli import publish_check
 from omnicrawler.plugins.identity import CreatorIdentity
 from omnicrawler.plugins.signing import sign_bytes
 from validate_submission import validate_one
+
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+
+def _semver_key(value: str) -> tuple[int, int, int, tuple[tuple[int, int | str], ...]]:
+    match = SEMVER_RE.fullmatch(value)
+    if not match:
+        raise ValueError(f"version must be SemVer (x.y.z[-prerelease]): {value!r}")
+    prerelease = match.group(4)
+    # A release sorts after all of its prereleases. Numeric identifiers sort
+    # before non-numeric identifiers, per SemVer 2.0.0.
+    if prerelease is None:
+        pre_key: tuple[tuple[int, int | str], ...] = ((2, ""),)
+    else:
+        pre_key = tuple(
+            (0, int(part)) if part.isdigit() else (1, part)
+            for part in prerelease.split(".")
+        )
+    return int(match.group(1)), int(match.group(2)), int(match.group(3)), pre_key
 
 
 def _literal_metadata(plugin: Path) -> dict[str, Any]:
@@ -130,19 +153,46 @@ def finalize(args: argparse.Namespace) -> int:
         )
     directory_name = market_id if kind == "plugin" else market_id.replace("/", "--")
     destination = REGISTRY / ("plugins" if kind == "plugin" else "templates") / directory_name
-    if destination.exists():
-        raise FileExistsError(f"正式发布目录已存在；更新流程不得覆盖旧版: {destination}")
+    new_version = str(manifest["version"])
+    _semver_key(new_version)
+    is_update = destination.exists()
+    if is_update:
+        overlay_path = destination / "market.yaml"
+        if not overlay_path.is_file():
+            raise ValueError(
+                "legacy market entries must be migrated to market.yaml before creator-package updates"
+            )
+        previous_overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8"))
+        if not isinstance(previous_overlay, dict):
+            raise ValueError(f"invalid existing market.yaml: {overlay_path}")
+        if previous_overlay.get("id") != market_id:
+            raise ValueError("existing market ID differs from the signed package ID")
+        if previous_overlay.get("author_fingerprint") != identity.key_fingerprint:
+            raise PermissionError(
+                "package ID is already owned by another creator key; maintainers cannot transfer ownership"
+            )
+        previous_version = str(previous_overlay.get("version", ""))
+        if _semver_key(new_version) <= _semver_key(previous_version):
+            raise ValueError(
+                f"update version must increase monotonically: {new_version} <= {previous_version}"
+            )
+        package_destination = destination / "versions" / new_version
+        if package_destination.exists():
+            raise FileExistsError(f"version already exists and will not be overwritten: {package_destination}")
+    else:
+        overlay_path = destination / "market.yaml"
+        package_destination = destination
     metadata = _metadata(source, manifest, submission)
     if not metadata["summary"] or not metadata["license"]:
         raise ValueError("正式发布需要非空 summary 与 license")
     private_pem = Path(args.maintainer_key).expanduser().read_bytes()
-    _copy_creator_package(source, destination, manifest)
-    (destination / "package.manifest.maintainer.sig").write_bytes(
+    _copy_creator_package(source, package_destination, manifest)
+    (package_destination / "package.manifest.maintainer.sig").write_bytes(
         sign_bytes(manifest_bytes, private_pem)
     )
     main_name = "plugin.py" if kind == "plugin" else "template.yaml"
-    (destination / f"{main_name}.sig").write_bytes(
-        sign_bytes((destination / main_name).read_bytes(), private_pem)
+    (package_destination / f"{main_name}.sig").write_bytes(
+        sign_bytes((package_destination / main_name).read_bytes(), private_pem)
     )
     public_path = REGISTRY / "keys" / f"{identity.key_fingerprint}.pub.pem"
     public_path.write_bytes(_public_pem(identity.public_key))
@@ -165,7 +215,7 @@ def finalize(args: argparse.Namespace) -> int:
             ),
             encoding="utf-8",
         )
-    base = destination.relative_to(REGISTRY).as_posix()
+    base = package_destination.relative_to(REGISTRY).as_posix()
     overlay: dict[str, Any] = {
         "id": market_id,
         "name": metadata["name"],
@@ -206,7 +256,7 @@ def finalize(args: argparse.Namespace) -> int:
                 "signature_file": f"{base}/template.yaml.sig",
             }
         )
-    (destination / "market.yaml").write_text(
+    overlay_path.write_text(
         yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     generate(REGISTRY)
@@ -214,7 +264,7 @@ def finalize(args: argparse.Namespace) -> int:
     (REGISTRY / "catalog.json.sig").write_bytes(sign_bytes(catalog.read_bytes(), private_pem))
     log_entry = {
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
-        "operation": "finalize-package",
+        "operation": "update-package" if is_update else "finalize-package",
         "package_type": kind,
         "package_id": market_id,
         "version": manifest["version"],

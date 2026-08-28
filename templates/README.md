@@ -1,55 +1,70 @@
-# 市场模板目录（templates/）
+# 模板生态
 
-模板是**声明式采集配置**（YAML），与插件（可执行代码）共享同一套签名、信任与
-分发机制（Helios 三层体系：插件 / 模板 / 分块模板）。
+模板是声明式 YAML，但分发安全边界与插件同步：创建完成即形成可私下分享的创作者签名包；
+选择投稿后，市场静态审核并由维护者复签同一整包 manifest。模板不会因为“不是代码”而跳过
+身份、凭据、域名、目录签名或更新保护。
 
+## 创作者包
+
+```text
+template-folder/
+├── template.yaml
+├── listing.md
+├── creator.identity
+├── package.manifest.json
+├── package.manifest.creator.sig
+└── creator.sig                 # 旧客户端兼容轨
 ```
-templates/<market_id>/
-├── template.yaml          # 模板源（现有模板格式；template: 块含市场字段）
-├── template.yaml.sig      # 最终分发签名（信任根验签；创作者签名时另有 creator.sig）
-├── creator.identity       # 创作者身份（可选，P2P 分发形态）
-├── creator.sig            # 创作者签名（可选）
-└── listing.md             # 功能说明（必需，generate_catalog 强制含 description_file）
+
+作者可直接分享这个文件夹。接收端先验证完整文件集合和创作者签名，再展示指纹、域名及配置
+风险并请求确认。私下分享不会产生市场用户名，也不意味着市场审核。
+
+## 投稿目录
+
+应用或 CLI 将同一包放到：
+
+```text
+submissions/templates/<creator_fingerprint>/<template_id>/
 ```
 
-## template: 块的市场字段
+并添加不在创作者签名范围内的 `submission.json`，仅用于投稿状态和市场展示请求。
+外部 PR 不应直接改 `templates/`、`authors/` 或 `catalog.json`。
 
-市场模板的 `template:` 元数据块必须声明（内置模板不需要）：
+## YAML 约束
+
+`template.yaml` 至少应包含：
 
 ```yaml
 template:
-  id: <market_id>           # 如 demo/template，允许层级命名
-  name: ...
-  version: ...
-  category: ...
-  description: ...
-  publisher: <username>     # 必须与 authors/ 记录一致
-  author_fingerprint: <fp>  # 创作者公钥指纹（32 位 hex）
-  min_core_version: '0.6.0' # 生成 compatible_core = >=0.6.0
+  id: sites/example
+  name: Example
+  version: 1.0.0
+  category: sites/general
+  description: 示例模板
+  domains: [api.example.org]
+  min_core_version: 0.11.1
+  license: 数据与服务条款说明
+source:
+  kind: rest
+  seeds: [https://api.example.org/items]
 ```
 
-## 签名与发布
+- `template.id` 和 `template.version` 必须等于签名 manifest 中的值；
+- `domains` 只接受小写主机名，固定 seed 主机必须被覆盖；
+- API Key 等只写 `secret://name`，不能出现真实凭据；
+- `listing.md` 说明数据来源、条款、配额、礼貌延迟、许可和用户需提供的参数。
 
-与插件完全一致。签名/验证工具 **`sign_plugin.py`、`market.py` 位于主仓库
-`OmniCrawler/tools/`**（不在本生态目录内）；从本仓库根执行时用相对路径引用：
+## 正式发布布局
 
-```bash
-# 创作者签名（创建即签名，P2P 可用）
-python ../OmniCrawler/tools/sign_plugin.py creator-sign templates/<id>/ --file template.yaml --username <你>
-# 市场分发签名（信任根冷私钥签，下载端/CI 校验它；统一生成 template.yaml.sig）
-python ../OmniCrawler/tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>
+维护者发布工具保留创作者字节并添加维护者签名与市场 overlay：
+
+```text
+templates/<market-directory>/
+├── market.yaml
+├── template.yaml                     # 首个现代版本
+├── package.manifest.*
+└── versions/<new-version>/...         # 后续版本，不覆盖旧版
 ```
 
-生成目录索引：
-
-```bash
-python tools/generate_catalog.py   # 扫描 plugins/ + templates/
-```
-
-CI 门禁自动覆盖：模板必填字段、作者指纹匹配、签名验签、catalog.json 一致性。
-
-## 应用端消费
-
-- CLI：`python ../OmniCrawler/tools/market.py templates list|info|install|verify`
-- GUI：市场面板 →「模板」页
-- 安装到 `templates_installed/<id>/`，模板库（`TemplateCatalog` 用户目录）自动发现。
+客户端先验证 `catalog.json.sig`，再下载 manifest 声明的全部文件，并同时验证创作者签名和
+维护者签名。模板更新也要求同一作者指纹和严格递增 SemVer。

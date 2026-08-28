@@ -48,6 +48,10 @@
 | `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |
 | `gates_evidence` | object | | tag 门禁证据摘要（四门通过状态 + 时间戳 + tag 哈希，随 catalog 签名覆盖；批准矩阵离线凭据，第 78 轮） |
 | `creator_signature_file` / `creator_identity_file` | string | | 创作者轨签名与公钥身份（与维护者轨独立验签，B02-020 双轨） |
+| `package_manifest_file` | string | 现代包必填 | 创作者签名的规范整包 manifest 路径 |
+| `creator_package_signature_file` | string | 现代包必填 | 创作者对整包 manifest 的签名 |
+| `maintainer_package_signature_file` | string | 发布态必填 | 维护者对同一 manifest 字节的复签 |
+| `package_manifest_sha256` | string | 现代包必填 | catalog 固定的 manifest SHA-256 |
 | `tags` | array[string] | | 标签，便于检索 |
 | `updated_at` | string (date) | | 最近更新日期 |
 | `homepage` | string (URL) | | 插件主页（可选） |
@@ -68,6 +72,7 @@
 | `description_file` | string | 功能说明相对路径（存在 `listing.md` 时生成） |
 | `compatible_core` | string | `>=` + `template:` 块的 `min_core_version` |
 | `license` / `tags` / `updated_at` | | 取自 `template:` 块（`updated_at` ← `verified_at`） |
+| `package_manifest_file` / `creator_package_signature_file` / `maintainer_package_signature_file` / `package_manifest_sha256` | string | 与插件相同的现代整包双签字段；模板不再使用较弱的旁路信任模型 |
 
 ## 清单源（`plugins/<id>/plugin.yaml`）
 
@@ -81,19 +86,34 @@
 
 生成器会拒绝清单中的未知字段（防止拼写错误静默丢弃）。
 
-### 作者记录（`authors/<username>.yaml`）
+### 作者记录（`authors/<market_handle>.yaml`）
 
 每个发布者一个 YAML 文件（文件名 = `username`）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `username` | string | 发布者用户名 |
-| `display_name` | string | 展示名（可带后缀区分同名用户） |
+| `market_handle` | string | 市场内唯一且稳定的句柄；文件名必须与它一致 |
+| `requested_username` | string | 创作者本地请求名，可以与其他指纹重复 |
+| `username` | string | 兼容字段，现代记录等于 `market_handle` |
+| `display_name` | string | 展示名；不参与身份验证 |
 | `pubkey_ref` | string | 签名公钥 PEM 的相对路径（相对于 `authors/` 目录） |
 | `fingerprint` | string | 公钥 SHA-256（ed25519 公钥原始 32 字节）前 16 字节 hex |
 | `roles` | array[string] | 角色，如 `[publisher]` |
 
 生成器会计算 `pubkey_ref` 指向公钥的实际指纹，与声明的 `fingerprint` 比对，二者必须一致。
+同一指纹总是复用已有 handle；请求名冲突时，正式发布工具为后来者分配连续 `-01`、`-02`
+后缀。所有归属校验认指纹，不认显示名。
+
+## 投稿态（不进入 catalog）
+
+外部贡献位于
+`submissions/<plugins|templates>/<creator_fingerprint>/<package_id>/`，包含创作者签名包和
+`submission.json`。该目录只接受静态检查，不是可见市场条目。维护者运行
+`finalize_submission.py` 后才生成 `market.yaml`、维护者签名、作者记录和已签名 catalog。
+
+现代正式条目使用市场拥有的 `market.yaml` overlay。overlay 可以更新市场展示与审核状态，
+但 `package.manifest.json` 及其声明的作者载荷必须保持原字节。后续版本保存于
+`versions/<semver>/`，overlay 指向当前版本。
 
 ## 路径约定（迁移友好）
 

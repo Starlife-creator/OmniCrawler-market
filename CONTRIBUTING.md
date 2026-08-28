@@ -1,88 +1,91 @@
-# 贡献指南（OmniCrawler 插件生态）
+# 贡献插件与模板
 
-欢迎向 OmniCrawler 插件生态提交内容。本仓库采用 **git-as-registry** 模式：
-提交 PR 合并即上架。请阅读本指南与 `README.md`、`CATALOG_SCHEMA.md` 后提交。
+市场采用“先形成可私下分享的创作者签名包，再自主选择是否投稿”的流程。贡献者只提交
+`submissions/`，不直接修改 `plugins/`、`templates/`、`authors/`、`catalog.json` 或任何
+维护者签名。发布目录属于维护者发布态。
 
-## 可提交的内容
+## 一份包，两种去向
 
-| 内容 | 存放位置 | 说明 |
-|------|----------|------|
-| 插件 | `plugins/<plugin_id>/` | plugin.py + plugin.py.sig + listing.md + plugin.yaml |
-| 模板 | `templates/<market_id>/` | template.yaml + template.yaml.sig + listing.md（+ 可选 creator.sig/identity） |
-| 作者身份 | `authors/<username>.yaml` | 首次发布前必须提交 |
+完成制作后，插件或模板目录已经包含：
 
-## 提交一个新插件（完整流程）
+- `package.manifest.json`：规范 JSON，记录包类型、ID、版本、创作者指纹和所有载荷哈希；
+- `package.manifest.creator.sig`：创作者对整个 manifest 的 ed25519 签名；
+- `creator.identity`：公开身份和公钥；
+- `plugin.py` 或 `template.yaml`、`listing.md` 及其他被 manifest 覆盖的文件。
 
-1. 在 `plugins/` 下新建 `<plugin_id>/` 目录。
-2. 放入 `plugin.py`（含 `def register(registry)`）与强制的 `listing.md`。
-3. 新建 `plugin.yaml` 清单；`publisher` 与 `author_fingerprint` 必须在
-   `authors/` 中有对应记录。
-4. 通过插件契约测试（主仓库 `tests/unit/plugin/`）。
-5. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`。
-6. 提交 PR。**所有提交必须 `git commit --signoff`（DCO）**。
+此时目录已经可以直接发给其他用户。接收方会看到来源、指纹、权限和域名，确认后安装；
+私下分享不等于市场审核。也可以用同一目录创建 Draft PR，不需要重新打包。
 
-> 签名流程（签名工具 `sign_plugin.py` 位于**主仓库** `OmniCrawler/tools/`，
-> 从本仓库根执行时用 `../OmniCrawler/tools/...` 引用）：
-> 1. **创作者签名（创建即签名，插件可选）**：创作者用本地身份签名，生成
->    `creator.sig` + `creator.identity`（可过生成器完整性校验进入目录）：
->    `python ../OmniCrawler/tools/sign_plugin.py creator-sign plugins/<id>/ --username <你的用户名>`
-> 2. **市场分发签名**：**模板必经**——PR 审核通过后、合并前，由持有信任根
->    冷私钥的维护者签名（下载端/CI 校验的唯一签名）：
->    `python ../OmniCrawler/tools/sign_plugin.py sign templates/<id>/template.yaml --private-key <冷存储私钥>`
->    **插件二选一**：已附创作者轨即可过校验入库待审；但应用端对市场来源
->    插件只认维护者签名（未冷签在用户端会被拒载），故对外分发的插件
->    实际仍需维护者在合并前冷签：
->    `python ../OmniCrawler/tools/sign_plugin.py sign plugins/<id>/plugin.py --private-key <冷存储私钥>`
-> 3. **市场分发签名统一用 `plugin.py.sig`**（由 `sign` 生成并覆盖）；旧版 `maintainer-sign`
->    命令已删除，其产物 `maintainer.sig` 不再产生、验证器也不兼容。信任根签名即背书。
+## 正规投稿流程
 
-## 三层信任模型
+1. 在 OmniCrawler 的市场首页创建/选择插件或模板，填写说明并点击“完成并签名”。
+2. 本地验证整包签名，先按需私下测试。
+3. 选择“投稿市场”，阅读权限、域名、公开内容和 DCO 提示。
+4. 明确勾选 DCO 后，由应用创建带 `Signed-off-by` 的 Draft PR。
+5. PR 中只能新增或更新：
+   `submissions/<plugins|templates>/<creator_fingerprint>/<package_id>/`。
+6. CI 只做规范 JSON、签名、哈希、路径、静态 AST/YAML、凭据泄漏和 DCO 检查；
+   **不会 import 或执行投稿代码**。
+7. 维护者人工审核准确的 manifest 哈希、代码、最小权限、域名、依赖、许可和说明。
+8. 维护者用冷私钥复签同一个 manifest，生成市场元数据、稳定市场用户名和已签名目录。
+9. `publish-check` 要求每个可见条目都有维护者整包签名，且 `catalog.json.sig` 有效后才可发布。
 
-| 层级 | 签名 | 用户行为 | 加载策略 |
-|------|------|----------|----------|
-| 1 | `template.yaml.sig` / `plugin.py.sig`（信任根验签） | 无需操作 | 直接加载（自动信任） |
-| 2 | `creator.sig` + 指纹在信任列表 | 首次使用已授权 | 直接加载 |
-| 2b | `creator.sig` + 未信任 | 弹出信任提示 | 信任则加载，否则拒绝 |
-| 3 | 无签名 | — | 拒绝加载（配置信任根时） |
+CLI 的模板投稿必须显式加入 `--accept-dco`；不想创建 PR 时使用 `--no-pr`，生成的仍是
+可私下分享的创作者签名包/投稿目录。
 
-> **B02-005 限定**：本表对插件与模板的**分发路径规则不同**——**模板强制要求
-> 维护者冷密钥签名**（`template.yaml.sig`，CI 拒无签名模板），层级 2/2b 的
-> 「仅创作者签名」只在 **P2P 分发**时成立，市场分发路径上不适用。插件则允许
-> 维护者轨或创作者轨二者有一即可。
+## 身份与重名
 
-## CI 门禁（合并前自动执行）
+- 身份归属只认 ed25519 公钥指纹，不认用户名。
+- 本地用户名允许在不同设备、不同用户之间重复。
+- 首次正式发布时，市场按指纹分配稳定 `market_handle`。若 `alice` 已被其他指纹占用，
+  后来者依次得到 `alice-01`、`alice-02`；同一指纹再次发布沿用原 handle。
+- 维护者不能改写创作者签名中的包 ID，也不能把现有 ID 转给另一把密钥。冲突时作者需换 ID
+  后重新签名。
 
-- `tools/generate_catalog.py --check`：
-  - plugin.yaml 必填字段齐全、id 合法、无未知字段；
-  - `catalog.json` 与 YAML 源完全一致（禁止手改派生物）；
-  - `author_fingerprint` 与 `authors/` 记录及公钥实际指纹相符；
-  - 插件文件存在；
-  - 签名文件可通过信任根验签（已签名条目）。
-- 拆库演练：复制本目录（`tools/` 等）至临时目录后可独立校验。
+## 更新已有包
 
-## 作者身份（用户名与指纹）
+- 使用拥有该包的同一创作者密钥重新签名；
+- 版本必须是 SemVer，并严格高于市场当前版本；
+- 新版保存到 `versions/<version>/`，不会覆盖旧版创作者签名字节；
+- 市场 overlay 和签名目录切换到通过复核的新版本；旧版仍由 Git 历史和版本目录保留；
+- 降级、同版本覆盖、换密钥接管均会被发布工具拒绝。
 
-- `username` 是本地唯一标识，文件名 = username。
-- `fingerprint`（公钥 SHA-256 前 16 字节 hex）是生态中**绝对唯一标识**。
-- 显示名冲突：同名用户的后缀（`-01`、`-02`…）由 CI 校验连续性，先注册者保持原名。
+## 插件审核要求
 
-## 安全要求
+- `PLUGIN_METADATA` 必须是可由 AST 字面量读取的映射；
+- 默认 `execution_mode: subprocess`；`in_process` 属于高风险申请，需说明不可替代性；
+- `permissions`、`domains`、`input_files` 和依赖只声明实际需要的最小集合；
+- 插件许可必须属于仓库允许的 SPDX 列表；
+- `listing.md` 说明功能、数据去向、权限理由、兼容版本、许可和限制。
 
-- 私钥绝不入库：`.gitignore` 已按 glob 拦截 `*.pem`（仅 `keys/plugin_trust.pub.pem`
-  公钥例外放行）、`.env`、`*.key` 等。
-- 提交前请运行 `python tools/scan_plugin.py scan plugins/<plugin_id>/` 做发布前安全扫描。
-- 插件只应声明运行所需的最小权限（`permissions` 字段）。
+## 模板审核要求
 
-## 模板数据来源条款（站点类模板准入标准）
+模板与插件同步走整包签名、投稿、维护者复签、目录签名和更新规则。模板还必须：
 
-采集第三方平台数据的**站点类模板**，发布者必须在 `listing.md` 与 `template.yaml` 中声明数据来源条款：
+- 使用安全可解析的 YAML，`template.id`、`template.version` 与签名 manifest 一致；
+- `template.domains` 只写小写主机名，不含协议、路径或通配符；
+- 固定 HTTP(S) seed 的主机必须被 `template.domains` 覆盖；
+- 凭据只用 `secret://name` 引用，绝不提交明文；
+- 对第三方数据源写明服务条款、频率限制、是否需要 API Key 和数据许可。
 
-- 数据来自哪个平台 / API，受何种服务条款约束；
-- 是否需 API Key、匿名可用额度与速率限制；
-- 礼貌参数（如 Crossref 的 `mailto`、GitHub 的 2s 延迟）与用量预算。
+## DCO
 
-未声明数据来源条款的站点类模板，维护者审核时**不予合并**（合规风险前置拦截）。
+所有 PR 中的提交必须包含 `Signed-off-by`。这表示你同意 Developer Certificate of Origin，
+确认自己有权提交这些内容。GUI/CLI 只在你明确确认后自动加入 sign-off；也可手动使用：
 
-## 行为准则
+```bash
+git commit --signoff
+```
 
-所有贡献者须遵守 `CODE_OF_CONDUCT.md`（Contributor Covenant 2.1）。
+## 维护者发布命令
+
+外部 PR CI 不接触冷私钥。人工审核后，维护者在受控环境运行：
+
+```bash
+python tools/finalize_submission.py submissions/plugins/<fingerprint>/<id> \
+  --reviewed-manifest-sha256 <人工核对的完整哈希> \
+  --maintainer-key <冷存储私钥路径>
+```
+
+模板使用对应的 `submissions/templates/...` 路径。工具会验证投稿、保护作者归属和版本单调性、
+复签整包、生成并签名 catalog、写透明日志，最后执行严格发布检查。
