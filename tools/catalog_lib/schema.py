@@ -129,6 +129,31 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
     return entry, market
 
 
+def _entry_from_template_market(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read a market-owned overlay without rewriting creator-signed template.yaml."""
+    raw = _load_yaml(path)
+    required = {
+        "id", "name", "version", "publisher", "author_fingerprint", "category",
+        "summary", "template_file", "signature_file", "signature_algorithm",
+        "compatible_core", "license",
+    }
+    missing = sorted(required - set(raw))
+    if missing:
+        raise ValueError(f"模板 market.yaml 缺少必填字段 {missing}: {path}")
+    unknown = set(raw) - set(_TEMPLATE_ENTRY_KEYS) - {"author_fingerprint"}
+    if unknown:
+        raise ValueError(f"模板 market.yaml 包含未知字段 {sorted(unknown)}: {path}")
+    template_id = str(raw["id"])
+    if not re.match(_TEMPLATE_ID_RE_PREFIX, template_id):
+        raise ValueError(f"非法模板 ID: {template_id}")
+    entry = {key: raw[key] for key in _TEMPLATE_ENTRY_KEYS if key in raw}
+    return entry, {
+        "id": template_id,
+        "publisher": str(raw["publisher"]),
+        "author_fingerprint": str(raw["author_fingerprint"]),
+    }
+
+
 __all__ = [
     name for name in list(globals())
     if name not in {'subprocess', 'annotations', 'sys', 'argparse', 'base64', 'timezone', 'yaml', 'datetime', 'Any', 'hashlib', 'Path', 're', 'json'}

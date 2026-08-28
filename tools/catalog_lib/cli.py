@@ -48,6 +48,34 @@ def check(
     print(f"OK registry: {plugins} 个插件 + {templates} 个模板清单一致，签名校验完成")
     return 0
 
+
+def publish_check(
+    registry: Path,
+    *,
+    trust_source: str | None = None,
+    prev_catalog: str | None = None,
+) -> int:
+    """Strict main-branch invariant: every visible item is distributable."""
+    try:
+        catalog = build_catalog(registry)
+        _check_consistency(registry, catalog)
+        _check_version_rules(registry, catalog, _load_prev_catalog(registry, prev_catalog))
+        _verify_signatures(
+            registry,
+            catalog,
+            trust_source,
+            require_maintainer=True,
+        )
+        _verify_catalog_signature(registry, trust_source)
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        print(f"FAIL publish: {exc}")
+        return 1
+    print(
+        f"OK publish: {len(catalog['plugins'])} 个插件 + "
+        f"{len(catalog['templates'])} 个模板均具维护者背书，catalog 签名有效"
+    )
+    return 0
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="generate_catalog",
@@ -61,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="信任根公钥 PEM 路径（默认 keys/plugin_trust.pub.pem）",
     )
     parser.add_argument("--check", action="store_true", help="只校验不写盘（CI 门禁）")
+    parser.add_argument(
+        "--publish-check",
+        action="store_true",
+        help="正式发布门禁：强制维护者签名与当前 catalog.json.sig",
+    )
     parser.add_argument(
         "--prev-catalog",
         default=None,
@@ -76,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.check:
         return check(registry, trust_source=args.trust, prev_catalog=args.prev_catalog)
+    if args.publish_check:
+        return publish_check(
+            registry, trust_source=args.trust, prev_catalog=args.prev_catalog
+        )
     try:
         output = generate(registry, publisher_override=args.publisher)
     except (ValueError, OSError) as exc:

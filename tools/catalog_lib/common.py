@@ -61,6 +61,11 @@ _ENTRY_KEYS = [
     "dependencies",
     "review_depth",
     "gates_evidence",
+    # 完整包协议：创作者与维护者签署同一 package manifest。
+    "package_manifest_file",
+    "creator_package_signature_file",
+    "maintainer_package_signature_file",
+    "package_manifest_sha256",
 ]
 
 _REQUIRED_KEYS = [
@@ -96,6 +101,12 @@ _TEMPLATE_ENTRY_KEYS = [
     "tags",
     "updated_at",
     "homepage",
+    "creator_signature_file",
+    "creator_identity_file",
+    "package_manifest_file",
+    "creator_package_signature_file",
+    "maintainer_package_signature_file",
+    "package_manifest_sha256",
 ]
 
 _ID_RE_PREFIX = "^[a-z][a-z0-9_-]{1,63}$"

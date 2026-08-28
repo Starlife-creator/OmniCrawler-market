@@ -25,7 +25,11 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     entries: list[dict[str, Any]] = []
     publishers: list[str] = []
     seen_plugin_ids: set[str] = set()
-    for manifest_path in sorted(plugins_dir.glob("*/plugin.yaml")):
+    modern_plugin_dirs = {path.parent.resolve() for path in plugins_dir.glob("*/market.yaml")}
+    plugin_manifests = sorted(plugins_dir.glob("*/market.yaml")) + sorted(
+        path for path in plugins_dir.glob("*/plugin.yaml") if path.parent.resolve() not in modern_plugin_dirs
+    )
+    for manifest_path in plugin_manifests:
         manifest = _load_yaml(manifest_path)
         entry = _entry_from_yaml(manifest, manifest_path)
         pid = str(entry["id"])
@@ -43,8 +47,19 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     seen_template_ids: set[str] = set()
     templates_dir = registry / _TEMPLATES_DIR
     if templates_dir.is_dir():
-        for template_yaml in sorted(templates_dir.glob("*/template.yaml")):
-            entry, market = _entry_from_template_yaml(template_yaml)
+        modern_template_dirs = {path.parent.resolve() for path in templates_dir.rglob("market.yaml")}
+        template_sources = [(path, True) for path in sorted(templates_dir.rglob("market.yaml"))]
+        template_sources.extend(
+            (path, False)
+            for path in sorted(templates_dir.glob("*/template.yaml"))
+            if path.parent.resolve() not in modern_template_dirs
+        )
+        for template_yaml, modern in template_sources:
+            entry, market = (
+                _entry_from_template_market(template_yaml)
+                if modern
+                else _entry_from_template_yaml(template_yaml)
+            )
             tid = str(entry["id"])
             # G7：重复模板 ID 静默后者覆盖 → 改为 fail-closed 显式报错
             if tid in seen_template_ids:
@@ -59,7 +74,7 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     authors = load_authors(registry)
     _check_display_name_suffixes(authors)
     manifests: dict[str, dict[str, Any]] = {}
-    for manifest_path in sorted(plugins_dir.glob("*/plugin.yaml")):
+    for manifest_path in plugin_manifests:
         manifest = _load_yaml(manifest_path)
         manifests[str(manifest.get("id", ""))] = manifest
     for manifest in manifests.values():
@@ -68,8 +83,12 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
         _check_author(market, authors)
 
     for entry in entries:
-        _check_creator_rail(registry, entry)
-        for key in ("description_file", "plugin_file"):
+        expected = str(manifests.get(str(entry.get("id")), {}).get("author_fingerprint", ""))
+        _check_creator_rail(registry, entry, expected or None)
+        for key in (
+            "description_file", "plugin_file", "package_manifest_file",
+            "creator_package_signature_file", "maintainer_package_signature_file",
+        ):
             rel = entry.get(key)
             if rel:
                 resolved = _require_contained(registry, registry, str(rel), f"插件 {entry['id']} 的 {key}")
@@ -106,8 +125,13 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
                 versions = entry.setdefault("versions", {})
                 versions[str(entry["version"])] = {"sha256": digest}
     for entry in template_entries:
-        _check_creator_rail(registry, entry)
-        for key in ("template_file", "signature_file", "description_file", "creator_signature_file", "creator_identity_file"):
+        expected = str(template_markets.get(str(entry.get("id")), {}).get("author_fingerprint", ""))
+        _check_creator_rail(registry, entry, expected or None)
+        for key in (
+            "template_file", "signature_file", "description_file", "creator_signature_file",
+            "creator_identity_file", "package_manifest_file",
+            "creator_package_signature_file", "maintainer_package_signature_file",
+        ):
             rel = entry.get(key)
             if rel:
                 resolved = _require_contained(registry, registry, str(rel), f"模板 {entry['id']} 的 {key}")

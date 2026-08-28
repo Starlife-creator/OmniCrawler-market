@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,35 @@ from .common import *
 from .signing import *
 
 
+_HANDLE_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
+
+
+def normalize_requested_handle(value: str) -> str:
+    """Normalize a local requested username into the market ASCII namespace."""
+    handle = value.strip().lower()
+    if not _HANDLE_RE.fullmatch(handle):
+        raise ValueError(f"期望市场用户名非法（仅小写 ASCII 字母/数字/_-，2-32 位）: {value!r}")
+    return handle
+
+
+def assign_market_handle(
+    authors: dict[str, dict[str, Any]], fingerprint: str, requested_username: str
+) -> str:
+    """Return the stable existing handle or allocate base/-01/-02 deterministically."""
+    for handle, record in authors.items():
+        if str(record.get("_fingerprint") or record.get("fingerprint") or "") == fingerprint:
+            return handle
+    base = normalize_requested_handle(requested_username)
+    if base not in authors:
+        return base
+    index = 1
+    while f"{base}-{index:02d}" in authors:
+        index += 1
+    return f"{base}-{index:02d}"
+
+
 def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
-    """读取 authors/ 目录：username -> author 记录（含 pubkey 指纹）。
+    """读取 authors/ 目录：market_handle -> author 记录（含 pubkey 指纹）。
 
     B02-012：同 username 静默覆盖改为 fail-closed；并检查同一公钥指纹被
     多个 username 登记（防止冒名顶替放大空间）。
@@ -26,41 +54,46 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
         return authors
     for yaml_file in sorted(authors_dir.glob("*.yaml")):
         record = _load_yaml(yaml_file)
-        username = str(record.get("username", ""))
-        if not username:
-            raise ValueError(f"作者清单缺少 username: {yaml_file}")
-        if username in authors:
+        handle = str(record.get("market_handle") or record.get("username") or "")
+        if not handle:
+            raise ValueError(f"作者清单缺少 market_handle/username: {yaml_file}")
+        normalize_requested_handle(handle)
+        if yaml_file.stem != handle:
+            raise ValueError(f"作者文件名必须等于 market_handle: {yaml_file.stem!r} != {handle!r}")
+        if handle in authors:
             raise ValueError(
-                f"重复 username（禁止静默覆盖，B02-012）: {username}（{yaml_file} 与已有记录冲突）"
+                f"重复 market_handle（禁止静默覆盖）: {handle}（{yaml_file} 与已有记录冲突）"
             )
+        record["market_handle"] = handle
+        record.setdefault("requested_username", str(record.get("username") or handle))
         pubkey_ref = record.get("pubkey_ref")
         fingerprint = record.get("fingerprint")
         if pubkey_ref:
             pem = _require_contained(
-                registry, authors_dir, str(pubkey_ref), f"作者 {username} 的 pubkey_ref"
+                registry, authors_dir, str(pubkey_ref), f"作者 {handle} 的 pubkey_ref"
             )
             if not pem.is_file():
-                raise ValueError(f"作者 {username} 的 pubkey_ref 不存在: {pubkey_ref}")
+                raise ValueError(f"作者 {handle} 的 pubkey_ref 不存在: {pubkey_ref}")
             actual = _raw_fingerprint(pem)
             if fingerprint and str(fingerprint) != actual:
-                raise ValueError(f"作者 {username} 声明指纹 {fingerprint} 与公钥实际指纹 {actual} 不一致")
+                raise ValueError(f"作者 {handle} 声明指纹 {fingerprint} 与公钥实际指纹 {actual} 不一致")
             record["_fingerprint"] = actual
             record["_pubkey_path"] = pem
         elif fingerprint:
             record["_fingerprint"] = str(fingerprint)
-        authors[username] = record
+        authors[handle] = record
     # 同公钥多 username 检查（B02-012）：指纹是绝对唯一标识
     by_fingerprint: dict[str, str] = {}
-    for username, record in sorted(authors.items()):
+    for handle, record in sorted(authors.items()):
         fp = str(record.get("_fingerprint", ""))
         if not fp:
             continue
         if fp in by_fingerprint:
             raise ValueError(
                 f"同一公钥指纹被多个 username 登记（B02-012）: "
-                f"{by_fingerprint[fp]} 与 {username} 共享指纹 {fp}"
+                f"{by_fingerprint[fp]} 与 {handle} 共享指纹 {fp}"
             )
-        by_fingerprint[fp] = username
+        by_fingerprint[fp] = handle
     return authors
 
 def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) -> None:
@@ -81,19 +114,23 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
             raise ValueError(
                 f"插件 {manifest.get('id')} 的 author_fingerprint {fingerprint} 在 authors/ 无对应记录"
             )
-        if found.get("username") != publisher:
+        if found.get("market_handle") != publisher:
             raise ValueError(
                 f"插件 {manifest.get('id')} 的 publisher '{publisher}' 与作者 "
-                f"'{found.get('username')}' 不一致（author_fingerprint 属于后者，B02-011）"
+                f"'{found.get('market_handle')}' 不一致（author_fingerprint 属于后者）"
             )
         return
     if record.get("_fingerprint") != fingerprint:
         raise ValueError(
             f"插件 {manifest.get('id')} 的 author_fingerprint {fingerprint} "
-            f"与作者 {record.get('username')} 实际指纹不一致"
+            f"与作者 {record.get('market_handle')} 实际指纹不一致"
         )
 
-def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
+def _check_creator_rail(
+    registry: Path,
+    entry: dict[str, Any],
+    expected_fingerprint: str | None = None,
+) -> None:
     """创作者轨完整性校验（方案 B：与维护者轨独立，不做跨轨相等）。
 
     ``author_fingerprint`` 是**创作者公钥指纹**（B02-013 对齐 templates/README.md
@@ -128,6 +165,11 @@ def _check_creator_rail(registry: Path, entry: dict[str, Any]) -> None:
         raise ValueError(
             f"插件 {entry.get('id', '?')} 的 creator.identity 自称指纹 {declared} "
             f"与公钥实际指纹 {derived} 不一致（疑似身份冒充或文件被篡改）"
+        )
+    if expected_fingerprint and derived != expected_fingerprint:
+        raise ValueError(
+            f"插件 {entry.get('id', '?')} 的 creator.identity 指纹 {derived} "
+            f"与作者目录/清单指纹 {expected_fingerprint} 不一致"
         )
 
 def _check_display_name_suffixes(authors: dict[str, dict[str, Any]]) -> None:

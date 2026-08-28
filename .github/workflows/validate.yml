@@ -16,6 +16,8 @@ on:
       - "keys/**"
       - "tools/**"
       - "catalog.json"
+      - "catalog.json.sig"
+      - "submissions/**"
   pull_request:
     paths:
       - "plugins/**"
@@ -24,6 +26,8 @@ on:
       - "keys/**"
       - "tools/**"
       - "catalog.json"
+      - "catalog.json.sig"
+      - "submissions/**"
 
 jobs:
   validate-catalog:
@@ -31,6 +35,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -40,6 +46,24 @@ jobs:
       - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51"
       - name: Catalog 一致性 + 签名校验
         run: python tools/generate_catalog.py --check
+      - name: 投稿包静态验证（不执行投稿代码）
+        run: python tools/validate_submission.py
+      - name: DCO（仅 Pull Request）
+        if: github.event_name == 'pull_request'
+        run: >-
+          python tools/check_dco.py
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+      - name: 正式发布门禁（发布目录发生变化时）
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            python tools/generate_catalog.py --publish-check
+          elif ! git diff --quiet "${{ github.event.pull_request.base.sha }}"...HEAD -- plugins templates authors catalog.json catalog.json.sig; then
+            python tools/generate_catalog.py --publish-check
+          else
+            echo "仅投稿材料变化：正式发布门禁留待维护者发布提交。"
+          fi
       - name: 发布前安全扫描（全部插件）
         run: |
           for plugin_dir in plugins/*/; do
