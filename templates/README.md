@@ -12,8 +12,7 @@ template-folder/
 ├── listing.md
 ├── creator.identity
 ├── package.manifest.json
-├── package.manifest.creator.sig
-└── creator.sig                 # 旧客户端兼容轨
+└── package.manifest.creator.sig
 ```
 
 作者可直接分享这个文件夹。接收端先验证完整文件集合和创作者签名，再展示指纹、域名及配置

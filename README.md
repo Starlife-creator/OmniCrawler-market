@@ -1,202 +1,151 @@
-# OmniCrawler 插件生态目录（Plugin Registry）
+# OmniCrawler 插件与模板市场
 
-本目录是 OmniCrawler **策展式插件市场**的目录源，采用 **git-as-registry** 模式：
-目录结构即索引——每个插件一个 `plugin.yaml` 清单，`authors/` 记录发布者公钥指纹，
-`catalog.json` 是**派生物**（由 `tools/generate_catalog.py` 聚合生成，随仓库提交）。
+本仓库是 OmniCrawler 的静态、可镜像市场目录，采用 git-as-registry 模式。它不依赖账号
+服务器或市场 API：作者身份由 Ed25519 公钥指纹确认，`catalog.json` 是从正式包生成并由
+维护者签名的索引。
 
-> 当前贡献协议：作者完成插件或模板后先生成可私下分享的整包签名目录，再自主选择是否把
-> 同一份字节投稿到 `submissions/`。外部贡献者不直接写正式目录。维护者审核后复签同一个
-> `package.manifest.json`，生成 `market.yaml`、稳定 `market_handle` 和带签名的 catalog。
-> 详细流程以 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md) 为准；
-> 下文中的 `plugin.yaml`/单文件签名描述也覆盖仍受支持的旧版存量条目。
+插件和模板在投稿前就是作者拥有的可分享文件夹。作者可以只进行私下分享，也可以把同一份
+创作者签名包投稿市场。私下分享不等于市场审核，投稿状态也不能作为市场包安装。
 
-> 设计原则：**所有文件路径都是相对于本目录（catalog 基址）的相对路径**。本目录
-> **完全自包含**（公钥、校验工具都在目录内，不引用主仓库任何文件）。因此把本目录
-> 复制到任何位置、任何仓库、任何静态 HTTP 服务后，只要把应用配置里的
-> `plugins.catalog_url` 改成新基址，目录内部无需任何改动。
+## 仓库与主项目布局
 
----
+源码开发时，主仓库与市场仓库应位于同一父目录：
 
-## 仓库布局（与主仓库同级）
-
-插件市场与主仓库是**两个独立仓库**，源码开发时需放在同一父目录下、目录名保持默认：
-
-```
-你的任意目录/
-├── OmniCrawler/            # 主仓库（应用 + 引擎 + 插件生态）
-└── OmniCrawler-market/     # 本仓库（插件市场）
+```text
+workspace/
+├── OmniCrawler/
+└── OmniCrawler-market/
 ```
 
-```powershell
-git clone https://github.com/<owner>/OmniCrawler
-git clone https://github.com/<owner>/OmniCrawler-market
-```
+市场目录内部只使用相对路径，因此可以整体复制到其他 Git 仓库或静态文件服务。镜像只复制
+catalog、包和签名，不重签，也不会改变原有信任等级。
 
-布局依赖（目录名与同级关系不可变，路径前缀无关）：
+## 许可证
 
-| 组件 | 引用方式 |
+| 范围 | 许可 |
 |---|---|
-| 主仓库 `tools/market.py`、`tools/sign_plugin.py` | `../OmniCrawler-market` |
-| 主仓库 GUI 插件/模板市场 | 无 `catalog_url` 时回退到 `../OmniCrawler-market` 本地浏览 |
-| 主仓库 `tests/unit/plugin/` | 市场相关测试引用同级市场仓库；未 clone 时自动跳过 |
+| 仓库根元数据、目录和文档 | CC0-1.0，见 `LICENSE` |
+| `tools/` 工具代码 | MIT，见 `tools/LICENSE` |
+| 各插件代码 | 以包内 SPDX 许可声明为准 |
+| 各模板及其数据来源 | 以模板声明和第三方服务条款为准 |
 
-只 clone 主仓库时应用完全可用（无市场目录即视为未配置市场）；使用插件市场需同时
-clone 两个仓库到同一父目录。
-
-## 许可证（双层结构）
-
-| 范围 | 许可 | 说明 |
-|---|---|---|
-| 仓库根元数据与内容 | **CC0 1.0**（`LICENSE`） | plugin.yaml 清单、authors/ 作者记录、catalog.json、文档、公钥、CI 配置——公共领域，自由复制/修改/分发/镜像 |
-| `tools/` 工具代码 | **MIT**（`tools/LICENSE`） | generate_catalog.py、scan_plugin.py，文件头含 SPDX 声明 |
-| `plugins/*/` 插件代码 | 各插件自声明 | 以各插件 `plugin.yaml` 的 `license` 字段为准（如 example_news 为 MIT） |
-
-选择依据：元数据是**生态公共资产**（镜像、离线、审查零摩擦），故 CC0；工具代码
-保留署名与免责声明，故 MIT；插件代码归各作者自行决定。
-
-## 目录结构
-
-```
-OmniCrawler-market/
-├── catalog.json                 # 【派生物】索引：由生成器从 plugin.yaml 聚合（勿手改）
-├── catalog.json.sig             # 目录原始字节的维护者签名；客户端解析前验证
-├── submissions/                 # 创作者签名投稿态；外部 PR 唯一内容入口
-├── CATALOG_SCHEMA.md            # catalog.json + plugin.yaml 字段说明
-├── README.md                    # 本文件
-├── LICENSE                      # CC0 1.0（生态元数据公共领域；tools/ 例外见下）
-├── CONTRIBUTING.md              # 贡献指南（插件提交流程 + DCO）
-├── CODE_OF_CONDUCT.md           # Contributor Covenant 2.1
-├── SECURITY.md                  # 信任模型、私钥红线、漏洞报告
-├── CHANGELOG.md                 # 生态变更日志
-├── .gitignore                   # 私钥/凭据 glob 拦截（公钥例外放行）
-├── .env.example                 # 环境变量占位模板
-├── .github/                     # PR/Issue 模板、CODEOWNERS、独立仓库 CI（validate.yml）
-├── keys/
-│   └── plugin_trust.pub.pem     # 信任根公钥副本（与主仓库 configs/ 同内容，公钥公开）
-├── tools/
-│   ├── LICENSE                  # MIT（本目录工具代码的单独许可）
-│   ├── generate_catalog.py      # 【自包含】生成/校验工具（仅依赖 PyYAML + cryptography）
-│   └── scan_plugin.py           # 【自包含】发布前安全扫描（纯标准库）
-├── authors/                     # 发布者公钥指纹记录（信任身份目录）
-│   └── <username>.yaml          # username / pubkey_ref / fingerprint（SHA-256 前 16 字节 hex）
-├── plugins/
-│   └── <plugin_id>/             # 每个插件一个目录，id 用小写字母/数字/下划线/短横线
-│       ├── market.yaml          # 【现代条目】市场 overlay，不改写创作者包
-│       ├── package.manifest.json
-│       ├── package.manifest.creator.sig
-│       ├── package.manifest.maintainer.sig
-│       ├── plugin.yaml          # 【唯一元数据源】插件清单（机器可读）
-│       ├── plugin.py            # 插件代码（必须含 def register(registry)）
-│       ├── plugin.py.sig        # 与 plugin.py 同名的 detached ed25519 签名
-│       └── listing.md           # 强制功能说明（人类可读）
-└── templates/                   # 市场模板（声明式配置，与插件共享签名/信任机制）
-    ├── README.md                # 模板市场说明（结构 + 市场字段 + 签名流程）
-    └── <market_id>/             # 每个模板一个目录（id 允许层级命名，如 demo/template）
-        ├── template.yaml        # 模板源（template: 块含 publisher/author_fingerprint）
-        ├── template.yaml.sig    # 最终分发签名（维护者用冷密钥 `sign` 覆盖此文件；下载端/CI 校验它）
-        ├── creator.identity     # 创作者身份（可选，P2P 形态）
-        ├── creator.sig          # 创作者签名（可选）
-        └── listing.md           # 功能说明（推荐）
-```
+市场允许的插件许可证及字段规则见 [CATALOG_SCHEMA.md](CATALOG_SCHEMA.md)。仓库许可不会
+覆盖或替代插件依赖、模板数据源及第三方内容原有的许可义务。
 
 ## 信任模型
 
-双轨签名（2026-08 起），两条轨签署同一整包 manifest，独立验签、互不替代：
+现代包采用整包双签：
 
-- **维护者轨（分发签名，单信任根 ed25519）**：现代包使用
-  `package.manifest.maintainer.sig`，旧包继续兼容 `plugin.py.sig` / `template.yaml.sig`；
-  签名用维护者冷存储私钥生成，验签公钥随包分发
-  （`configs/plugin_trust.pub.pem`，本目录 `keys/` 存有相同副本，拆库后独立可用）。
-  应用加载前 fail-closed 验签；验签失败直接拒载。**模板强制此轨**；
-  插件可选（仅有创作者轨亦可通过生成器完整性校验）。
-- **创作者轨**：贡献者用本地身份签署整包 manifest
-  （`creator.identity` + `package.manifest.creator.sig`，`creator.sig` 为旧客户端兼容轨），
-  公钥指纹记录在 identity 中）。创作者签名可过生成器完整性校验，但**不构成
-  市场背书**：非市场来源（本地安装）按 CreatorTrusted/CreatorUntrusted 分级
-  （不在信任列表则拒绝或弹窗询问）；**市场来源**插件则只认维护者签名，
-  创作者签名在加载端一律拒绝。即："无法自签"仅对模板成立，且创作者轨
-  不能替代分发签名被最终用户加载。
-- `authors/<market_handle>.yaml` 的 `fingerprint`（公钥 SHA-256 前 16 字节 hex）是
-  生态中**绝对唯一标识**；插件清单必须声明 `author_fingerprint` 且与作者记录一致。
-- 正式发布会把 `creator.identity` 派生指纹与作者记录、包归属和 market overlay 交叉校验；
-  用户名重复时在市场发布态分配稳定后缀，身份判断始终认指纹不认名字。
+1. `package.manifest.json` 固定包类型、ID、版本、创作者指纹、完整文件集合和 SHA-256；
+2. 创作者用 `package.manifest.creator.sig` 签署 manifest 原始字节；
+3. 审核通过后，维护者用 `package.manifest.maintainer.sig` 复签同一份原始字节；
+4. 客户端先验证 `catalog.json.sig`，再验证两份包签名、manifest 哈希和精确文件集合。
 
-## catalog.json 是派生物
+市场不得修改创作者签名覆盖的内容。展示名、稳定 `market_handle`、审核状态和其他市场字段
+放在独立 `market.yaml` 中。
 
-`catalog.json` 由生成器从 `plugins/*/plugin.yaml` 与 `templates/*/template.yaml`
-聚合生成，**不要手改**。应用端（`market_client` / GUI 市场面板 / `tools/market.py`）
-只读它。
+创作者签名只证明包来自某把创作者密钥；维护者复签只证明市场审核过这些固定字节。两者都
+不能证明第三方服务永远安全、合法或可用。
 
-```bash
-# 修改了插件/模板清单后重新生成
-python tools/generate_catalog.py
+## 身份与重名
 
-# 只校验不写盘（CI 门禁：一致性 + 必填字段 + 作者指纹 + 签名验签）
-python tools/generate_catalog.py --check
+- 包归属只认创作者公钥指纹，不认用户名；
+- 本地用户名允许重复；
+- 首次正式发布时才分配唯一、稳定的 `market_handle`；
+- 请求名冲突时，后来者依次获得 `-01`、`-02` 后缀；
+- 同一指纹发布新包或更新时继续使用原 handle；
+- 已发布的包 ID 不能转移给另一把密钥。
+
+## 目录结构
+
+```text
+OmniCrawler-market/
+├── catalog.json
+├── catalog.json.sig
+├── tombstones.json                 # 可选的撤销记录源
+├── submissions/
+│   ├── plugins/<fingerprint>/<id>/
+│   └── templates/<fingerprint>/<id>/
+├── plugins/<market-directory>/
+├── templates/<market-directory>/
+├── authors/<market_handle>.yaml
+├── keys/plugin_trust.pub.pem
+├── tools/
+├── CATALOG_SCHEMA.md
+├── CONTRIBUTING.md
+└── SECURITY.md
 ```
 
-## 发布前安全扫描
+`submissions/` 是外部贡献者唯一可以写入的生态内容入口。正式 `plugins/`、`templates/`、
+`authors/`、`catalog.json`、`catalog.json.sig` 和维护者签名均由审核发布流程生成。
 
-提交插件前运行发布前安全扫描（五步：敏感文件黑名单、高熵字符串、API Token 模式、
-私钥字段、允许列表）：
+## 创作者签名包
 
-```bash
-python tools/scan_plugin.py scan plugins/<plugin_id>/
-# 可选：--manifest plugins/<plugin_id>/plugin.yaml 启用允许列表校验（声明 files 字段）
+插件包通常包含：
+
+```text
+plugin-folder/
+├── plugin.py
+├── plugin.yaml
+├── listing.md
+├── creator.identity
+├── package.manifest.json
+└── package.manifest.creator.sig
 ```
 
-签名工具（主仓库 `tools/sign_plugin.py sign`）会在签名前自动执行本扫描，发现问题
-中止签名（`--skip-scan` 可跳过，不推荐）。
+模板包使用 `template.yaml` 代替 `plugin.py` 和 `plugin.yaml`。manifest 可以覆盖其他必要文件，
+但实际文件集合必须与 manifest 完全一致，不能多文件、少文件或哈希漂移。
 
-## 提交一个新插件（贡献流程）
+## 投稿流程
 
-> 以下直接编辑正式目录的步骤仅适用于维护旧版存量条目。新插件和新模板必须按
-> [CONTRIBUTING.md](CONTRIBUTING.md) 进入 `submissions/`，再由维护者运行
-> `finalize_submission.py` 生成正式目录；贡献者不生成维护者签名或 catalog。
+1. 在 OmniCrawler 中完成插件或模板并运行本地验证；
+2. 使用创作者本地身份完成整包签名；
+3. 按需先私下分享和测试；
+4. 选择投稿市场，检查公开文件、权限、域名、依赖和数据来源；
+5. 明确接受 DCO，创建带 `Signed-off-by` 的 Draft PR；
+6. PR 只能修改对应的 `submissions/` 路径；
+7. CI 进行签名、哈希、路径、AST/YAML、依赖、许可、凭据泄漏和 DCO 静态检查；
+8. 维护者人工审核固定 manifest 哈希，必要时在一次性隔离环境动态测试；
+9. 维护者复签同一份 manifest，生成正式目录、市场 overlay、作者记录和已签名 catalog。
 
-1. 在 `plugins/` 下新建 `<plugin_id>/` 目录。
-2. 放入 `plugin.py`（含 `def register(registry)`）与 **强制的** `listing.md`
-   （说明：做什么、适用场景、权限、兼容、作者、版本、许可）。
-3. 新建 `plugin.yaml` 清单（字段见 `CATALOG_SCHEMA.md`），`publisher` 与
-   `author_fingerprint` 必须能在 `authors/` 中找到对应记录（首次发布先提交
-   `authors/<username>.yaml`）。
-4. 通过插件契约测试（主仓库 `tests/unit/plugin/`）。
-5. 提交 PR；维护者审核 `listing.md` 与代码。
-6. 分发签名：
-   - **模板（必经此步）**：审核通过后，由持有冷私钥的发布者在**冷机器**上签名
-     （覆盖 `template.yaml.sig`，下载端/CI 校验的唯一分发签名）：
-     `python tools/sign_plugin.py sign templates/<template_id>/template.yaml`
-   - **插件（二选一）**：作者已附创作者轨（`creator.sig` + `creator.identity`）
-     即可通过生成器校验；若需要维护者分发背书，由发布者冷签：
-     `python tools/sign_plugin.py sign plugins/<plugin_id>/plugin.py`
-     （私钥位于维护者冷存储介质，绝不入库。）
-     ⚠️ 注意：仅创作者轨的插件虽能进入目录，但应用端对**市场来源**插件
-     只认维护者签名——未冷签的市场插件在用户端会被拒绝加载
-     （`plugins.py` is_market 分支）。因此对外分发的插件实际上仍需第 6 步冷签；
-     创作者轨的意义是让贡献者先入库待审，而非替代分发签名。
-7. 运行 `python tools/generate_catalog.py` 重新生成 `catalog.json`，一并合并。
+详细要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全模型和漏洞报告渠道见
+[SECURITY.md](SECURITY.md)。
 
-> CI 门禁（`.github/workflows/validate.yml`）：PR 若修改 `plugins/`、`authors/`、
-> `keys/` 或 `catalog.json`，自动执行 `tools/generate_catalog.py --check`——校验
-> plugin.yaml / template.yaml 合法、与 `catalog.json` 一致、`author_fingerprint` 有作者记录且与
-> 公钥实际指纹相符、`plugin.py.sig` / `template.yaml.sig` 能通过信任根验签，否则阻断合并。
+## 插件要求
 
-## 自建镜像 / 离线使用
+- 新插件必须使用契约 2：`handle(operation, payload) -> dict`；
+- 当前契约 2 市场插件支持自动接入 `source` 和 `fetcher`；其他官方运行扩展点仍在逐步接线；
+- `plugin_types` 是受控运行扩展点；自由业务分类使用 `category`，检索词使用 `tags`；
+- `PLUGIN_METADATA` 必须是可静态读取的 `dict` 字面量；
+- 默认 `execution_mode: subprocess`；
+- 权限、域名、输入文件和依赖必须完整、准确且最小化；
+- 网络和文件访问必须分别提供精确白名单；
+- 插件许可必须使用市场允许的 SPDX 标识；
+- `listing.md` 必须说明功能、数据流向、权限理由、兼容性、许可和限制。
 
-本目录**自包含**（公钥 `keys/`、校验工具 `tools/` 都在目录内），克隆即可离线浏览
-插件列表与元数据；把应用配置的 `plugins.catalog_url` 指向本仓库即可完成市场切换：
+## 模板要求
 
-```yaml
-plugins:
-  catalog_url: "https://raw.githubusercontent.com/<owner>/OmniCrawler-market/main"
-```
+- 使用安全可解析的声明式 YAML；
+- `template.id` 和 `template.version` 与 manifest 一致；
+- `domains` 只包含小写主机名，固定 seed 主机必须被覆盖；
+- 凭据只使用 `secret://name` 引用，禁止提交真实密钥；
+- `listing.md` 说明数据来源、服务条款、频率限制、礼貌延迟、API Key 和数据许可。
 
-（离线/便携构建则把本目录打包进应用，并将 `catalog_url` 改为内置快照目录
-`bundled_catalog_dir`。镜像方只复制文件、不重签名，原始签名与信任等级不变。）
+## Catalog 与更新
 
-> 唯一需要双维护的是 `plugin_trust.pub.pem` 的副本同步
-> （主仓库 `configs/` ↔ 生态仓库 `keys/`，各存一份）。公钥是公开文件，轮换时两边各更新一次。
+`catalog.json` 是派生物，禁止手工编辑。正式发布工具从包元数据、作者记录和市场 overlay
+生成 catalog，并签署其原始字节。字段定义见 [CATALOG_SCHEMA.md](CATALOG_SCHEMA.md)。
 
-> 之所以"简单"，是因为：① 目录自包含、路径全相对（不引用主仓库任何文件）；
-> ② 应用只认一个 `catalog_url` 配置；③ 签名信任根跨仓库复用。
-> 三者共同保证迁移是"拷贝 + 改一个值"。
+更新要求：
+
+- 使用原包归属的同一创作者密钥；
+- SemVer 严格递增；
+- 新版本保存到 `versions/<version>/`，不覆盖旧版创作者签名字节；
+- 审核和复签成功后，市场 overlay 才指向新版本；
+- 同版本覆盖、降级和换密钥接管均被拒绝。
+
+## 自建镜像与离线使用
+
+把整个目录复制到目标仓库或静态服务，并将应用的 `plugins.catalog_url` 指向新基址即可。
+离线发行版可以使用内置快照。客户端仍须验证原始 catalog 和包签名，并拒绝 catalog sequence
+或可信时间回退。镜像方不得用自己的签名替换原签名来冒充原市场。
