@@ -1,0 +1,21 @@
+id: upstream-lantern
+name: Upstream Lantern
+version: 0.1.0
+publisher: starlife
+category: source
+summary: 以只读、有限请求发现 GitHub 发布、提交、工作流和安全公告
+description_file: listing.md
+plugin_file: plugin.py
+signature_file: plugin.py.sig
+signature_algorithm: ed25519
+permissions: []
+domains: [api.github.com]
+input_files: []
+compatible_core: ">=0.11.2"
+license: MIT
+execution_mode: subprocess
+release_channel: beta
+dependencies: []
+tags: [github, releases, commits, actions, community, security-advisories, monitoring]
+updated_at: "2026-08-30"
+homepage: https://docs.github.com/en/rest
