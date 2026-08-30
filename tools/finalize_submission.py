@@ -215,6 +215,7 @@ def finalize(args: argparse.Namespace) -> int:
                 sort_keys=False,
             ),
             encoding="utf-8",
+            newline="\n",
         )
     base = package_destination.relative_to(REGISTRY).as_posix()
     overlay: dict[str, Any] = {
@@ -259,7 +260,9 @@ def finalize(args: argparse.Namespace) -> int:
             }
         )
     overlay_path.write_text(
-        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+        newline="\n",
     )
     generate(REGISTRY)
     catalog = REGISTRY / "catalog.json"
@@ -274,7 +277,9 @@ def finalize(args: argparse.Namespace) -> int:
         "market_handle": handle,
         "package_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
     }
-    with (REGISTRY / "signing_transparency.jsonl").open("a", encoding="utf-8") as stream:
+    with (REGISTRY / "signing_transparency.jsonl").open(
+        "a", encoding="utf-8", newline="\n"
+    ) as stream:
         stream.write(json.dumps(log_entry, ensure_ascii=False, sort_keys=True) + "\n")
     return publish_check(REGISTRY)
 

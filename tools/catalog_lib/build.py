@@ -170,6 +170,7 @@ def generate(registry: Path, *, publisher_override: str | None = None) -> Path:
     output.write_text(
         json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     return output
 
