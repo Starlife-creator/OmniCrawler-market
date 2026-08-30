@@ -36,6 +36,7 @@ _ENTRY_KEYS = [
     "version",
     "publisher",
     "category",
+    "plugin_types",
     "summary",
     "description_file",
     "plugin_file",
@@ -137,6 +138,11 @@ LICENSE_ALLOWLIST = {
     "BSD-3-Clause",
     "CC0-1.0",
     "Unlicense",
+}
+
+OFFICIAL_PLUGIN_TYPES = {
+    "source", "fetcher", "processor", "exporter", "auth_provider",
+    "parser", "extractor", "transformer", "hook", "ui",
 }
 
 def _load_yaml(path: Path) -> dict[str, Any]:

@@ -30,6 +30,11 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
             f"插件 {entry['id']} 的许可 {license_id!r} 不在 SPDX 白名单内（门 2，A2）: "
             f"{sorted(LICENSE_ALLOWLIST)}"
         )
+    permissions = entry.get("permissions")
+    if not isinstance(permissions, list) or not all(
+        isinstance(item, str) and item.strip() for item in permissions
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 permissions 必须是字符串列表")
     if not re.match(_ID_RE_PREFIX, str(entry["id"])):
         raise ValueError(f"非法插件 ID（须匹配 {_ID_RE_PREFIX}）: {entry['id']}")
     # Phase 1 第 2 条（B1）：execution_mode 缺省 subprocess（未声明按 subprocess，
@@ -43,6 +48,22 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
             f"插件 {entry['id']} 的 execution_mode 非法: {declared_mode!r}"
             f"（仅 in_process | subprocess）"
         )
+    plugin_types = entry.get("plugin_types")
+    if plugin_types is not None:
+        if not isinstance(plugin_types, list) or not plugin_types or not all(
+            isinstance(item, str) and item.strip() for item in plugin_types
+        ):
+            raise ValueError(f"插件 {entry['id']} 的 plugin_types 必须是非空字符串列表")
+        normalized = list(dict.fromkeys(item.strip().casefold() for item in plugin_types))
+        unknown = set(normalized) - OFFICIAL_PLUGIN_TYPES
+        if unknown:
+            raise ValueError(f"插件 {entry['id']} 声明未知运行扩展点: {sorted(unknown)}")
+        if "ui" in normalized:
+            raise ValueError(
+                f"插件 {entry['id']} 声明原生 ui；市场仅接受契约 2 subprocess 数据扩展，"
+                "ui 只能作为受信任本地插件分发"
+            )
+        entry["plugin_types"] = normalized
     # domains：network 权限的域名白名单（schema 层仅校验类型/格式，
     # "有 network 权限必须有 domains" 的一致性属门 1，scan_plugin Phase 2）
     domains = entry.get("domains")

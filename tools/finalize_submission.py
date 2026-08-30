@@ -108,6 +108,7 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
         return {
             "name": str(market.get("name") or plugin_meta.get("name") or manifest["package_id"]),
             "category": str(market.get("category") or (plugin_meta.get("plugin_types") or ["source"])[0]),
+            "plugin_types": list(plugin_meta.get("plugin_types") or yaml_meta.get("plugin_types") or ["source"]),
             "summary": str(market.get("summary") or plugin_meta.get("description") or ""),
             "permissions": list(plugin_meta.get("permissions") or yaml_meta.get("permissions") or []),
             "compatible_core": str(yaml_meta.get("compatible_core") or f">={plugin_meta.get('min_core_version') or '0.11.1'}"),
@@ -243,6 +244,7 @@ def finalize(args: argparse.Namespace) -> int:
                 "plugin_file": f"{base}/plugin.py",
                 "signature_file": f"{base}/plugin.py.sig",
                 "permissions": metadata["permissions"],
+                "plugin_types": metadata["plugin_types"],
                 "execution_mode": metadata["execution_mode"],
                 "domains": metadata["domains"],
                 "input_files": metadata["input_files"],

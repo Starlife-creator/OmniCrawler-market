@@ -16,7 +16,7 @@
 | `schema_version` | int | catalog 格式版本，当前 `1` |
 | `generated_at` | string (ISO8601) | 生成时间，便于缓存失效（一致性校验时忽略） |
 | `publisher` | string | 目录发布者（默认取首个插件的发布者，可用 `--publisher` 覆盖） |
-| `trust_model` | string | 信任模型，当前 `dual-rail-ed25519`（维护者冷签名 + 创作者热签名双轨，第 64/70 轮修正：原 `single-root-ed25519` 为过时描述） |
+| `trust_model` | string | 信任模型，当前为 `dual-rail-ed25519`：创作者和维护者分别签署同一份整包 manifest |
 | `trust_public_key_ref` | string | 验签公钥引用（相对 registry 基址的路径，本目录 `keys/plugin_trust.pub.pem`；与应用 `plugins.trust_public_key` 是同一把公钥） |
 | `plugins` | array | 已审核插件条目数组 |
 | `templates` | array | 已审核模板条目数组（可为空） |
@@ -31,7 +31,8 @@
 | `name` | string | ✓ | 展示名 |
 | `version` | string (semver) | ✓ | 插件版本 |
 | `publisher` | string | ✓ | 发布者 |
-| `category` | string | ✓ | 扩展点类别：`source` / `fetcher` / `processor` / `exporter` / `auth_provider` / `parser` / `extractor` / `transformer` / `hook` |
+| `category` | string | ✓ | 市场业务分类，仅用于展示与检索，可以由开发者命名。它不决定运行路由 |
+| `plugin_types` | array[string] | 新条目必填 | 宿主控制的运行扩展点。支持 `source/fetcher/processor/exporter/auth_provider/parser/extractor/transformer/hook`；原生 `ui` 仅限受信任本地契约 1 插件，不进入市场。旧条目缺失时客户端可从 category/tags 保守推断 |
 | `summary` | string | ✓ | 一句话功能摘要 |
 | `description_file` | string | ✓ | **功能说明**文件相对路径（即 `listing.md`） |
 | `plugin_file` | string | ✓ | 插件代码相对路径 |
@@ -39,15 +40,15 @@
 | `signature_algorithm` | string | ✓ | 当前固定 `ed25519` |
 | `permissions` | array[string] | ✓ | 插件声明的权限列表（空数组表示无） |
 | `compatible_core` | string | ✓ | 兼容的核心版本约束，如 `>=2.7.0` |
-| `license` | string | ✓ | **必填**（Phase 1 起无隐式默认）。插件须为 SPDX 白名单内标识（见门 2）：`AGPL-3.0-only/or-later`、`GPL-3.0-only/or-later`、`MIT`、`Apache-2.0`、`BSD-2-Clause/3-Clause`、`CC0-1.0`、`Unlicense`；白名单外（如 `GPL-2.0-*`/`CC-BY-NC-*`/`LicenseRef-*`）→ 拒绝。模板不适用白名单（license 为数据/服务条款自由文本，但必填） |
-| `execution_mode` | string | | `in_process` \| `subprocess`（Phase 1 B1）。**缺省 `subprocess`**（未声明即 subprocess，无兼容语义）；非法枚举拒绝 |
+| `license` | string | ✓ | 无隐式默认。插件须为 SPDX 白名单内标识：`AGPL-3.0-only/or-later`、`GPL-3.0-only/or-later`、`MIT`、`Apache-2.0`、`BSD-2-Clause/3-Clause`、`CC0-1.0`、`Unlicense`；白名单外（如 `GPL-2.0-*`、`CC-BY-NC-*`、`LicenseRef-*`）拒绝。模板的 license 为数据与服务条款说明，使用自由文本但仍必填 |
+| `execution_mode` | string | | `in_process` \| `subprocess`；缺省为 `subprocess`，非法枚举拒绝。`in_process` 需要显式高风险审批 |
 | `domains` | array[string] | | network 权限的域名白名单（随 domains 同机制受门 1 校验） |
-| `input_files` | array[string] | | files:read 权限的路径白名单（第 82 轮更名：原 `files` 与 scan_plugin 扫描允许列表冲突） |
+| `input_files` | array[string] | | `files:read` 权限的路径白名单；不得使用旧字段名 `files` |
 | `release_channel` | string | | `stable` \| `beta`；beta 强制 subprocess + 界面标注"测试版" |
 | `dependencies` | array[object] | | `[{name, version, license}]`；空数组合法。门 3 校验声明↔实测导入图双向一致 + 许可白名单 |
 | `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |
-| `gates_evidence` | object | | tag 门禁证据摘要（四门通过状态 + 时间戳 + tag 哈希，随 catalog 签名覆盖；批准矩阵离线凭据，第 78 轮） |
-| `creator_signature_file` / `creator_identity_file` | string | | 创作者轨签名与公钥身份（与维护者轨独立验签，B02-020 双轨） |
+| `gates_evidence` | object | | 门禁证据摘要，包括检查状态、时间戳和 tag 哈希；随 catalog 签名覆盖，供离线审批验证 |
+| `creator_signature_file` / `creator_identity_file` | string | | 旧版单文件创作者签名与公钥身份字段；现代包使用下方整包签名字段 |
 | `package_manifest_file` | string | 现代包必填 | 创作者签名的规范整包 manifest 路径 |
 | `creator_package_signature_file` | string | 现代包必填 | 创作者对整包 manifest 的签名 |
 | `maintainer_package_signature_file` | string | 发布态必填 | 维护者对同一 manifest 字节的复签 |
@@ -58,7 +59,7 @@
 
 ## 模板条目字段（`templates[]`）
 
-模板与插件共享信任/签名机制（Helios 三层体系）。条目由生成器从
+模板与插件共享整包双签、作者归属和 catalog 验证机制。条目由生成器从
 `templates/<id>/template.yaml` 的 `template:` 块提取：
 
 | 字段 | 类型 | 说明 |
@@ -123,7 +124,10 @@
 
 ## 签名与验签
 
-- 下载 `plugin_file` 与 `signature_file` 后，用信任根公钥验证 `signature_file` 是否覆盖 `plugin_file` 字节。
-- 验签失败的应用端行为：fail-closed 拒载，并在市场面板标记该插件「不可信」。
+- 现代条目必须先验证 `catalog.json.sig`，再下载 manifest 声明的全部文件；客户端同时验证
+  创作者和维护者对同一份 manifest 的签名、catalog 固定的 manifest SHA-256 以及精确文件集合。
+- `signature_file` 等单文件字段只用于兼容已发布的旧版存量条目，不是新投稿的签名模型。
+- 任一验签、哈希、文件集合、包 ID 或版本检查失败时，客户端必须 fail-closed 拒绝安装或加载，
+  并在市场面板标记该条目不可信。
 - 撤销：生态注册表 `EcosystemRegistry.revoke(package_id, version, advisory)` 记录撤回；
   重新生成 catalog 时把被撤回条目移除或标记。

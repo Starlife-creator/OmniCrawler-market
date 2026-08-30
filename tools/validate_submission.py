@@ -67,6 +67,22 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
         raise ValueError(f"{root}: permissions must be a string array")
     if metadata.get("execution_mode", "subprocess") not in ("subprocess", "in_process"):
         raise ValueError(f"{root}: invalid execution_mode")
+    # 旧契约 2 投稿未声明 plugin_types 时按历史 source 语义迁移；一旦显式
+    # 声明，就必须是合法非空列表，不能用空列表绕过类型门禁。
+    plugin_types = metadata.get("plugin_types", ["source"])
+    official_types = {
+        "source", "fetcher", "processor", "exporter", "auth_provider",
+        "parser", "extractor", "transformer", "hook", "ui",
+    }
+    if not isinstance(plugin_types, list) or not plugin_types or not all(
+        isinstance(item, str) and item.strip() for item in plugin_types
+    ):
+        raise ValueError(f"{root}: plugin_types must be a non-empty string array")
+    unknown_types = {item.strip().casefold() for item in plugin_types} - official_types
+    if unknown_types:
+        raise ValueError(f"{root}: unknown plugin_types: {sorted(unknown_types)}")
+    if any(item.strip().casefold() == "ui" for item in plugin_types):
+        raise ValueError(f"{root}: native ui plugins are local-only and cannot enter the market")
 
 
 def _validate_template_payload(root: Path, package_id: str, version: str) -> None:
