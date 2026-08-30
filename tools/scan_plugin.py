@@ -54,6 +54,10 @@ SKIP_DIRS = {"__pycache__"}
 #   **扫内容**——listing.md 是手写自由文本，是最常见的凭据泄漏载体）。
 CONTENT_SKIP_SUFFIXES = (".pyc", ".pyo", ".sig", ".identity")
 ALLOWLIST_EXEMPT_SUFFIXES = (".pyc", ".pyo", ".sig", ".md", ".identity")
+GENERATED_METADATA_PATHS = {
+    "package.manifest.json",
+    "submission.json",
+}
 DEFAULT_ENTROPY_THRESHOLD = 4.5
 MIN_TOKEN_LEN = 16
 
@@ -93,7 +97,13 @@ def _iter_files(plugin_dir: Path, *, skip_suffixes: tuple[str, ...]) -> list[Pat
     for path in plugin_dir.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in SKIP_DIRS for part in path.relative_to(plugin_dir).parts):
+        relative = path.relative_to(plugin_dir)
+        if any(part in SKIP_DIRS for part in relative.parts):
+            continue
+        # These root-level files are generated and strictly validated by the
+        # creator-package pipeline. Their hashes and signatures are deliberately
+        # high-entropy. Nested files with the same basename remain scanned.
+        if relative.as_posix() in GENERATED_METADATA_PATHS:
             continue
         if path.suffix in skip_suffixes:
             continue
