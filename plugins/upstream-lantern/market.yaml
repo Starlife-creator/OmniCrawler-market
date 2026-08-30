@@ -1,0 +1,36 @@
+id: upstream-lantern
+name: upstream-lantern
+version: 0.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: source
+summary: 将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求
+description_file: plugins/upstream-lantern/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.2'
+license: MIT
+tags:
+- github
+- releases
+- commits
+- actions
+- community
+- security-advisories
+- monitoring
+updated_at: '2026-08-30'
+creator_signature_file: plugins/upstream-lantern/creator.sig
+creator_identity_file: plugins/upstream-lantern/creator.identity
+package_manifest_file: plugins/upstream-lantern/package.manifest.json
+creator_package_signature_file: plugins/upstream-lantern/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/upstream-lantern/package.manifest.maintainer.sig
+package_manifest_sha256: 9ab766ea9f66b2a53633bf3fcf79695eb950858976e5763231e72c9c18f3196c
+plugin_file: plugins/upstream-lantern/plugin.py
+signature_file: plugins/upstream-lantern/plugin.py.sig
+permissions: []
+plugin_types:
+- source
+execution_mode: subprocess
+domains:
+- api.github.com
+input_files: []
+dependencies: []
