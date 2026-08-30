@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-26T03:03:00+00:00",
-  "sequence": 1787713380,
+  "generated_at": "2026-08-30T18:47:21+00:00",
+  "sequence": 1788115641,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
@@ -35,6 +35,51 @@
       "versions": {
         "1.0.0": {
           "sha256": "2630ed2c32a15a9cc355251e1547a05b0b14b07ee0f94b6aed962f8e75f9db2c"
+        }
+      }
+    },
+    {
+      "id": "upstream-lantern",
+      "name": "upstream-lantern",
+      "version": "0.1.0",
+      "publisher": "starlife",
+      "category": "source",
+      "plugin_types": [
+        "source"
+      ],
+      "summary": "将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求",
+      "description_file": "plugins/upstream-lantern/listing.md",
+      "plugin_file": "plugins/upstream-lantern/plugin.py",
+      "signature_file": "plugins/upstream-lantern/plugin.py.sig",
+      "signature_algorithm": "ed25519",
+      "permissions": [],
+      "compatible_core": ">=0.11.2",
+      "license": "MIT",
+      "tags": [
+        "github",
+        "releases",
+        "commits",
+        "actions",
+        "community",
+        "security-advisories",
+        "monitoring"
+      ],
+      "updated_at": "2026-08-30",
+      "creator_signature_file": "plugins/upstream-lantern/creator.sig",
+      "creator_identity_file": "plugins/upstream-lantern/creator.identity",
+      "execution_mode": "subprocess",
+      "domains": [
+        "api.github.com"
+      ],
+      "input_files": [],
+      "dependencies": [],
+      "package_manifest_file": "plugins/upstream-lantern/package.manifest.json",
+      "creator_package_signature_file": "plugins/upstream-lantern/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/upstream-lantern/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "9ab766ea9f66b2a53633bf3fcf79695eb950858976e5763231e72c9c18f3196c",
+      "versions": {
+        "0.1.0": {
+          "sha256": "13c6a6fbc09acc49d37b340afb0ce992da5bb3f5185519181cdbca10c7eab8ec"
         }
       }
     }
