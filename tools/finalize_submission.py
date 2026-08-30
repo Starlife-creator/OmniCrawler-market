@@ -32,6 +32,7 @@ if str(REGISTRY / "tools") not in sys.path:
 from catalog_lib.authors import assign_market_handle, load_authors
 from catalog_lib.build import generate
 from catalog_lib.cli import publish_check
+from catalog_lib.signing import validate_maintainer_private_key
 from omnicrawler.plugins.identity import CreatorIdentity
 from omnicrawler.plugins.signing import sign_bytes
 from validate_submission import validate_one
@@ -187,6 +188,7 @@ def finalize(args: argparse.Namespace) -> int:
     if not metadata["summary"] or not metadata["license"]:
         raise ValueError("正式发布需要非空 summary 与 license")
     private_pem = Path(args.maintainer_key).expanduser().read_bytes()
+    validate_maintainer_private_key(REGISTRY, private_pem)
     _copy_creator_package(source, package_destination, manifest)
     (package_destination / "package.manifest.maintainer.sig").write_bytes(
         sign_bytes(manifest_bytes, private_pem)
@@ -285,7 +287,7 @@ def finalize(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="审核后原子化准备正式市场发布（绝不执行投稿代码）")
+    parser = argparse.ArgumentParser(description="审核后准备正式市场发布（绝不执行投稿代码）")
     parser.add_argument("submission_dir")
     parser.add_argument("--reviewed-manifest-sha256", required=True)
     parser.add_argument("--maintainer-key", required=True)
@@ -293,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = finalize(args)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"FAIL finalize: {exc}")
         return 1
     if result == 0:

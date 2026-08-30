@@ -59,6 +59,23 @@ def _resolve_trust(registry: Path, trust_source: str | None) -> str:
     return str(candidate) if candidate.is_file() else ""
 
 
+def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
+    """Fail before publication writes unless the private key matches the trust root."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise TypeError("维护者私钥必须是 ed25519 私钥")
+    trust_source = _resolve_trust(registry, None)
+    if not trust_source:
+        raise ValueError("未找到市场信任根公钥，拒绝生成正式发布文件")
+    trusted_public = _load_public_key(trust_source).public_bytes_raw()
+    derived_public = private_key.public_key().public_bytes_raw()
+    if derived_public != trusted_public:
+        raise ValueError("维护者私钥与市场信任根不匹配，拒绝生成正式发布文件")
+
+
 def _canonical_manifest(manifest: dict[str, Any]) -> bytes:
     return (
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
@@ -122,11 +139,11 @@ def _verify_package_manifest_entry(
             raise ValueError(f"包 {entry.get('id')} 文件哈希不一致: {file_rel}")
     if require_maintainer and (maintainer_sig_path is None or not maintainer_sig_path.is_file()):
         raise ValueError(f"包 {entry.get('id')} 缺少维护者整包签名")
-    if maintainer_sig_path is not None:
-        if not maintainer_sig_path.is_file() or not _verify_signature(
-            data, maintainer_sig_path.read_bytes(), trust
-        ):
-            raise ValueError(f"包 {entry.get('id')} 维护者整包签名无效")
+    if maintainer_sig_path is not None and (
+        not maintainer_sig_path.is_file()
+        or not _verify_signature(data, maintainer_sig_path.read_bytes(), trust)
+    ):
+        raise ValueError(f"包 {entry.get('id')} 维护者整包签名无效")
 
 def _verify_signatures(
     registry: Path,
