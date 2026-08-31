@@ -1,0 +1,15 @@
+id: signal-sieve
+name: Signal Sieve
+version: 0.2.0
+api_version: 1
+description: 融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断
+plugin_types: [extractor, transformer]
+category: content-extraction
+tags: [html, article, metadata, explainable]
+permissions: []
+domains: []
+input_files: []
+dependencies: []
+license: MIT
+execution_mode: subprocess
+min_core_version: 0.11.2

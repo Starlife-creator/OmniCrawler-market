@@ -1,0 +1,19 @@
+id: tideprint-gate
+name: Tideprint Gate
+version: 0.2.0
+api_version: 1
+description: 以持久指纹建议条件重验证，并输出当前运行的可解释变化分类
+plugin_types: [processor, hook]
+category: incremental-processing
+tags: [fingerprint, deduplication, change-detection, persistent-state]
+permissions: [state:read, state:write]
+required_capabilities:
+  state.get: ">=1"
+  state.set: ">=1"
+state_schema_version: 1
+domains: []
+input_files: []
+dependencies: []
+license: MIT
+execution_mode: subprocess
+min_core_version: 0.11.2
