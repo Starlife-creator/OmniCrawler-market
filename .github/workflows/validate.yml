@@ -73,9 +73,13 @@ jobs:
         run: |
           for plugin_dir in plugins/*/; do
             if [ -f "$plugin_dir/plugin.py" ]; then
-              # P3-2：显式传 --manifest，启用「允许列表外文件 → 报错」；
-              # 此前不传时 _scan_allowlist 收 manifest=None 直接跳过，门禁空转
-              python tools/scan_plugin.py scan "$plugin_dir" --manifest "$plugin_dir/plugin.yaml" || exit 1
+              # 正式签名包以 package.manifest.json 的 files 哈希映射为事实来源；
+              # 旧版包没有整包清单时才回退 plugin.yaml（可能仅产生迁移警告）。
+              manifest="$plugin_dir/package.manifest.json"
+              if [ ! -f "$manifest" ]; then
+                manifest="$plugin_dir/plugin.yaml"
+              fi
+              python tools/scan_plugin.py scan "$plugin_dir" --manifest "$manifest" || exit 1
             fi
           done
       - name: 发布前安全扫描（全部模板）

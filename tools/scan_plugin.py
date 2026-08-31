@@ -192,24 +192,35 @@ def _scan_mapping_fields(data: Any, path: Path) -> list[str]:
 
 
 def _scan_allowlist(plugin_dir: Path, manifest_path: Path | None) -> tuple[list[str], list[str]]:
-    """返回 (警告, 错误)：manifest 声明 files 之外存在文件 → 错误；未声明 files → 警告。"""
+    """返回 (警告, 错误)：manifest 声明 files 之外存在文件 → 错误；未声明 files → 警告。
+
+    开发清单使用 ``files: [path]``，签名包清单使用
+    ``files: {path: sha256:...}``；两种形式都必须真正启用允许列表。
+    """
     warnings: list[str] = []
     errors: list[str] = []
     if manifest_path is None or not manifest_path.is_file():
         return warnings, errors
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     allowed = manifest.get("files") if isinstance(manifest, dict) else None
-    if not isinstance(allowed, list):
+    if isinstance(allowed, dict):
+        allowed_set = {str(item) for item in allowed}
+    elif isinstance(allowed, list):
+        allowed_set = {str(item) for item in allowed}
+    else:
         # B02-018：模板（template.yaml）schema 无 files 字段属预期，不强制；
         # 插件若缺 files 仍建议声明。警告不影响退出码（仅 errors 计失败）。
         return [
             "manifest 未声明 files 允许列表（插件建议声明；模板 schema 无此字段属预期）"
         ], errors
-    allowed_set = {str(item) for item in allowed}
     for path in _iter_files(plugin_dir, skip_suffixes=ALLOWLIST_EXEMPT_SUFFIXES):
         if path.resolve() == manifest_path.resolve():
             continue  # 清单自身是元数据，不参与打包
         rel = path.relative_to(plugin_dir).as_posix()
+        if rel == "market.yaml":
+            # 正式市场覆盖元数据由 finalize_submission.py 生成，不属于作者 payload；
+            # 仍参与内容凭据扫描，只从作者清单的文件集合检查中豁免。
+            continue
         if rel not in allowed_set:
             errors.append(f"允许列表外文件（manifest 未声明）: {rel}")
     return warnings, errors
