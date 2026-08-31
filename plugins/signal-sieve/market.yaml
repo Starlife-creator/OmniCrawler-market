@@ -1,0 +1,35 @@
+id: signal-sieve
+name: signal-sieve
+version: 0.2.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: extractor
+summary: 融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断
+description_file: plugins/signal-sieve/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.2'
+license: MIT
+tags:
+- html
+- article
+- metadata
+- explainable
+updated_at: '2026-08-31'
+creator_signature_file: plugins/signal-sieve/creator.sig
+creator_identity_file: plugins/signal-sieve/creator.identity
+package_manifest_file: plugins/signal-sieve/package.manifest.json
+creator_package_signature_file: plugins/signal-sieve/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/signal-sieve/package.manifest.maintainer.sig
+package_manifest_sha256: c5d47641523244a97f6b6aaadbe67efcb46e9ab9ac3cb4fe15cfc36ae451eeb2
+plugin_file: plugins/signal-sieve/plugin.py
+signature_file: plugins/signal-sieve/plugin.py.sig
+permissions: []
+plugin_types:
+- extractor
+- transformer
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1
