@@ -61,6 +61,14 @@ GENERATED_METADATA_PATHS = {
 DEFAULT_ENTROPY_THRESHOLD = 4.5
 MIN_TOKEN_LEN = 16
 
+# 只把连续的“凭据型”字符作为熵候选。旧实现使用 ``[ -~]{16,}``
+# 吞掉整行可打印源码，函数签名、正则和普通表达式都会因为字符种类多而
+# 被误判。显式令牌模式和敏感字段扫描仍会独立检查完整文本。
+_ENTROPY_TOKEN_RE = re.compile(
+    rf"(?<![A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{{{MIN_TOKEN_LEN},}}"
+    r"(?![A-Za-z0-9_+/=-])"
+)
+
 _TOKEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("AWS Access Key", re.compile(r"\b(AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("GitHub Token", re.compile(r"\bghp_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
@@ -123,7 +131,7 @@ def _shannon_entropy(data: bytes) -> float:
 
 def _high_entropy_tokens(text: str, threshold: float) -> list[str]:
     tokens: list[str] = []
-    for match in re.finditer(r"[ -~]{16,}", text):
+    for match in _ENTROPY_TOKEN_RE.finditer(text):
         token = match.group()
         if _shannon_entropy(token.encode("utf-8", "ignore")) > threshold:
             tokens.append(token)

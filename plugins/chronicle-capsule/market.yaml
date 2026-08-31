@@ -1,0 +1,46 @@
+id: chronicle-capsule
+name: chronicle-capsule
+version: 0.2.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: exporter
+summary: 以隐私、元数据或原始保全模式生成有界 WARC 1.1 归档
+description_file: plugins/chronicle-capsule/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.2'
+license: MIT
+tags:
+- warc
+- evidence
+- offline
+- sha256
+- streaming
+updated_at: '2026-08-31'
+creator_signature_file: plugins/chronicle-capsule/creator.sig
+creator_identity_file: plugins/chronicle-capsule/creator.identity
+package_manifest_file: plugins/chronicle-capsule/package.manifest.json
+creator_package_signature_file: plugins/chronicle-capsule/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/chronicle-capsule/package.manifest.maintainer.sig
+package_manifest_sha256: 3d1b1fcb3c61ba69b6d2d65ab24239e7bf9f18da0095b9eab79e3fe6341a73e3
+plugin_file: plugins/chronicle-capsule/plugin.py
+signature_file: plugins/chronicle-capsule/plugin.py.sig
+permissions:
+- records:read
+- responses:read
+- responses:payload
+- artifacts:write
+plugin_types:
+- exporter
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities:
+  records.page: '>=1'
+  responses.page: '>=1'
+  responses.payload: '>=1'
+  artifact.stream.open: '>=1'
+  artifact.stream.write: '>=1'
+  artifact.stream.commit: '>=1'
+  artifact.stream.abort: '>=1'
+state_schema_version: 1

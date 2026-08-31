@@ -1,0 +1,23 @@
+id: chronicle-capsule
+name: Chronicle Capsule
+version: 0.2.0
+api_version: 1
+description: 以隐私、元数据或原始保全模式生成有界 WARC 1.1 归档
+plugin_types: [exporter]
+category: archiving
+tags: [warc, evidence, offline, sha256, streaming]
+permissions: [records:read, responses:read, responses:payload, artifacts:write]
+required_capabilities:
+  records.page: ">=1"
+  responses.page: ">=1"
+  responses.payload: ">=1"
+  artifact.stream.open: ">=1"
+  artifact.stream.write: ">=1"
+  artifact.stream.commit: ">=1"
+  artifact.stream.abort: ">=1"
+domains: []
+input_files: []
+dependencies: []
+license: MIT
+execution_mode: subprocess
+min_core_version: 0.11.2

@@ -51,6 +51,8 @@ jobs:
         run: python tools/generate_catalog.py --check
       - name: 投稿包静态验证（不执行投稿代码）
         run: python tools/validate_submission.py
+      - name: 凭据扫描器回归检查
+        run: python tools/check_scan_plugin.py
       - name: DCO（仅 Pull Request）
         if: github.event_name == 'pull_request'
         run: >-

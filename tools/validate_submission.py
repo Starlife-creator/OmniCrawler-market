@@ -240,9 +240,9 @@ def validate_one(root: Path, submissions_root: Path) -> tuple[str, str]:
     # never imported or executed in the contribution workflow.
     from scan_plugin import scan_plugin_dir
 
-    # Entropy alone is too noisy for source and canonical JSON. Token patterns,
-    # secret fields and sensitive filenames remain fail-closed.
-    if scan_plugin_dir(root, entropy_threshold=8.1):
+    # scan_plugin_dir 的熵检查只分析凭据型连续 token；令牌模式、敏感字段、
+    # 敏感文件名与默认熵阈值均和正式目录 CI 使用同一套 fail-closed 规则。
+    if scan_plugin_dir(root):
         raise ValueError(f"{root}: credential/private-key static scan failed")
 
     submission = json.loads(submission_path.read_text(encoding="utf-8"))
