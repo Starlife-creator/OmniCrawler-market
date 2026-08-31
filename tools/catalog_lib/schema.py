@@ -35,6 +35,9 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
         isinstance(item, str) and item.strip() for item in permissions
     ):
         raise ValueError(f"插件 {entry['id']} 的 permissions 必须是字符串列表")
+    unknown_permissions = {item.strip().casefold() for item in permissions} - ALLOWED_PLUGIN_PERMISSIONS
+    if unknown_permissions:
+        raise ValueError(f"插件 {entry['id']} 声明未知权限: {sorted(unknown_permissions)}")
     if not re.match(_ID_RE_PREFIX, str(entry["id"])):
         raise ValueError(f"非法插件 ID（须匹配 {_ID_RE_PREFIX}）: {entry['id']}")
     # Phase 1 第 2 条（B1）：execution_mode 缺省 subprocess（未声明按 subprocess，
@@ -84,6 +87,22 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
                     f"插件 {entry['id']} 的 dependencies 条目非法: {dep!r}"
                     f"（须为含 name 的映射）"
                 )
+    required_capabilities = entry.get("required_capabilities")
+    if required_capabilities is not None:
+        if not isinstance(required_capabilities, dict) or not all(
+            isinstance(name, str)
+            and name.strip()
+            and re.fullmatch(r"(?:>=)?[1-9][0-9]*", str(requirement).strip())
+            for name, requirement in required_capabilities.items()
+        ):
+            raise ValueError(
+                f"插件 {entry['id']} 的 required_capabilities 必须是能力名到正整数/'>=正整数'的映射"
+            )
+    state_schema_version = entry.get("state_schema_version")
+    if state_schema_version is not None and (
+        not isinstance(state_schema_version, int) or state_schema_version < 1
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 state_schema_version 必须是正整数")
     return entry
 
 def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:

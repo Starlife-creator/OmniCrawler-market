@@ -118,6 +118,16 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
             "domains": list(plugin_meta.get("domains") or yaml_meta.get("domains") or []),
             "input_files": list(plugin_meta.get("input_files") or yaml_meta.get("input_files") or []),
             "dependencies": list(plugin_meta.get("dependencies") or yaml_meta.get("dependencies") or []),
+            "required_capabilities": dict(
+                plugin_meta.get("required_capabilities")
+                or yaml_meta.get("required_capabilities")
+                or {}
+            ),
+            "state_schema_version": int(
+                plugin_meta.get("state_schema_version")
+                or yaml_meta.get("state_schema_version")
+                or 1
+            ),
             "tags": list(plugin_meta.get("tags") or yaml_meta.get("tags") or []),
         }
     template = yaml.safe_load((source / "template.yaml").read_text(encoding="utf-8")) or {}
@@ -252,6 +262,8 @@ def finalize(args: argparse.Namespace) -> int:
                 "domains": metadata["domains"],
                 "input_files": metadata["input_files"],
                 "dependencies": metadata["dependencies"],
+                "required_capabilities": metadata["required_capabilities"],
+                "state_schema_version": metadata["state_schema_version"],
             }
         )
     else:
