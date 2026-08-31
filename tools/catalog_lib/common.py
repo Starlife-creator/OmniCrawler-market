@@ -58,6 +58,8 @@ _ENTRY_KEYS = [
     # input_files（方案 B1/术语表已同步更名）；files 保留为扫描期元数据
     # （_TOP_LEVEL_EXTRA，不进 catalog）。
     "input_files",
+    "required_capabilities",
+    "state_schema_version",
     "release_channel",
     "dependencies",
     "review_depth",
@@ -143,6 +145,12 @@ LICENSE_ALLOWLIST = {
 OFFICIAL_PLUGIN_TYPES = {
     "source", "fetcher", "processor", "exporter", "auth_provider",
     "parser", "extractor", "transformer", "hook", "ui",
+}
+
+ALLOWED_PLUGIN_PERMISSIONS = {
+    "records:read", "records:write", "artifacts:read", "artifacts:write",
+    "responses:read", "responses:payload", "network:scoped", "temp:write",
+    "files:read", "secrets:read", "state:read", "state:write",
 }
 
 def _load_yaml(path: Path) -> dict[str, Any]:

@@ -32,6 +32,11 @@ DOMAIN_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
     re.IGNORECASE,
 )
+ALLOWED_PLUGIN_PERMISSIONS = {
+    "records:read", "records:write", "artifacts:read", "artifacts:write",
+    "responses:read", "responses:payload", "network:scoped", "temp:write",
+    "files:read", "secrets:read", "state:read", "state:write",
+}
 
 
 def _plugin_metadata(tree: ast.AST) -> dict[str, Any]:
@@ -65,6 +70,20 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
         isinstance(item, str) and item.strip() for item in permissions
     ):
         raise ValueError(f"{root}: permissions must be a string array")
+    unknown_permissions = {item.strip().casefold() for item in permissions} - ALLOWED_PLUGIN_PERMISSIONS
+    if unknown_permissions:
+        raise ValueError(f"{root}: unknown permissions: {sorted(unknown_permissions)}")
+    required_capabilities = metadata.get("required_capabilities", {})
+    if not isinstance(required_capabilities, dict) or not all(
+        isinstance(name, str)
+        and name.strip()
+        and re.fullmatch(r"(?:>=)?[1-9][0-9]*", str(requirement).strip())
+        for name, requirement in required_capabilities.items()
+    ):
+        raise ValueError(f"{root}: invalid required_capabilities")
+    state_schema_version = metadata.get("state_schema_version", 1)
+    if not isinstance(state_schema_version, int) or state_schema_version < 1:
+        raise ValueError(f"{root}: state_schema_version must be a positive integer")
     if metadata.get("execution_mode", "subprocess") not in ("subprocess", "in_process"):
         raise ValueError(f"{root}: invalid execution_mode")
     # 旧契约 2 投稿未声明 plugin_types 时按历史 source 语义迁移；一旦显式

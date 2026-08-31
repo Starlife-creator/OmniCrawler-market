@@ -44,6 +44,8 @@
 | `execution_mode` | string | | `in_process` \| `subprocess`；缺省为 `subprocess`，非法枚举拒绝。`in_process` 需要显式高风险审批 |
 | `domains` | array[string] | | network 权限的域名白名单（随 domains 同机制受门 1 校验） |
 | `input_files` | array[string] | | `files:read` 权限的路径白名单；不得使用旧字段名 `files` |
+| `required_capabilities` | object | | 契约 2 宿主能力最低协议版本，例如 `{"records.page": ">=1"}`；不满足时客户端在执行插件代码前拒载 |
+| `state_schema_version` | integer | | 插件私有状态 schema，正整数；升级时必须显式迁移，插件版本升级本身不切断状态 |
 | `release_channel` | string | | `stable` \| `beta`；beta 强制 subprocess + 界面标注"测试版" |
 | `dependencies` | array[object] | | `[{name, version, license}]`；空数组合法。门 3 校验声明↔实测导入图双向一致 + 许可白名单 |
 | `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |

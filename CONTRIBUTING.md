@@ -54,7 +54,10 @@ CLI 的模板投稿必须显式加入 `--accept-dco`；不想创建 PR 时使用
 
 - `PLUGIN_METADATA` 必须是可由 AST 字面量读取的映射；
 - 默认 `execution_mode: subprocess`；`in_process` 属于高风险申请，需说明不可替代性；
-- `permissions`、`domains`、`input_files` 和依赖只声明实际需要的最小集合；
+- `permissions`、`domains`、`input_files` 和依赖只声明实际需要的最小集合；响应正文权限
+  `responses:payload` 必须与元数据读取分开说明；
+- 调用新版宿主代理时声明 `required_capabilities`；使用持久状态时声明正整数
+  `state_schema_version`，并说明迁移与留存策略；
 - 插件许可必须属于仓库允许的 SPDX 列表；
 - `listing.md` 说明功能、数据去向、权限理由、兼容版本、许可和限制。
 
