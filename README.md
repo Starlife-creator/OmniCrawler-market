@@ -114,12 +114,13 @@ plugin-folder/
 ## 插件要求
 
 - 新插件必须使用契约 2：`handle(operation, payload) -> dict`；
-- 当前契约 2 市场插件支持自动接入 `source` 和 `fetcher`；其他官方运行扩展点仍在逐步接线；
+- 契约 2 市场插件可接入全部正式数据扩展点，以及 `resource_provider` 和宿主渲染的声明式 `view`；
 - `plugin_types` 是受控运行扩展点；自由业务分类使用 `category`，检索词使用 `tags`；
 - `PLUGIN_METADATA` 必须是可静态读取的 `dict` 字面量；
 - 默认 `execution_mode: subprocess`；
 - 权限、域名、输入文件和依赖必须完整、准确且最小化；
 - 网络和文件访问必须分别提供精确白名单；
+- 声明式视图只能使用宿主白名单组件；目录使用用户授权句柄，媒体表面和本地 HTML 快照由宿主控制；
 - 插件许可必须使用市场允许的 SPDX 标识；
 - `listing.md` 必须说明功能、数据流向、权限理由、兼容性、许可和限制。
 
