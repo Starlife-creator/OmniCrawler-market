@@ -32,7 +32,7 @@
 | `version` | string (semver) | ✓ | 插件版本 |
 | `publisher` | string | ✓ | 发布者 |
 | `category` | string | ✓ | 市场业务分类，仅用于展示与检索，可以由开发者命名。它不决定运行路由 |
-| `plugin_types` | array[string] | 新条目必填 | 宿主控制的运行扩展点。支持 `source/fetcher/processor/exporter/auth_provider/parser/extractor/transformer/hook`；原生 `ui` 仅限受信任本地契约 1 插件，不进入市场。旧条目缺失时客户端可从 category/tags 保守推断 |
+| `plugin_types` | array[string] | 新条目必填 | 宿主控制的运行扩展点。支持 `source/fetcher/processor/exporter/auth_provider/parser/extractor/transformer/hook/resource_provider/view`；`view` 是宿主固定组件的隔离声明式界面，原生 `ui` 仅限受信任本地契约 1 插件，不进入市场。旧条目缺失时客户端可从 category/tags 保守推断 |
 | `summary` | string | ✓ | 一句话功能摘要 |
 | `description_file` | string | ✓ | **功能说明**文件相对路径（即 `listing.md`） |
 | `plugin_file` | string | ✓ | 插件代码相对路径 |
@@ -58,6 +58,12 @@
 | `tags` | array[string] | | 标签，便于检索 |
 | `updated_at` | string (date) | | 最近更新日期 |
 | `homepage` | string (URL) | | 插件主页（可选） |
+
+声明式资源与界面权限中，`resources:read` 只访问用户明确授予的不透明目录句柄；
+`surfaces:background` 只控制宿主拥有的背景表面；`render:local` 允许断网本地 HTML 快照；
+`render:scripted` 额外允许在隔离 Chromium 中执行本地脚本或最高 5 FPS 的受限帧流，属于高风险
+独立授权。市场仍不接受
+第三方 QWidget、QSS、绘制回调或任意网页嵌入。
 
 ## 模板条目字段（`templates[]`）
 

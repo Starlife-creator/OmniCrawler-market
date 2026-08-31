@@ -43,6 +43,8 @@ jobs:
           python-version: "3.12"
       - name: CI trigger policy
         run: python tools/check_workflow_policy.py
+      - name: Plugin schema policy
+        run: python tools/check_plugin_schema_policy.py
       - run: python -m pip install --upgrade pip
       # P3-6：与主仓同规格——PyYAML 对齐主仓 quality.txt 精确 pin；
       # cryptography 对齐 pyproject security extra 上限，防验签行为随大版本漂移

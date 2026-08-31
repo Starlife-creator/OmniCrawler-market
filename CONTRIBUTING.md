@@ -58,6 +58,8 @@ CLI 的模板投稿必须显式加入 `--accept-dco`；不想创建 PR 时使用
   `responses:payload` 必须与元数据读取分开说明；
 - 调用新版宿主代理时声明 `required_capabilities`；使用持久状态时声明正整数
   `state_schema_version`，并说明迁移与留存策略；
+- 市场界面只能使用 `view` 声明式组件。`resources:read`、`surfaces:background`、
+  `render:local` 与 `render:scripted` 必须逐项说明；脚本渲染不能与静态快照合并成一个授权；
 - 插件许可必须属于仓库允许的 SPDX 列表；
 - `listing.md` 说明功能、数据去向、权限理由、兼容版本、许可和限制。
 

@@ -36,6 +36,7 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     "records:read", "records:write", "artifacts:read", "artifacts:write",
     "responses:read", "responses:payload", "network:scoped", "temp:write",
     "files:read", "secrets:read", "state:read", "state:write",
+    "resources:read", "surfaces:background", "render:local", "render:scripted",
 }
 
 
@@ -92,6 +93,7 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
     official_types = {
         "source", "fetcher", "processor", "exporter", "auth_provider",
         "parser", "extractor", "transformer", "hook", "ui",
+        "resource_provider", "view",
     }
     if not isinstance(plugin_types, list) or not plugin_types or not all(
         isinstance(item, str) and item.strip() for item in plugin_types

@@ -145,12 +145,14 @@ LICENSE_ALLOWLIST = {
 OFFICIAL_PLUGIN_TYPES = {
     "source", "fetcher", "processor", "exporter", "auth_provider",
     "parser", "extractor", "transformer", "hook", "ui",
+    "resource_provider", "view",
 }
 
 ALLOWED_PLUGIN_PERMISSIONS = {
     "records:read", "records:write", "artifacts:read", "artifacts:write",
     "responses:read", "responses:payload", "network:scoped", "temp:write",
     "files:read", "secrets:read", "state:read", "state:write",
+    "resources:read", "surfaces:background", "render:local", "render:scripted",
 }
 
 def _load_yaml(path: Path) -> dict[str, Any]:
