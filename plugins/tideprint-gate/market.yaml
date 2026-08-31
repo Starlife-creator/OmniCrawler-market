@@ -1,0 +1,39 @@
+id: tideprint-gate
+name: tideprint-gate
+version: 0.2.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: processor
+summary: 以持久指纹建议条件重验证，并输出当前运行的可解释变化分类
+description_file: plugins/tideprint-gate/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.2'
+license: MIT
+tags:
+- fingerprint
+- deduplication
+- change-detection
+- bounded-state
+updated_at: '2026-08-31'
+creator_signature_file: plugins/tideprint-gate/creator.sig
+creator_identity_file: plugins/tideprint-gate/creator.identity
+package_manifest_file: plugins/tideprint-gate/package.manifest.json
+creator_package_signature_file: plugins/tideprint-gate/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/tideprint-gate/package.manifest.maintainer.sig
+package_manifest_sha256: cd27ebec8a1879e569ea76ee2f9881e444c3fae5edbc35355fba99a8ce11c4a3
+plugin_file: plugins/tideprint-gate/plugin.py
+signature_file: plugins/tideprint-gate/plugin.py.sig
+permissions:
+- state:read
+- state:write
+plugin_types:
+- processor
+- hook
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities:
+  state.get: '>=1'
+  state.set: '>=1'
+state_schema_version: 1

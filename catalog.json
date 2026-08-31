@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-31T11:55:57+00:00",
-  "sequence": 1788177357,
+  "generated_at": "2026-08-31T12:31:41+00:00",
+  "sequence": 1788179501,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
@@ -134,6 +134,55 @@
       "versions": {
         "0.2.0": {
           "sha256": "b0843e71e07ad34ba464f4e616166a30bb7211dc161fedbb38c8fa6c62860f4f"
+        }
+      }
+    },
+    {
+      "id": "tideprint-gate",
+      "name": "tideprint-gate",
+      "version": "0.2.0",
+      "publisher": "starlife",
+      "category": "processor",
+      "plugin_types": [
+        "processor",
+        "hook"
+      ],
+      "summary": "以持久指纹建议条件重验证，并输出当前运行的可解释变化分类",
+      "description_file": "plugins/tideprint-gate/listing.md",
+      "plugin_file": "plugins/tideprint-gate/plugin.py",
+      "signature_file": "plugins/tideprint-gate/plugin.py.sig",
+      "signature_algorithm": "ed25519",
+      "permissions": [
+        "state:read",
+        "state:write"
+      ],
+      "compatible_core": ">=0.11.2",
+      "license": "MIT",
+      "tags": [
+        "fingerprint",
+        "deduplication",
+        "change-detection",
+        "bounded-state"
+      ],
+      "updated_at": "2026-08-31",
+      "creator_signature_file": "plugins/tideprint-gate/creator.sig",
+      "creator_identity_file": "plugins/tideprint-gate/creator.identity",
+      "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {
+        "state.get": ">=1",
+        "state.set": ">=1"
+      },
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/tideprint-gate/package.manifest.json",
+      "creator_package_signature_file": "plugins/tideprint-gate/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/tideprint-gate/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "cd27ebec8a1879e569ea76ee2f9881e444c3fae5edbc35355fba99a8ce11c4a3",
+      "versions": {
+        "0.2.0": {
+          "sha256": "37e6c1b116ec80488fd5867149c7c12545ffeb17d188a069121921d98d338a7a"
         }
       }
     },

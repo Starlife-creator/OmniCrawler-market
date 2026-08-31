@@ -1,3 +1,4 @@
 # 全库统一 LF 行尾：插件 / 模板被 ed25519 签名、公钥指纹按字节哈希，
 # 跨平台检出字节必须一致（Windows autocrlf 会导致签名/指纹校验失败）。
 * text=auto eol=lf
+*.sig binary
