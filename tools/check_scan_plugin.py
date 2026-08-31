@@ -4,7 +4,13 @@
 
 from __future__ import annotations
 
-from scan_plugin import DEFAULT_ENTROPY_THRESHOLD, scan_text_content
+import io
+import json
+import tempfile
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from scan_plugin import DEFAULT_ENTROPY_THRESHOLD, scan_plugin_dir, scan_text_content
 
 
 def main() -> int:
@@ -34,7 +40,42 @@ def main() -> int:
     ):
         raise SystemExit("FAIL scanner regression: credential field was not detected")
 
-    print("OK scanner regression: source false positives removed; credential gates remain active")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        (root / "plugin.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (root / "plugin.yaml").write_text("id: example\n", encoding="utf-8")
+        (root / "market.yaml").write_text("name: Example\n", encoding="utf-8")
+        manifest = root / "package.manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "plugin.py": "sha256:example",
+                        "plugin.yaml": "sha256:example",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        unexpected = root / "unexpected.txt"
+        unexpected.write_text("not declared\n", encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            problem_count = scan_plugin_dir(root, manifest=manifest)
+        if problem_count != 1:
+            raise SystemExit(
+                "FAIL scanner regression: signed manifest mapping did not reject an extra file"
+            )
+        unexpected.unlink()
+        with redirect_stdout(io.StringIO()):
+            problem_count = scan_plugin_dir(root, manifest=manifest)
+        if problem_count:
+            raise SystemExit(
+                "FAIL scanner regression: generated market metadata was not handled safely"
+            )
+
+    print(
+        "OK scanner regression: source false positives removed; credential and signed allowlist gates remain active"
+    )
     return 0
 
 
