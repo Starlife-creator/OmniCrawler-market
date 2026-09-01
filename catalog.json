@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-31T12:31:41+00:00",
-  "sequence": 1788179501,
+  "generated_at": "2026-09-01T02:32:56+00:00",
+  "sequence": 1788229976,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
@@ -91,6 +91,61 @@
       "versions": {
         "1.0.0": {
           "sha256": "2630ed2c32a15a9cc355251e1547a05b0b14b07ee0f94b6aed962f8e75f9db2c"
+        }
+      }
+    },
+    {
+      "id": "lumen-drift",
+      "name": "lumen-drift",
+      "version": "0.3.0",
+      "publisher": "starlife",
+      "category": "resource_provider",
+      "plugin_types": [
+        "resource_provider",
+        "view"
+      ],
+      "summary": "安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源",
+      "description_file": "plugins/lumen-drift/listing.md",
+      "plugin_file": "plugins/lumen-drift/plugin.py",
+      "signature_file": "plugins/lumen-drift/plugin.py.sig",
+      "signature_algorithm": "ed25519",
+      "permissions": [
+        "resources:read",
+        "surfaces:background",
+        "render:local",
+        "render:scripted"
+      ],
+      "compatible_core": ">=0.11.2",
+      "license": "MIT",
+      "tags": [
+        "wallpaper",
+        "ambient",
+        "video",
+        "wallpaper-engine",
+        "declarative-ui"
+      ],
+      "updated_at": "2026-09-01",
+      "creator_signature_file": "plugins/lumen-drift/creator.sig",
+      "creator_identity_file": "plugins/lumen-drift/creator.identity",
+      "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {
+        "resources.enumerate": ">=1",
+        "resources.read": ">=1",
+        "render.html.snapshot": ">=1",
+        "render.html.live.start": ">=1",
+        "surface.background.set": ">=1"
+      },
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/lumen-drift/package.manifest.json",
+      "creator_package_signature_file": "plugins/lumen-drift/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/lumen-drift/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "134e2d7863b220aa583227719d1170de8e6d12feb997ae21680fde8ae1df2f40",
+      "versions": {
+        "0.3.0": {
+          "sha256": "c9eb3c801c2965c345ad9232ba8340901ea2179d2f8bfbe9c84ac907ec52bf02"
         }
       }
     },
