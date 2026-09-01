@@ -1,0 +1,21 @@
+id: lumen-drift
+name: Lumen Drift
+version: 0.3.0
+api_version: 1
+description: 安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源
+plugin_types: [resource_provider, view]
+category: appearance
+tags: [wallpaper, ambient, video, wallpaper-engine, declarative-ui]
+permissions: [resources:read, surfaces:background, render:local, render:scripted]
+required_capabilities:
+  resources.enumerate: ">=1"
+  resources.read: ">=1"
+  render.html.snapshot: ">=1"
+  render.html.live.start: ">=1"
+  surface.background.set: ">=1"
+domains: []
+input_files: []
+dependencies: []
+license: MIT
+execution_mode: subprocess
+min_core_version: 0.11.2
