@@ -1,6 +1,10 @@
 {
   "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
-  "package_manifest_sha256": "134e2d7863b220aa583227719d1170de8e6d12feb997ae21680fde8ae1df2f40",
+  "market_metadata": {
+    "category": "appearance",
+    "name": "Lumen Drift"
+  },
+  "package_manifest_sha256": "9ba159289c9a9b156bd516f28a43659a97591c04aa2aa500de78e4c27e47e5e7",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"
