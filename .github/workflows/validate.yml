@@ -71,23 +71,7 @@ jobs:
           else
             echo "仅投稿材料变化：正式发布门禁留待维护者发布提交。"
           fi
-      - name: 发布前安全扫描（全部插件）
-        run: |
-          for plugin_dir in plugins/*/; do
-            if [ -f "$plugin_dir/plugin.py" ]; then
-              # 正式签名包以 package.manifest.json 的 files 哈希映射为事实来源；
-              # 旧版包没有整包清单时才回退 plugin.yaml（可能仅产生迁移警告）。
-              manifest="$plugin_dir/package.manifest.json"
-              if [ ! -f "$manifest" ]; then
-                manifest="$plugin_dir/plugin.yaml"
-              fi
-              python tools/scan_plugin.py scan "$plugin_dir" --manifest "$manifest" || exit 1
-            fi
-          done
-      - name: 发布前安全扫描（全部模板）
-        run: |
-          for tpl_dir in templates/*/; do
-            if [ -f "$tpl_dir/template.yaml" ]; then
-              python tools/scan_plugin.py scan "$tpl_dir" --manifest "$tpl_dir/template.yaml" || exit 1
-            fi
-          done
+      - name: 多版本扫描回归检查
+        run: python tools/check_scan_market.py
+      - name: 发布前安全扫描（全部插件、模板及历史版本）
+        run: python tools/scan_market.py
