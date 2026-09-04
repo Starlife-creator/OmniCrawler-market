@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-01T02:32:56+00:00",
-  "sequence": 1788229976,
+  "generated_at": "2026-09-04T07:13:58+00:00",
+  "sequence": 1788506038,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "trust_public_key_ref": "keys/plugin_trust.pub.pem",
@@ -96,18 +96,18 @@
     },
     {
       "id": "lumen-drift",
-      "name": "lumen-drift",
-      "version": "0.3.0",
+      "name": "Lumen Drift",
+      "version": "0.4.0",
       "publisher": "starlife",
-      "category": "resource_provider",
+      "category": "appearance",
       "plugin_types": [
         "resource_provider",
         "view"
       ],
       "summary": "安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源",
-      "description_file": "plugins/lumen-drift/listing.md",
-      "plugin_file": "plugins/lumen-drift/plugin.py",
-      "signature_file": "plugins/lumen-drift/plugin.py.sig",
+      "description_file": "plugins/lumen-drift/versions/0.4.0/listing.md",
+      "plugin_file": "plugins/lumen-drift/versions/0.4.0/plugin.py",
+      "signature_file": "plugins/lumen-drift/versions/0.4.0/plugin.py.sig",
       "signature_algorithm": "ed25519",
       "permissions": [
         "resources:read",
@@ -115,7 +115,7 @@
         "render:local",
         "render:scripted"
       ],
-      "compatible_core": ">=0.11.2",
+      "compatible_core": ">=0.12.0",
       "license": "MIT",
       "tags": [
         "wallpaper",
@@ -124,9 +124,9 @@
         "wallpaper-engine",
         "declarative-ui"
       ],
-      "updated_at": "2026-09-01",
-      "creator_signature_file": "plugins/lumen-drift/creator.sig",
-      "creator_identity_file": "plugins/lumen-drift/creator.identity",
+      "updated_at": "2026-09-04",
+      "creator_signature_file": "plugins/lumen-drift/versions/0.4.0/creator.sig",
+      "creator_identity_file": "plugins/lumen-drift/versions/0.4.0/creator.identity",
       "execution_mode": "subprocess",
       "domains": [],
       "input_files": [],
@@ -135,17 +135,20 @@
         "resources.read": ">=1",
         "render.html.snapshot": ">=1",
         "render.html.live.start": ">=1",
-        "surface.background.set": ">=1"
+        "surface.background.set": ">=2",
+        "surface.background.configure": ">=2",
+        "surface.background.capabilities": ">=1",
+        "surface.background.clear": ">=1"
       },
       "state_schema_version": 1,
       "dependencies": [],
-      "package_manifest_file": "plugins/lumen-drift/package.manifest.json",
-      "creator_package_signature_file": "plugins/lumen-drift/package.manifest.creator.sig",
-      "maintainer_package_signature_file": "plugins/lumen-drift/package.manifest.maintainer.sig",
-      "package_manifest_sha256": "134e2d7863b220aa583227719d1170de8e6d12feb997ae21680fde8ae1df2f40",
+      "package_manifest_file": "plugins/lumen-drift/versions/0.4.0/package.manifest.json",
+      "creator_package_signature_file": "plugins/lumen-drift/versions/0.4.0/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/lumen-drift/versions/0.4.0/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "9ba159289c9a9b156bd516f28a43659a97591c04aa2aa500de78e4c27e47e5e7",
       "versions": {
-        "0.3.0": {
-          "sha256": "c9eb3c801c2965c345ad9232ba8340901ea2179d2f8bfbe9c84ac907ec52bf02"
+        "0.4.0": {
+          "sha256": "044fdc841155f17512f40e53bbe262defea1c3ca8cdef6760d89d8c1ad8dcfd2"
         }
       }
     },
