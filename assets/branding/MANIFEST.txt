@@ -7,9 +7,11 @@ full set lives in the main repository under
 (`work/build_branding.py --layout repo --market-root ...`) and are held byte-identical
 by a CI assertion -- never copy or edit these files by hand.
 
-- FONT-NOTICE.txt                    how the lettering is derived and licensed
-- LICENSE-OFL.txt                    SIL Open Font License 1.1 covering the lettering source font
-- lockup/omnicrawler-wordmark-dark.png 2800x600 raster of wordmark/omnicrawler-wordmark-dark.svg
-- lockup/omnicrawler-wordmark-dark.svg horizontal lockup for dark backgrounds
-- lockup/omnicrawler-wordmark.png    2800x600 raster of wordmark/omnicrawler-wordmark.svg
-- lockup/omnicrawler-wordmark.svg    horizontal lockup for light backgrounds
+Paths are repository-relative. Each raster line names the SVG it was rendered from.
+
+- assets/branding/FONT-NOTICE.txt  how the lettering is derived and licensed
+- assets/branding/LICENSE-OFL.txt  SIL Open Font License 1.1 covering the lettering source font
+- assets/branding/lockup/omnicrawler-wordmark-dark.png  2800x600 raster of assets/branding/lockup/omnicrawler-wordmark-dark.svg
+- assets/branding/lockup/omnicrawler-wordmark-dark.svg  horizontal lockup for dark backgrounds
+- assets/branding/lockup/omnicrawler-wordmark.png  2800x600 raster of assets/branding/lockup/omnicrawler-wordmark.svg
+- assets/branding/lockup/omnicrawler-wordmark.svg  horizontal lockup for light backgrounds
