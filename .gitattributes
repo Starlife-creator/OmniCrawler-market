@@ -2,3 +2,8 @@
 # 跨平台检出字节必须一致（Windows autocrlf 会导致签名/指纹校验失败）。
 * text=auto eol=lf
 *.sig binary
+# 品牌资产：不参与任何行尾/编码改写。SVG 是文本但作者即以 LF 生成，
+# 显式 eol=lf 保证跨平台检出字节与 SHA256SUMS 一致；PNG 必须显式为二进制
+# （不能让 * text=auto 去猜，本仓对字节完整性有签名级要求）。
+/assets/branding/**/*.svg   text eol=lf
+/assets/branding/**/*.png   binary

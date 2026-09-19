@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/lockup/omnicrawler-wordmark-dark.svg">
+    <img alt="OmniCrawler" src="assets/branding/lockup/omnicrawler-wordmark.svg" width="900">
+  </picture>
+</p>
+
 # OmniCrawler 插件与模板市场
 
 本仓库是 OmniCrawler 的静态、可镜像市场目录，采用 git-as-registry 模式。它不依赖账号

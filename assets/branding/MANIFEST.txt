@@ -1,0 +1,15 @@
+OmniCrawler branding assets (market repository subset)
+=====================================================
+
+This repository ships only the lockups its README renders and the font licences; the
+full set lives in the main repository under
+`assets/branding/` and `src/omnicrawler/gui/branding/`. Both copies are written by the same generator
+(`work/build_branding.py --layout repo --market-root ...`) and are held byte-identical
+by a CI assertion -- never copy or edit these files by hand.
+
+- FONT-NOTICE.txt                    how the lettering is derived and licensed
+- LICENSE-OFL.txt                    SIL Open Font License 1.1 covering the lettering source font
+- lockup/omnicrawler-wordmark-dark.png 2800x600 raster of wordmark/omnicrawler-wordmark-dark.svg
+- lockup/omnicrawler-wordmark-dark.svg horizontal lockup for dark backgrounds
+- lockup/omnicrawler-wordmark.png    2800x600 raster of wordmark/omnicrawler-wordmark.svg
+- lockup/omnicrawler-wordmark.svg    horizontal lockup for light backgrounds
