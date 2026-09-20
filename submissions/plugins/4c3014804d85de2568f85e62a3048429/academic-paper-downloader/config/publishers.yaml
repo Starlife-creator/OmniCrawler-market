@@ -1,0 +1,69 @@
+# 出版商路由表
+# 按 DOI 前缀匹配出版商，构造 OA PDF 下载 URL
+
+publishers:
+  elsevier:
+    doi_prefix: "10.1016/"
+    oa_pattern: "https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true"
+    home: "https://www.sciencedirect.com"
+    auth_method: proxy
+    rate_limit: 2.0
+    notes: "PII 从 DOI 中提取"
+
+  springer:
+    doi_prefix: "10.1007/"
+    oa_pattern: "https://link.springer.com/content/pdf/{doi}.pdf"
+    home: "https://link.springer.com"
+    auth_method: proxy
+    rate_limit: 3.0
+
+  acs:
+    doi_prefix: "10.1021/"
+    oa_pattern: "https://pubs.acs.org/doi/pdf/{doi}"
+    home: "https://pubs.acs.org"
+    auth_method: cookie
+    rate_limit: 3.0
+
+  aip:
+    doi_prefix: "10.1063/"
+    oa_pattern: "https://pubs.aip.org/aip/article-pdf/{doi}/pdf"
+    home: "https://pubs.aip.org"
+    auth_method: proxy
+    rate_limit: 4.0
+
+  rsc:
+    doi_prefix: "10.1039/"
+    oa_pattern: "https://pubs.rsc.org/en/content/articlepdf/{doi}"
+    home: "https://pubs.rsc.org"
+    auth_method: proxy
+    rate_limit: 2.0
+
+  wiley:
+    doi_prefix: "10.1002/"
+    oa_pattern: "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"
+    home: "https://onlinelibrary.wiley.com"
+    auth_method: saml
+    rate_limit: 3.0
+
+  aps:
+    doi_prefix: "10.1103/"
+    oa_pattern: "https://journals.aps.org/pr/pdf/{doi}"
+    home: "https://journals.aps.org"
+    auth_method: proxy
+    rate_limit: 4.0
+
+  ieee:
+    doi_prefix: "10.1109/"
+    oa_pattern: null
+    home: "https://ieeexplore.ieee.org"
+    auth_method: proxy
+    rate_limit: 5.0
+    notes: "IEEE 几乎无 OA，需要订阅"
+
+  mdpi:
+    doi_prefix: "10.3390/"
+    oa_pattern: "https://www.mdpi.com/{doi}/pdf"
+    home: "https://www.mdpi.com"
+    auth_method: none
+    rate_limit: 1.0
+    notes: "全部 OA"

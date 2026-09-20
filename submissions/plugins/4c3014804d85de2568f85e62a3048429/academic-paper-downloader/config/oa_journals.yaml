@@ -1,0 +1,57 @@
+# 已知 OA 期刊白名单
+# 这些期刊的论文可以直接通过 Layer 1 下载，无需认证
+
+oa_journals:
+  # MDPI 全部 OA
+  - issn: "1996-1944"
+    name: "Materials"
+    publisher: mdpi
+  - issn: "2079-4991"
+    name: "Nanomaterials"
+    publisher: mdpi
+  - issn: "2073-4344"
+    name: "Catalysts"
+    publisher: mdpi
+  - issn: "2071-1050"
+    name: "Sustainability"
+    publisher: mdpi
+  - issn: "1424-8220"
+    name: "Sensors"
+    publisher: mdpi
+  - issn: "2227-9040"
+    name: "Chemosensors"
+    publisher: mdpi
+
+  # Nature 系列 OA
+  - issn: "2058-9883"
+    name: "Nature Communications"
+    publisher: springer
+  - issn: "2041-1723"
+    name: "Nature Communications"
+    publisher: springer
+
+  # PLOS 全部 OA
+  - issn: "1932-6203"
+    name: "PLOS ONE"
+    publisher: public_library_of_science
+
+  # Frontiers 全部 OA
+  - issn: "1664-302X"
+    name: "Frontiers in Microbiology"
+    publisher: frontiers
+  - issn: "1663-9812"
+    name: "Frontiers in Pharmacology"
+    publisher: frontiers
+
+  # RSC 部分 OA
+  - issn: "2046-2069"
+    name: "RSC Advances"
+    publisher: rsc
+
+  # 其他常见 OA 期刊
+  - issn: "2589-0042"
+    name: "iScience"
+    publisher: elsevier
+  - issn: "2057-3960"
+    name: "npj Computational Materials"
+    publisher: springer
