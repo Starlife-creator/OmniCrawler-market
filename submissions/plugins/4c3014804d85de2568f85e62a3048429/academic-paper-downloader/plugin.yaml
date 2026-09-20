@@ -1,0 +1,63 @@
+id: academic-paper-downloader
+name: Academic Paper Downloader
+version: 0.3.0
+api_version: 1
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: source
+plugin_types: [source, processor, hook]
+tags: [academic, papers, pdf, doi, crossref, unpaywall, openalex, batch-download]
+summary: "从 Web of Science 导出文件批量下载论文 PDF，全优化版"
+description_file: listing.md
+plugin_file: plugin.py
+permissions:
+  - network:scoped
+  - records:read
+  - state:read
+  - state:write
+  - secrets:read
+  - files:read
+domains:
+  - api.crossref.org
+  - api.unpaywall.org
+  - api.openalex.org
+  - www.sciencedirect.com
+  - link.springer.com
+  - pubs.acs.org
+  - pubs.aip.org
+  - pubs.rsc.org
+  - onlinelibrary.wiley.com
+  - journals.aps.org
+  - ieeexplore.ieee.org
+  - www.mdpi.com
+  - arxiv.org
+input_files:
+  - "*.xlsx"
+  - "*.xls"
+  - "*.tsv"
+  - "*.ris"
+  - "*.bib"
+  - "*.csv"
+  - "*.json"
+dependencies:
+  - name: httpx
+    version: ">=0.27,<1.0"
+    license: BSD-3-Clause
+  - name: yaml
+    version: ">=5.4,<7.0"
+    license: MIT
+  - name: openpyxl
+    version: ">=3.0,<4.0"
+    license: MIT
+  - name: pdfplumber
+    version: ">=0.10,<1.0"
+    license: MIT
+  - name: pypdf
+    version: ">=3.0,<4.0"
+    license: BSD-3-Clause
+  - name: playwright
+    version: ">=1.30,<2.0"
+    license: Apache-2.0
+license: MIT
+execution_mode: subprocess
+min_core_version: "0.11.2"
