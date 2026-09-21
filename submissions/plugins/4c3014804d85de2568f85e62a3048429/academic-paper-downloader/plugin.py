@@ -128,7 +128,7 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
@@ -145,6 +145,10 @@ PLUGIN_METADATA = {
         {"name": "httpx", "version": ">=0.27,<1.0", "license": "BSD-3-Clause"},
         {"name": "yaml", "version": ">=5.4,<7.0", "license": "MIT"},
         {"name": "openpyxl", "version": ">=3.0,<4.0", "license": "MIT"},
+        # 旧版 .xls 导出走 xlrd（导入处有 try/except，缺库时静默降级）。
+        # ★ 市场审计的门 3 是「实测导入 ⇒ 必须声明」的 fail-closed 口径，且**不看**
+        #   optional_dependencies ⇒ 不声明就是 error（实测 gate3_imported_but_not_declared）。
+        {"name": "xlrd", "version": ">=2.0,<3.0", "license": "BSD-3-Clause"},
         {"name": "pdfplumber", "version": ">=0.10,<1.0", "license": "MIT"},
         {"name": "pypdf", "version": ">=3.0,<4.0", "license": "BSD-3-Clause"},
         {"name": "playwright", "version": ">=1.30,<2.0", "license": "Apache-2.0"},
@@ -1008,11 +1012,14 @@ def _generate_report(workspace: Path, results: list[dict], failed: list[dict]) -
             writer.writerow(["DOI", "Title", "Authors", "Year", "Journal", "Publisher",
                            "Source", "LocalPath", "FileSize", "Status", "Message"])
             for r in results:
+                verified = bool(r.get("verified", True))
                 writer.writerow([_csv_safe(r.get("doi","")), _csv_safe(r.get("title","")),
                                _csv_safe(r.get("authors","")), _csv_safe(r.get("year","")),
                                _csv_safe(r.get("journal","")), _csv_safe(r.get("publisher","")),
                                _csv_safe(r.get("download_source","")), _csv_safe(r.get("local_path","")),
-                               _csv_safe(r.get("file_size","")), "SUCCESS", ""])
+                               _csv_safe(r.get("file_size","")),
+                               "SUCCESS" if verified else "UNVERIFIED",
+                               "" if verified else "未能核验 DOI（文件已保留，不计入成功）"])
             for f_item in failed:
                 writer.writerow([_csv_safe(f_item.get("doi","")), _csv_safe(f_item.get("title","")),
                                "", "", "", "", "", "", "", "FAILED", _csv_safe(f_item.get("reason",""))])
@@ -1024,7 +1031,10 @@ def _generate_report(workspace: Path, results: list[dict], failed: list[dict]) -
     html_path = report_dir / f"dashboard_{timestamp}.html"
     try:
         total = len(results) + len(failed)
-        success_count = len(results)
+        # ★ 未核验（DOI 提不出）的文件仍在 papers/，但**不计入 Success**（issue #22 §1）：
+        #   反爬挑战页/登录页/落地页都提不出 DOI，把它们算成成功正是报告失真的来源。
+        unverified_count = sum(1 for r in results if not r.get("verified", True))
+        success_count = len(results) - unverified_count
         rows_html = ''.join(
             f'<tr><td>{_esc(r.get("doi",""))}</td><td>{_esc(r.get("title",""))}</td>'
             f'<td>{_esc(r.get("local_path",""))}</td></tr>' for r in results)
@@ -1036,7 +1046,8 @@ def _generate_report(workspace: Path, results: list[dict], failed: list[dict]) -
 .success{{color:#2e7d32}} .fail{{color:#c62828}} .stat{{font-size:2em;font-weight:bold}}
 table{{border-collapse:collapse;width:100%}} th,td{{padding:8px;text-align:left;border-bottom:1px solid #ddd}}</style>
 </head><body><h1>📚 Download Dashboard</h1>
-<div class="card"><span class="stat success">{success_count}</span> Success / <span class="stat fail">{len(failed)}</span> Failed / {total} Total</div>
+<div class="card"><span class="stat success">{success_count}</span> Success / <span class="stat fail">{len(failed)}</span> Failed / <span class="stat">{unverified_count}</span> Unverified / {total} Total</div>
+<p>Unverified = 文件已落盘但**未能核验为请求的那篇**（PDF 内提不出 DOI）；不计入 Success。</p>
 <div class="card"><h2>✅ 已下载</h2><table>{rows_html}</table></div>
 <div class="card"><h2>❌ 失败</h2><table>{failed_html}</table></div></body></html>"""
         with open(html_path, "w", encoding="utf-8") as f:
@@ -1239,7 +1250,7 @@ def _is_known_oa(publisher: str, issn: str, openalex_flag: bool = False) -> bool
         return True
     if issn and issn in _OA_JOURNALS:
         return True
-    if publisher in ("mdpi", "arxiv"):
+    if publisher in ("mdpi", "plos", "bmc", "arxiv"):
         return True
     return False
 
@@ -1602,20 +1613,35 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
 
     meta = _extract_pdf_meta(out_path)
 
-    # DOI 交叉核对：PDF 首页提取到的 DOI 与请求不一致 → 出版商发错文件，拒绝并清理
+    # DOI 交叉核对（**强校验**，issue #22 §1）：
+    #   - 请求了 DOI 却**提不出** DOI ⇒ 无法证明这就是目标论文（反爬挑战页/登录页/文章落地页
+    #     都提不到 DOI）。旧实现写成 `if ext_doi and req_doi and ...` ⇒ 提不到就**直接放行**，
+    #     于是 Cloudflare 验证页被当成成功论文计入报告；
+    #   - 提取到但与请求不一致 ⇒ 出版商发错文件，拒绝并清理。
     ext_doi = (meta.get("extracted_doi") or "").strip().lower().rstrip(".")
     req_doi = (paper.get("doi") or "").strip().lower().rstrip(".")
+    verified = True
     if ext_doi and req_doi and ext_doi != req_doi:
         _log("pdf_doi_mismatch", doi=req_doi, extracted=ext_doi, path=str(out_path))
         try: out_path.unlink()
         except Exception: pass
         return None
+    if req_doi and not ext_doi:
+        # ★ 提不出 DOI **不等于**文件是错的（arXiv/扫描版 PDF 本就提不出，见既有用例
+        #   `test_no_extracted_doi_accepted` 的理由），但也**绝不能**当作成功 ——
+        #   反爬挑战页/登录页/文章落地页同样提不出 DOI，那正是"假成功"的来源（issue #22 §1）。
+        #   取向：**保留文件、标记未核验、不计入成功** —— 两边的坑都避开。
+        verified = False
+        _log("pdf_doi_unverified", doi=req_doi, path=str(out_path))
 
     return {
         "doi": paper.get("doi", ""), "title": title, "authors": paper.get("authors", ""),
         "year": year, "journal": paper.get("journal", ""), "publisher": paper.get("publisher", ""),
         "pdf_url": "", "filename": out_path.name, "local_path": str(out_path.relative_to(workspace)),
         "download_source": source, "file_size": file_size, "pdf_meta": meta,
+        # 是否已核验为"请求的那篇"（DOI 交叉核对通过）。未核验仍保留文件，但不计入成功。
+        "verified": verified,
+        "verification": "doi_matched" if verified else "doi_not_found_in_pdf",
     }
 
 # 全局并发控制器（懒初始化）
@@ -1934,8 +1960,72 @@ def _save_browser_download(dl) -> str | None:
         pass
     return None
 
+#: 反爬挑战 / 登录 / 拒绝页的文本特征 —— 假成功（issue #22 §1）的直接来源
+_BLOCK_PAGE_MARKERS = (
+    "security verification",
+    "just a moment",
+    "checking your browser",
+    "captcha",
+    "are you a robot",
+    "verify you are human",
+    "access denied",
+    "enable javascript",
+    "cloudflare",
+    "sign in",
+    "log in",
+    "institutional login",
+)
+
+
+def _page_block_reason(page) -> str | None:
+    """页面是否为反爬挑战/登录/拒绝页？命中即**不可**当成功（返回命中的特征短语）。"""
+    try:
+        title = (page.title() or "").casefold()
+        body = (page.inner_text("body") or "")[:4000].casefold()
+    except Exception:
+        return None
+    for marker in _BLOCK_PAGE_MARKERS:
+        if marker in title or marker in body:
+            return marker
+    return None
+
+
+def _looks_like_inline_pdf(page) -> bool:
+    """页面**本身**是不是 PDF 视图（而不是文章落地页/挑战页）。
+
+    只有这种页面才允许 ``page.pdf()`` 兜底：把落地页打印成 PDF 会产出"合法的 1 页 PDF"，
+    再被当成论文计入成功 —— 这正是本插件最严重的失败模式。
+    """
+    try:
+        url = (getattr(page, "url", "") or "").casefold()
+        if url.endswith(".pdf") or ".pdf?" in url or ".pdf#" in url:
+            return True
+        for selector in (
+            "embed[type='application/pdf']",
+            "object[type='application/pdf']",
+            "embed[src*='.pdf']",
+            "object[src*='.pdf']",
+            "iframe[src*='.pdf']",
+        ):
+            if page.query_selector(selector) is not None:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _browser_capture_pdf(context, page) -> str | None:
-    """在浏览器会话内下载 PDF：点击 → 捕获下载事件（同页或新标签页）。"""
+    """在浏览器会话内下载 PDF：点击 → 捕获下载事件（同页或新标签页）。
+
+    ★ 两条 fail-closed 规则（issue #22 §1）：
+    - 页面是反爬挑战/登录页时**直接放弃**：点击与打印都只会得到非论文内容；
+    - ``page.pdf()`` 兜底**只在页面本身就是 PDF 视图时**才允许。
+    两条都保证「拿不到论文」不会变成「存入一个看似成功的 PDF」。
+    """
+    block_reason = _page_block_reason(page)
+    if block_reason:
+        _log("browser_page_blocked", reason=block_reason, url=str(getattr(page, "url", "")))
+        return None
     selectors = [
         "a[href*='pdf']",
         "a[href*='download']",
@@ -1969,7 +2059,10 @@ def _browser_capture_pdf(context, page) -> str | None:
                 popup.close()
         except Exception:
             pass
-    # 兜底：内联渲染页面 → print to PDF
+    # 兜底：内联渲染的 PDF 视图 → print to PDF（必须先有"这就是 PDF"的证据）
+    if not _looks_like_inline_pdf(page):
+        _log("browser_no_pdf_evidence", url=str(getattr(page, "url", "")))
+        return None
     try:
         pdf_bytes = page.pdf()
         if pdf_bytes and len(pdf_bytes) > 1000:
@@ -1981,22 +2074,41 @@ def _browser_capture_pdf(context, page) -> str | None:
         pass
     return None
 
-def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dict) -> str | None:
-    """浏览器层：在真实浏览器会话内完成授权下载（校园 IP 直连 / 机构 Cookie）。"""
-    cfg = _PUBLISHERS.get(publisher)
-    if not cfg or not cfg.get("home"):
-        return None
-    home = cfg["home"]
+def _institution_headless(config: dict) -> bool:
+    """``institution.headless``（缺省 True：与既有行为一致）。"""
+    inst = config.get("institution") if isinstance(config, dict) else None
+    if isinstance(inst, dict) and "headless" in inst:
+        return bool(inst.get("headless"))
+    return True
+
+
+def _institution_visible_fallback(config: dict) -> bool:
+    """headless 被反爬挡下后，是否允许用**可见浏览器**重试一次（缺省 True）。"""
+    inst = config.get("institution") if isinstance(config, dict) else None
+    if isinstance(inst, dict) and "visible_fallback" in inst:
+        return bool(inst.get("visible_fallback"))
+    return True
+
+
+def _browser_attempt(
+    doi: str, publisher: str, home: str, cookies: list[dict], config: dict, *, headless: bool
+) -> str | None:
+    """一次浏览器尝试（同页/新标签页与「兜底必须有 PDF 证据」见 ``_browser_capture_pdf``）。"""
     proxy_url = _get_next_proxy(config)
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy={"server": proxy_url} if proxy_url else None)
+            browser = p.chromium.launch(
+                headless=headless, proxy={"server": proxy_url} if proxy_url else None
+            )
             context = browser.new_context(user_agent=_build_headers(publisher)["User-Agent"], accept_downloads=True)
             if cookies:
                 context.add_cookies(_normalize_cookies_for_browser(cookies, home))
             page = context.new_page()
-            page.goto(f"{home}/doi/{doi}", wait_until="domcontentloaded", timeout=30000)
+            # 统一走 doi.org：由解析器 301 到出版商的**实际**文章页。
+            # 旧实现写死 f"{home}/doi/{doi}"，对 Nature（/articles/<suffix>）、
+            # Elsevier（/science/article/pii/<pii>）等并不适用（issue #22 §3）。
+            page.goto(f"https://doi.org/{doi}", wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(1500)
             _solve_captcha_if_present(page)
             result = _browser_capture_pdf(context, page)
@@ -2004,6 +2116,29 @@ def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dic
             return result
     except Exception:
         return None
+
+
+def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dict) -> str | None:
+    """浏览器层：在真实浏览器会话内完成授权下载（校园 IP 直连 / 机构 Cookie）。
+
+    - URL 走 ``https://doi.org/<doi>``，不再假设各家都有 ``{home}/doi/{doi}`` 入口（#22 §3）；
+    - ``institution.headless`` 可配；headless 被反爬挡下时按 ``institution.visible_fallback``
+      用可见浏览器重试一次（#22 §4）——出版商对 headless 直接返回挑战页。
+    """
+    cfg = _PUBLISHERS.get(publisher)
+    home = str((cfg or {}).get("home") or "")
+    if not home:
+        # 未知/未登记出版商（issue #22 §5）：仍走一次**通用路径** —— doi.org 解析到实际
+        # 文章页之后，由 ``_browser_capture_pdf`` 在页面上找 PDF 链接。
+        # 旧实现直接 return None ⇒ 这类 DOI 连一次尝试都没有（用户看到的是"直接放弃"）。
+        home = "https://doi.org"
+        _log("browser_generic_publisher", doi=doi, publisher=publisher)
+    headless = _institution_headless(config)
+    result = _browser_attempt(doi, publisher, home, cookies, config, headless=headless)
+    if result is None and headless and _institution_visible_fallback(config):
+        _log("browser_visible_retry", doi=doi, publisher=publisher)
+        result = _browser_attempt(doi, publisher, home, cookies, config, headless=False)
+    return result
 
 # ---------------------------------------------------------------------------
 # Hook: after_run — 生成报告
@@ -2027,7 +2162,14 @@ def _after_run(payload: dict) -> dict:
         failed = []
 
     _generate_report(workspace, results, [f for f in failed if isinstance(f, dict)])
-    return {"report_generated": True, "success_count": len(results), "failed_count": len(failed)}
+    # 与报告同口径：Success 只算**已核验**的记录，未核验单列（issue #22 §1）
+    unverified_count = sum(1 for r in results if isinstance(r, dict) and not r.get("verified", True))
+    return {
+        "report_generated": True,
+        "success_count": len(results) - unverified_count,
+        "unverified_count": unverified_count,
+        "failed_count": len(failed),
+    }
 
 # ---------------------------------------------------------------------------
 # robots.txt 合规检查
