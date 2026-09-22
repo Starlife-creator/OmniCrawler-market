@@ -22,6 +22,7 @@
 | `templates` | array | 已审核模板条目数组（可为空） |
 | `sequence` | int | 单调递增目录版本号（每次生成更新）。客户端防重放：拒绝接受 sequence 回退的 catalog |
 | `tombstones` | array | **可选**（仓库根存在 `tombstones.json` 时输出）。已下架条目 `[{id, removed_at, reason}]`；与现存插件/模板目录冲突会被生成器拒绝（下架条目不得在线）。应用端据此给出"已下架"提示而非静默缺失 |
+| `official_publishers` | array | **必填**（生成器写死来源 `catalog_lib/common.py::OFFICIAL_PUBLISHERS`）。官方认证作者名单 `["starlife", ...]`（维护者 2026-09-22 拍板，首位即维护者本人；新增官方作者在该常量追加）。应用端将条目的 `publisher` 与名单比对：命中即「官方」徽章。★ 名单随 catalog 签名发布、不可篡改；与「已审核」（流程状态，`maintainer_package_signature_file`）是两个独立维度（M5），**非互斥** |
 
 ## 插件条目字段（`plugins[]`）
 

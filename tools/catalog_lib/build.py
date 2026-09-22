@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .authors import *
-from .common import *
+from .common import *  # noqa: F401,F403 —— OFFICIAL_PUBLISHERS 亦经此导入
 from .schema import *
 from .signing import *
 from .tombstones import *
@@ -151,6 +151,7 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
         "sequence": int(generated_at.timestamp()),
         "publisher": publisher,
         "trust_model": TRUST_MODEL,
+        "official_publishers": list(OFFICIAL_PUBLISHERS),
         "trust_public_key_ref": TRUST_KEY_REF,
         "plugins": entries,
         "templates": template_entries,

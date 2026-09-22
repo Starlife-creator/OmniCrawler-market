@@ -15,6 +15,11 @@ SCHEMA_VERSION = 1
 
 TRUST_MODEL = "dual-rail-ed25519"
 
+# 「官方认证作者」名单（维护者 2026-09-22 拍板）：条目的 publisher 命中本名单即「官方」徽章。
+# ★ 列表结构为后续扩展预留（新增官方作者只需在此追加）；名单随 catalog 签名发布，
+#   客户端据此判定作者身份——与「已审核」（流程状态）是两个独立维度（M5）。
+OFFICIAL_PUBLISHERS: tuple[str, ...] = ("starlife",)
+
 TRUST_KEY_REF = "keys/plugin_trust.pub.pem"
 # catalog_lib/common.py -> catalog_lib -> tools -> 仓库根（自包含约定）
 REGISTRY_DIR = Path(__file__).resolve().parents[2]
