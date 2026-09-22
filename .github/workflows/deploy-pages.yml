@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      # 与 validate.yml 同规格：PyYAML 精确 pin（signing.py 依赖）、cryptography 对齐上限
+      - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51"
       - name: Fail-closed 验签并生成发现页
         run: python tools/generate_discovery_page.py --output _pages
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
