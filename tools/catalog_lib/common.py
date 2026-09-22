@@ -123,22 +123,28 @@ _TEMPLATE_ID_RE_PREFIX = "^[a-z][a-z0-9_-]*(/[a-z0-9_-]+)*$"
 
 _TOP_LEVEL_EXTRA = {"author_fingerprint", "files"}
 
-# 门 2（许可合规，Phase 1）：插件代码许可 SPDX 白名单（方案 A2）。
-# 拒绝清单（命中即 CI 红）：GPL-2.0-only / GPL-2.0-or-later / CC-BY-NC-* /
-# LicenseRef-* / 自定义标识——强 copyleft（GPL-2.0 系）在整体分发场景反向
-# 传染宿主；NC 条款与开源生态冲突；非 SPDX 标识不可机器校验。
-# 模板不适用本白名单（license 为数据/服务条款自由文本，A2 模板例外）。
+# 门 2（许可合规）：插件代码许可 SPDX 白名单 —— ★ **口径由主仓拍板**。
+# 本仓因**跨仓无法 import** 而保留一份副本；两侧由主仓
+# `tests/unit/plugin/test_plugin_audit.py` 的**双向相等**断言锁死
+# （任一侧漂移即红，不再有「单侧放宽」的空间）。
+# ★ 2026-09-22 维护者拍板（方向 B「收紧」）：剔除 AGPL-3.0-* / GPL-3.0-*，
+# 补 ISC / MPL-2.0 / 0BSD ⇒ 与主仓 `plugin_audit.LICENSE_ALLOWLIST` **同集合**。
+# 理由：主仓 `quality` 的 check_market_content 会校验本仓 catalog 的 license 字段，
+# 两侧口径不一致会让「本地绿 = CI 绿」失效。
+# 仍拒绝（命中即 CI 红）：AGPL-3.0-* / GPL-3.0-* / GPL-2.0-only / GPL-2.0-or-later /
+# CC-BY-NC-* / LicenseRef-* / 自定义标识——强 copyleft 会引入与本项目 Apache-2.0
+# 冲突的分发义务；NC 条款与开源生态冲突；非 SPDX 标识不可机器校验。
+# 模板不适用本白名单（license 为数据/服务条款自由文本）。
 
 LICENSE_ALLOWLIST = {
-    "AGPL-3.0-only",
-    "AGPL-3.0-or-later",
-    "GPL-3.0-only",
-    "GPL-3.0-or-later",
-    "MIT",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "0BSD",
     "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
     "Unlicense",
 }
 

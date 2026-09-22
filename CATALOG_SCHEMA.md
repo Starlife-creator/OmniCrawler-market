@@ -40,7 +40,7 @@
 | `signature_algorithm` | string | ✓ | 当前固定 `ed25519` |
 | `permissions` | array[string] | ✓ | 插件声明的权限列表（空数组表示无） |
 | `compatible_core` | string | ✓ | 兼容的核心版本约束，如 `>=2.7.0` |
-| `license` | string | ✓ | 无隐式默认。插件须为 SPDX 白名单内标识：`AGPL-3.0-only/or-later`、`GPL-3.0-only/or-later`、`MIT`、`Apache-2.0`、`BSD-2-Clause/3-Clause`、`CC0-1.0`、`Unlicense`；白名单外（如 `GPL-2.0-*`、`CC-BY-NC-*`、`LicenseRef-*`）拒绝。模板的 license 为数据与服务条款说明，使用自由文本但仍必填 |
+| `license` | string | ✓ | 无隐式默认。插件须为 SPDX 白名单内标识：`Apache-2.0`、`BSD-2-Clause/3-Clause`、`0BSD`、`CC0-1.0`、`ISC`、`MIT`、`MPL-2.0`、`Unlicense`（★ 2026-09-22 起**不含** AGPL/GPL 系，与主仓 `plugin_audit.LICENSE_ALLOWLIST` **同集合**，由主仓双向断言锁死）；白名单外（如 `AGPL-3.0-*`、`GPL-2.0-*`、`GPL-3.0-*`、`CC-BY-NC-*`、`LicenseRef-*`）拒绝。模板的 license 为数据与服务条款说明，使用自由文本但仍必填 |
 | `execution_mode` | string | | `in_process` \| `subprocess`；缺省为 `subprocess`，非法枚举拒绝。`in_process` 需要显式高风险审批 |
 | `domains` | array[string] | | network 权限的域名白名单（随 domains 同机制受门 1 校验） |
 | `input_files` | array[string] | | `files:read` 权限的路径白名单；不得使用旧字段名 `files` |
