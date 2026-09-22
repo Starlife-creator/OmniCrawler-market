@@ -40,3 +40,6 @@ Thumbs.db
 # keys/*.pub.pem（作者/信任根公钥，公开可分发，用于签名校验）通过下面的反向规则保留：
 !keys/
 !keys/*.pub.pem
+
+# Web 发现页构建产物（由 deploy-pages workflow 生成）
+_pages/
