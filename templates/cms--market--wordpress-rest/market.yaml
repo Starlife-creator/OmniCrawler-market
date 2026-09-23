@@ -1,0 +1,25 @@
+id: cms/market/wordpress-rest
+name: WordPress 公开文章 REST API
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: cms/wordpress
+summary: 使用 WordPress REST API 按页采集公开文章，默认每页 100 条
+description_file: templates/cms--market--wordpress-rest/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; API 行为依据 WordPress 官方文档
+tags:
+- WordPress
+- CMS
+- REST
+- 文章
+updated_at: '2026-09-23'
+creator_signature_file: templates/cms--market--wordpress-rest/creator.sig
+creator_identity_file: templates/cms--market--wordpress-rest/creator.identity
+package_manifest_file: templates/cms--market--wordpress-rest/package.manifest.json
+creator_package_signature_file: templates/cms--market--wordpress-rest/package.manifest.creator.sig
+maintainer_package_signature_file: templates/cms--market--wordpress-rest/package.manifest.maintainer.sig
+package_manifest_sha256: feb19e60d230e3a06a7825e728b62d490cee22740f293b983286a3c422c277eb
+template_file: templates/cms--market--wordpress-rest/template.yaml
+signature_file: templates/cms--market--wordpress-rest/template.yaml.sig

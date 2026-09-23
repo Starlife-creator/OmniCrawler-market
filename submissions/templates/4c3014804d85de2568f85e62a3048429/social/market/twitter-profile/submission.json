@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "social/twitter",
+    "name": "Twitter/X 用户主页采集",
+    "summary": "采集指定 Twitter/X 用户主页的推文时间线，自动提取推文及互动数据"
+  },
+  "package_manifest_sha256": "cdcd34d2aa02c661f907a225e6b6257b0c7481376f29abb153a9b68e3abe0d84",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

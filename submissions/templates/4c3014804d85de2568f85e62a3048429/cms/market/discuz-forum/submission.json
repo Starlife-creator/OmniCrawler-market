@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "cms/discuz",
+    "name": "Discuz 公开论坛",
+    "summary": "采集 Discuz 公开版块与帖子页面，不含登录验证与反爬机制绕过"
+  },
+  "package_manifest_sha256": "052e725a56beb13631c1ceeb89f6364774a98af81138ef9f4a09ce2c7070e943",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

@@ -1,0 +1,27 @@
+id: social/market/zhihu-topic
+name: 知乎话题与问答采集
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: social/zhihu
+summary: 采集知乎话题页面或搜索结果的问题列表，自动提取标题、摘要、回答数、关注数
+description_file: templates/social--market--zhihu-topic/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; 仅公开内容; 须符合知乎服务条款
+tags:
+- zhihu
+- social
+- qa
+- 社交媒体
+- 知乎
+- 问答
+updated_at: '2026-09-23'
+creator_signature_file: templates/social--market--zhihu-topic/creator.sig
+creator_identity_file: templates/social--market--zhihu-topic/creator.identity
+package_manifest_file: templates/social--market--zhihu-topic/package.manifest.json
+creator_package_signature_file: templates/social--market--zhihu-topic/package.manifest.creator.sig
+maintainer_package_signature_file: templates/social--market--zhihu-topic/package.manifest.maintainer.sig
+package_manifest_sha256: f48f847cd40fd269829a94ac74b440e7ba00c0f1f5a6fc06c9fb6b32f0a15d2b
+template_file: templates/social--market--zhihu-topic/template.yaml
+signature_file: templates/social--market--zhihu-topic/template.yaml.sig

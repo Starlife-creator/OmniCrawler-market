@@ -1,0 +1,27 @@
+id: social/market/weibo-search
+name: 微博搜索采集
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: social/weibo
+summary: 采集微博搜索页或话题页的帖子列表，自动提取内容、作者、转发/评论/点赞数据
+description_file: templates/social--market--weibo-search/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; 仅公开内容; 须符合微博服务条款
+tags:
+- weibo
+- social
+- search
+- 社交媒体
+- 微博
+- 热搜
+updated_at: '2026-09-23'
+creator_signature_file: templates/social--market--weibo-search/creator.sig
+creator_identity_file: templates/social--market--weibo-search/creator.identity
+package_manifest_file: templates/social--market--weibo-search/package.manifest.json
+creator_package_signature_file: templates/social--market--weibo-search/package.manifest.creator.sig
+maintainer_package_signature_file: templates/social--market--weibo-search/package.manifest.maintainer.sig
+package_manifest_sha256: 17626840edb0c84f80846ca2a1863e9d917f4033999bbc1bc9f6d0a1cd1dd4d6
+template_file: templates/social--market--weibo-search/template.yaml
+signature_file: templates/social--market--weibo-search/template.yaml.sig

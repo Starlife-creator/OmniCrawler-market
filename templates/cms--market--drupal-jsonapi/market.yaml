@@ -1,0 +1,24 @@
+id: cms/market/drupal-jsonapi
+name: Drupal JSON:API 内容
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: cms/drupal
+summary: 使用 Drupal 核心 JSON:API 采集公开内容，并处理 links.next 分页
+description_file: templates/cms--market--drupal-jsonapi/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; API 行为依据 Drupal 官方文档
+tags:
+- Drupal
+- CMS
+- JSONAPI
+updated_at: '2026-09-23'
+creator_signature_file: templates/cms--market--drupal-jsonapi/creator.sig
+creator_identity_file: templates/cms--market--drupal-jsonapi/creator.identity
+package_manifest_file: templates/cms--market--drupal-jsonapi/package.manifest.json
+creator_package_signature_file: templates/cms--market--drupal-jsonapi/package.manifest.creator.sig
+maintainer_package_signature_file: templates/cms--market--drupal-jsonapi/package.manifest.maintainer.sig
+package_manifest_sha256: 05fbbf12a3969f59eb08176a3082e0c6a142d97527ec9a335e225cc7a78b5b7f
+template_file: templates/cms--market--drupal-jsonapi/template.yaml
+signature_file: templates/cms--market--drupal-jsonapi/template.yaml.sig

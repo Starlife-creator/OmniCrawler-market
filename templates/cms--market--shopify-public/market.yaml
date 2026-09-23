@@ -1,0 +1,24 @@
+id: cms/market/shopify-public
+name: Shopify 公开商品与集合
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: cms/shopify
+summary: 采集仅公开的商品与集合页面；不使用或绕过商店后台接口
+description_file: templates/cms--market--shopify-public/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; 仅采集公开页面; 商品数据权利归各商店所有者
+tags:
+- Shopify
+- 电商
+- 商品
+updated_at: '2026-09-23'
+creator_signature_file: templates/cms--market--shopify-public/creator.sig
+creator_identity_file: templates/cms--market--shopify-public/creator.identity
+package_manifest_file: templates/cms--market--shopify-public/package.manifest.json
+creator_package_signature_file: templates/cms--market--shopify-public/package.manifest.creator.sig
+maintainer_package_signature_file: templates/cms--market--shopify-public/package.manifest.maintainer.sig
+package_manifest_sha256: 99d97f1b8a7d76c4450b52ed359385a59385e3e26ca96eeeee4c4bbd2a649f21
+template_file: templates/cms--market--shopify-public/template.yaml
+signature_file: templates/cms--market--shopify-public/template.yaml.sig

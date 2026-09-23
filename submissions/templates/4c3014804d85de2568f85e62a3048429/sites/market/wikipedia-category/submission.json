@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "sites/wikipedia",
+    "name": "Wikipedia 分类成员",
+    "summary": "使用 MediaWiki 官方 Action API 采集 Wikipedia 分类成员"
+  },
+  "package_manifest_sha256": "5170c73e4c43c32c2351f104025f398dd8d0a1a570eb223692c68ec46bf354aa",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

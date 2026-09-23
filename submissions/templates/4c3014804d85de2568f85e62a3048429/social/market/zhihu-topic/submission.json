@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "social/zhihu",
+    "name": "知乎话题与问答采集",
+    "summary": "采集知乎话题页面或搜索结果的问题列表，自动提取标题、摘要、回答数、关注数"
+  },
+  "package_manifest_sha256": "f48f847cd40fd269829a94ac74b440e7ba00c0f1f5a6fc06c9fb6b32f0a15d2b",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

@@ -1,0 +1,25 @@
+id: cms/market/mediawiki-category
+name: MediaWiki 分类成员
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: cms/mediawiki
+summary: 通过 MediaWiki Action API 采集分类成员列表，续令牌由站点插件增强处理
+description_file: templates/cms--market--mediawiki-category/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.11.1'
+license: OmniCrawler-MIT; API 行为依据 MediaWiki 官方文档
+tags:
+- MediaWiki
+- Wiki
+- 分类
+- API
+updated_at: '2026-09-23'
+creator_signature_file: templates/cms--market--mediawiki-category/creator.sig
+creator_identity_file: templates/cms--market--mediawiki-category/creator.identity
+package_manifest_file: templates/cms--market--mediawiki-category/package.manifest.json
+creator_package_signature_file: templates/cms--market--mediawiki-category/package.manifest.creator.sig
+maintainer_package_signature_file: templates/cms--market--mediawiki-category/package.manifest.maintainer.sig
+package_manifest_sha256: a4cd80fd4f8902c3f40eac92d6defb2b445bbad5d51a51dc3ce243991ae93b85
+template_file: templates/cms--market--mediawiki-category/template.yaml
+signature_file: templates/cms--market--mediawiki-category/template.yaml.sig

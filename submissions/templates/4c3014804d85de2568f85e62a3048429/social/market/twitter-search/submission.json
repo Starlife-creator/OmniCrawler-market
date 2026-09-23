@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "social/twitter",
+    "name": "Twitter/X 搜索采集",
+    "summary": "采集 Twitter/X 搜索结果页或话题时间线，自动提取推文内容、作者、互动数据"
+  },
+  "package_manifest_sha256": "e57d9fdfb4a75e1539cd98430e0c0c944e4eafff8f335fa026730a4171d4396d",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

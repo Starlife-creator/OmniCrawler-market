@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "social/weibo",
+    "name": "微博搜索采集",
+    "summary": "采集微博搜索页或话题页的帖子列表，自动提取内容、作者、转发/评论/点赞数据"
+  },
+  "package_manifest_sha256": "17626840edb0c84f80846ca2a1863e9d917f4033999bbc1bc9f6d0a1cd1dd4d6",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

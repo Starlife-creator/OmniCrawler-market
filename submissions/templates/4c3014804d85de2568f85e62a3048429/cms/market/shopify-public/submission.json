@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "cms/shopify",
+    "name": "Shopify 公开商品与集合",
+    "summary": "采集仅公开的商品与集合页面；不使用或绕过商店后台接口"
+  },
+  "package_manifest_sha256": "99d97f1b8a7d76c4450b52ed359385a59385e3e26ca96eeeee4c4bbd2a649f21",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}

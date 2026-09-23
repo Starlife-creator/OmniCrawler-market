@@ -1,0 +1,12 @@
+{
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "market_metadata": {
+    "category": "cms/discourse",
+    "name": "Discourse 公开话题列表",
+    "summary": "采集 Discourse 公开话题列表及详情 JSON"
+  },
+  "package_manifest_sha256": "d16f30e8a11881f0b8f16c59157df52b298c8bbde6a0cf3fca4c64c8ab138562",
+  "requested_username": "starlife",
+  "schema_version": 1,
+  "status": "creator_signed"
+}
