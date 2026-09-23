@@ -67,3 +67,12 @@ templates/<market-directory>/
 
 客户端先验证 `catalog.json.sig`，再下载 manifest 声明的全部文件，并同时验证创作者签名和
 维护者签名。模板更新也要求同一作者指纹和严格递增 SemVer。
+
+## 与现存目录的差异（2026-09-23 补记）
+
+当前已发布的 3 个模板（crossref-works / github-public-issues / openalex-works）早于上述
+现代布局，实际是**旧式 5 件形态**：`template.yaml` + `template.yaml.sig` + `creator.identity`
++ `creator.sig` + `listing.md`（无 `market.yaml`、无 `package.manifest.*`、无 `versions/`）。
+客户端对旧式条目走兼容路径（只抓 `template_file` + `signature_file`，维护者签名照常强制验）；
+市场侧生成器（`tools/catalog_lib/build.py`）对两种布局都能识别。**新投稿请使用现代布局**；
+旧式条目更新时建议顺带迁移到 manifest 布局，迁移前本差异说明保持有效。
