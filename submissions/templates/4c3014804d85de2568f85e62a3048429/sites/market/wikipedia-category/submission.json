@@ -5,7 +5,7 @@
     "name": "Wikipedia 分类成员",
     "summary": "使用 MediaWiki 官方 Action API 采集 Wikipedia 分类成员"
   },
-  "package_manifest_sha256": "5170c73e4c43c32c2351f104025f398dd8d0a1a570eb223692c68ec46bf354aa",
+  "package_manifest_sha256": "db41619d9a07167a9c954b0420c7bf8808d9cc4d686b99d0abea3e2b0196c3c4",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

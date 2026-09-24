@@ -5,7 +5,7 @@
     "name": "小红书笔记采集",
     "summary": "采集小红书搜索页、话题标签页或用户主页的笔记列表，自动提取标题、作者、点赞/收藏等互动数据"
   },
-  "package_manifest_sha256": "6d95d92ccff93b02fbe2c008f6b83d26ed3664a1e086af5d231425b77c192514",
+  "package_manifest_sha256": "94fd2652510a28099b182b20a41f3e359863d2079366cc938834da3e7d1a86b0",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

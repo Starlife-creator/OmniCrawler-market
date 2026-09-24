@@ -5,7 +5,7 @@
     "name": "MediaWiki 分类成员",
     "summary": "通过 MediaWiki Action API 采集分类成员列表，续令牌由站点插件增强处理"
   },
-  "package_manifest_sha256": "a4cd80fd4f8902c3f40eac92d6defb2b445bbad5d51a51dc3ce243991ae93b85",
+  "package_manifest_sha256": "78f0fc62a1976ff33d5c0ebcb269656703b0f310ec89c26dccdefc81b5969d37",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

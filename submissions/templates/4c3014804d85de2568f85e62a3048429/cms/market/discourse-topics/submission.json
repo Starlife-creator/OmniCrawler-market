@@ -5,7 +5,7 @@
     "name": "Discourse 公开话题列表",
     "summary": "采集 Discourse 公开话题列表及详情 JSON"
   },
-  "package_manifest_sha256": "d16f30e8a11881f0b8f16c59157df52b298c8bbde6a0cf3fca4c64c8ab138562",
+  "package_manifest_sha256": "dcd907175974351bf6623b987c2acd77c46b30c66e3bd624e4062d63c2409970",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

@@ -5,7 +5,7 @@
     "name": "Drupal JSON:API 内容",
     "summary": "使用 Drupal 核心 JSON:API 采集公开内容，并处理 links.next 分页"
   },
-  "package_manifest_sha256": "05fbbf12a3969f59eb08176a3082e0c6a142d97527ec9a335e225cc7a78b5b7f",
+  "package_manifest_sha256": "751ab1d0670a1ae7342397d15b42231ffcedc481c1927c469eb31abc684f6c42",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

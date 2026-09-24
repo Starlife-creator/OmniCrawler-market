@@ -5,7 +5,7 @@
     "name": "知乎话题与问答采集",
     "summary": "采集知乎话题页面或搜索结果的问题列表，自动提取标题、摘要、回答数、关注数"
   },
-  "package_manifest_sha256": "f48f847cd40fd269829a94ac74b440e7ba00c0f1f5a6fc06c9fb6b32f0a15d2b",
+  "package_manifest_sha256": "833e58c240bcca6b2b3f16e8ade9d72778e9cd3f0ee43b86938ee9d5dce76dfd",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

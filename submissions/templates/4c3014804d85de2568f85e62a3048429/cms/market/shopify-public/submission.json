@@ -5,7 +5,7 @@
     "name": "Shopify 公开商品与集合",
     "summary": "采集仅公开的商品与集合页面；不使用或绕过商店后台接口"
   },
-  "package_manifest_sha256": "99d97f1b8a7d76c4450b52ed359385a59385e3e26ca96eeeee4c4bbd2a649f21",
+  "package_manifest_sha256": "93cc2a677ce60d44c1e62114b5f8035e5d3e3f467ad5e781034fb14e0306de64",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

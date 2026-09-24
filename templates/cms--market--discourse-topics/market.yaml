@@ -14,12 +14,12 @@ tags:
 - 论坛
 - 社区
 - JSON
-updated_at: '2026-09-23'
+updated_at: '2026-09-24'
 creator_signature_file: templates/cms--market--discourse-topics/creator.sig
 creator_identity_file: templates/cms--market--discourse-topics/creator.identity
 package_manifest_file: templates/cms--market--discourse-topics/package.manifest.json
 creator_package_signature_file: templates/cms--market--discourse-topics/package.manifest.creator.sig
 maintainer_package_signature_file: templates/cms--market--discourse-topics/package.manifest.maintainer.sig
-package_manifest_sha256: d16f30e8a11881f0b8f16c59157df52b298c8bbde6a0cf3fca4c64c8ab138562
+package_manifest_sha256: dcd907175974351bf6623b987c2acd77c46b30c66e3bd624e4062d63c2409970
 template_file: templates/cms--market--discourse-topics/template.yaml
 signature_file: templates/cms--market--discourse-topics/template.yaml.sig

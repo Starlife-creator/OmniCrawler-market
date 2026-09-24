@@ -13,12 +13,12 @@ tags:
 - Drupal
 - CMS
 - JSONAPI
-updated_at: '2026-09-23'
+updated_at: '2026-09-24'
 creator_signature_file: templates/cms--market--drupal-jsonapi/creator.sig
 creator_identity_file: templates/cms--market--drupal-jsonapi/creator.identity
 package_manifest_file: templates/cms--market--drupal-jsonapi/package.manifest.json
 creator_package_signature_file: templates/cms--market--drupal-jsonapi/package.manifest.creator.sig
 maintainer_package_signature_file: templates/cms--market--drupal-jsonapi/package.manifest.maintainer.sig
-package_manifest_sha256: 05fbbf12a3969f59eb08176a3082e0c6a142d97527ec9a335e225cc7a78b5b7f
+package_manifest_sha256: 751ab1d0670a1ae7342397d15b42231ffcedc481c1927c469eb31abc684f6c42
 template_file: templates/cms--market--drupal-jsonapi/template.yaml
 signature_file: templates/cms--market--drupal-jsonapi/template.yaml.sig

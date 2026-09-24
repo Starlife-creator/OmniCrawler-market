@@ -5,7 +5,7 @@
     "name": "WordPress 公开文章 REST API",
     "summary": "使用 WordPress REST API 按页采集公开文章，默认每页 100 条"
   },
-  "package_manifest_sha256": "feb19e60d230e3a06a7825e728b62d490cee22740f293b983286a3c422c277eb",
+  "package_manifest_sha256": "029e0e06d68f0aef31d723ca2d6ecb7669cdd11a41e92a0e646947164a0349a3",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

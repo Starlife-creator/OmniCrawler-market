@@ -5,7 +5,7 @@
     "name": "微博搜索采集",
     "summary": "采集微博搜索页或话题页的帖子列表，自动提取内容、作者、转发/评论/点赞数据"
   },
-  "package_manifest_sha256": "17626840edb0c84f80846ca2a1863e9d917f4033999bbc1bc9f6d0a1cd1dd4d6",
+  "package_manifest_sha256": "3ae2ab23b04fa4dc47e5dc8fe92db13d5290505b6dca602b1f10f5ea36cadb42",
   "requested_username": "starlife",
   "schema_version": 1,
   "status": "creator_signed"

@@ -17,12 +17,12 @@ tags:
 - 社交媒体
 - 小红书
 - 种草
-updated_at: '2026-09-23'
+updated_at: '2026-09-24'
 creator_signature_file: templates/social--market--xiaohongshu-note/creator.sig
 creator_identity_file: templates/social--market--xiaohongshu-note/creator.identity
 package_manifest_file: templates/social--market--xiaohongshu-note/package.manifest.json
 creator_package_signature_file: templates/social--market--xiaohongshu-note/package.manifest.creator.sig
 maintainer_package_signature_file: templates/social--market--xiaohongshu-note/package.manifest.maintainer.sig
-package_manifest_sha256: 6d95d92ccff93b02fbe2c008f6b83d26ed3664a1e086af5d231425b77c192514
+package_manifest_sha256: 94fd2652510a28099b182b20a41f3e359863d2079366cc938834da3e7d1a86b0
 template_file: templates/social--market--xiaohongshu-note/template.yaml
 signature_file: templates/social--market--xiaohongshu-note/template.yaml.sig
