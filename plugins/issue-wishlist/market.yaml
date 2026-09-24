@@ -1,0 +1,39 @@
+id: issue-wishlist
+name: issue-wishlist
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: view
+summary: 官方需求清单：只读浏览 OmniCrawler 仓库的开放 Issues
+description_file: plugins/issue-wishlist/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.14.0'
+license: MIT
+tags:
+- issues
+- 需求清单
+- roadmap
+- 官方
+- 只读
+updated_at: '2026-09-24'
+creator_signature_file: plugins/issue-wishlist/creator.sig
+creator_identity_file: plugins/issue-wishlist/creator.identity
+package_manifest_file: plugins/issue-wishlist/package.manifest.json
+creator_package_signature_file: plugins/issue-wishlist/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/issue-wishlist/package.manifest.maintainer.sig
+package_manifest_sha256: 03708885a0fe64651d93fcf79ccdd5d13565d82244bce7ecdd39cf73b7774f68
+plugin_file: plugins/issue-wishlist/plugin.py
+signature_file: plugins/issue-wishlist/plugin.py.sig
+permissions:
+- network:scoped
+plugin_types:
+- view
+execution_mode: subprocess
+domains:
+- api.github.com
+input_files: []
+dependencies: []
+required_capabilities:
+  network.fetch: '>=1'
+  view.richtext: '>=1'
+state_schema_version: 1

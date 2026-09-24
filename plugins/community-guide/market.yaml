@@ -1,0 +1,36 @@
+id: community-guide
+name: community-guide
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: view
+summary: 官方社区引导：仓库 Discussions / Issues / 贡献指南的外链导航
+description_file: plugins/community-guide/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.14.0'
+license: MIT
+tags:
+- 社区
+- discussions
+- 外链
+- 官方
+- 引导
+updated_at: '2026-09-24'
+creator_signature_file: plugins/community-guide/creator.sig
+creator_identity_file: plugins/community-guide/creator.identity
+package_manifest_file: plugins/community-guide/package.manifest.json
+creator_package_signature_file: plugins/community-guide/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/community-guide/package.manifest.maintainer.sig
+package_manifest_sha256: ce912eee4941ea7f13144dacff1b68b001b50cd5f0ddf9d07fd02f6ab59a41d4
+plugin_file: plugins/community-guide/plugin.py
+signature_file: plugins/community-guide/plugin.py.sig
+permissions: []
+plugin_types:
+- view
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities:
+  view.richtext: '>=1'
+state_schema_version: 1
