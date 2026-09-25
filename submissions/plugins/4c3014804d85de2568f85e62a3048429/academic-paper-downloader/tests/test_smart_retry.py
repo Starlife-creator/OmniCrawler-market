@@ -68,10 +68,9 @@ class TestRetryStrategy:
         delay = _retry_strategy("auth_required", 0, {"retry_base_delay": 2.0})
         assert delay is None
 
-    def test_bot_blocked_retries_once(self):
-        """反爬 403 只短暂重试一次，之后放弃（不触发重登）。"""
-        delay = _retry_strategy("bot_blocked", 0, {"retry_base_delay": 2.0})
-        assert delay is not None and 0 < delay <= 2.0
+    def test_bot_blocked_no_retry_channel_upgrade_instead(self):
+        """v0.4.0 起 bot_blocked 是通道不匹配信号：同通道重试无意义，交给通道升级。"""
+        assert _retry_strategy("bot_blocked", 0, {"retry_base_delay": 2.0}) is None
         assert _retry_strategy("bot_blocked", 1, {"retry_base_delay": 2.0}) is None
 
     def test_max_retries_exceeded(self):
@@ -83,6 +82,6 @@ class TestRetryStrategy:
         delay = _retry_strategy("network", 0, {"retry_base_delay": 2.0})
         assert delay is not None and delay <= 2.0
 
-    def test_captcha_delay(self):
-        delay = _retry_strategy("captcha", 0, {"retry_base_delay": 2.0})
-        assert delay is not None and delay <= 30.0
+    def test_captcha_no_retry_channel_upgrade_instead(self):
+        """v0.4.0 起 captcha 同样交给通道升级（可见浏览器内人工通过），不再空转退避。"""
+        assert _retry_strategy("captcha", 0, {"retry_base_delay": 2.0}) is None
