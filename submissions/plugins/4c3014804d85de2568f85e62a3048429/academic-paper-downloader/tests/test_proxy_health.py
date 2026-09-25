@@ -44,5 +44,6 @@ class TestConfigHotReload:
         assert any("level 必须是 1/2/3" in e for e in errors)
 
     def test_validate_config_level3_missing_proxy(self):
+        # v0.3.2：Level 3 不再要求 proxy_url 前置配置（直接尝试、结果判定）
         errors = _validate_config({"level": 3, "institution": {"login_url": "https://x"}})
-        assert any("proxy_url" in e for e in errors)
+        assert errors == []

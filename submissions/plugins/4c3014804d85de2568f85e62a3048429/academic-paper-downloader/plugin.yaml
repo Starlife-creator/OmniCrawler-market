@@ -1,11 +1,11 @@
 id: academic-paper-downloader
 name: Academic Paper Downloader
-version: 0.3.0
+version: 0.6.4
 api_version: 1
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: source
-plugin_types: [source, processor, hook]
+plugin_types: [source, processor, hook, view]
 tags: [academic, papers, pdf, doi, crossref, unpaywall, openalex, batch-download]
 summary: "从 Web of Science 导出文件批量下载论文 PDF，全优化版"
 description_file: listing.md
@@ -47,6 +47,9 @@ dependencies:
     version: ">=5.4,<7.0"
     license: MIT
   - name: openpyxl
+  - name: xlrd
+    version: ">=2.0,<3.0"
+    license: BSD-3-Clause
     version: ">=3.0,<4.0"
     license: MIT
   - name: pdfplumber

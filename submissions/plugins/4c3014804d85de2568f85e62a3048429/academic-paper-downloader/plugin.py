@@ -19,6 +19,8 @@ import os
 import random
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -128,7 +130,7 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
@@ -145,6 +147,10 @@ PLUGIN_METADATA = {
         {"name": "httpx", "version": ">=0.27,<1.0", "license": "BSD-3-Clause"},
         {"name": "yaml", "version": ">=5.4,<7.0", "license": "MIT"},
         {"name": "openpyxl", "version": ">=3.0,<4.0", "license": "MIT"},
+        # 旧版 .xls 导出走 xlrd（导入处有 try/except，缺库时静默降级）。
+        # ★ 市场审计的门 3 是「实测导入 ⇒ 必须声明」的 fail-closed 口径，且**不看**
+        #   optional_dependencies ⇒ 不声明就是 error（实测 gate3_imported_but_not_declared）。
+        {"name": "xlrd", "version": ">=2.0,<3.0", "license": "BSD-3-Clause"},
         {"name": "pdfplumber", "version": ">=0.10,<1.0", "license": "MIT"},
         {"name": "pypdf", "version": ">=3.0,<4.0", "license": "BSD-3-Clause"},
         {"name": "playwright", "version": ">=1.30,<2.0", "license": "Apache-2.0"},
@@ -406,8 +412,7 @@ class _CookieMonitor:
             return self._valid
         self._last_check = now
         try:
-            import omnicrawler_sdk
-            result = omnicrawler_sdk.call("state.get", {"key": _cookie_key(self._config)})
+            result = _state_get(_cookie_key(self._config))
             if not result or not result.get("value"):
                 self._valid = False
                 return False
@@ -427,8 +432,7 @@ class _CookieMonitor:
     def needs_proactive_refresh(self) -> bool:
         """检查是否需要主动刷新（过期前 N 小时）。"""
         try:
-            import omnicrawler_sdk
-            result = omnicrawler_sdk.call("state.get", {"key": _cookie_key(self._config)})
+            result = _state_get(_cookie_key(self._config))
             if not result or not result.get("value"):
                 return True
             cookies = json.loads(result["value"])
@@ -444,6 +448,10 @@ class _CookieMonitor:
 
     def refresh_if_needed(self) -> list[dict] | None:
         """如果 Cookie 无效或即将过期，重新登录获取。"""
+        # v0.6.6：未配置 login_url（如校园 IP 直连模式）时静默返回——
+        # 此前每篇论文都打一条 cookie_proactive_refresh 日志（纯噪声）。
+        if not (self._config.get("institution", {}) or {}).get("login_url"):
+            return None
         if not self.is_valid() or self.needs_proactive_refresh():
             _log("cookie_proactive_refresh", reason="expiring_soon" if self.needs_proactive_refresh() else "invalid")
             return _login_and_capture_cookie(self._config)
@@ -603,12 +611,11 @@ def _retry_strategy(error_class: str, attempt: int, config: dict) -> float | Non
     elif error_class == "auth_required":
         # 403：需要重新登录，不重试 HTTP
         return None
-    elif error_class == "bot_blocked":
-        # OA 源反爬 403：短暂重试一次即可，不触发重登
-        return base if attempt == 0 else None
-    elif error_class == "captcha":
-        # 验证码：等待后重试
-        return min(base * 2, 30.0)
+    elif error_class in ("bot_blocked", "captcha"):
+        # v0.4.0 起这两类是"通道不匹配"信号：同一 HTTP 通道内重试在语义上不可能
+        # 成功（反爬识别的是通道指纹），直接返回 None 不重试，时间让给通道升级
+        # （browser_channel_upgrade / 可见浏览器兜底）。
+        return None
     return None
 
 # ---------------------------------------------------------------------------
@@ -655,6 +662,112 @@ def _cookie_key(config: dict) -> str: return _state_key("cookie", config)
 def _lock_key(config: dict, doi: str) -> str: return f"{_state_key('lock', config)}_{doi.lower()}"
 def _record_key(config: dict, doi: str) -> str:
     return f"{_state_key('record', config)}_{hashlib.md5(str(doi).lower().encode()).hexdigest()[:16]}"
+
+# ---------------------------------------------------------------------------
+# 状态存取（v0.4.0）：SDK 优先，缺席时以 workspace 文件兜底
+# ---------------------------------------------------------------------------
+_STATE_DIR: Path | None = None
+
+def _set_state_dir(workspace) -> None:
+    """记录 workspace，供无 SDK 环境（独立运行）把增量状态落到文件。
+
+    同时清理历史版本可能遗留的 Cookie 明文文件（安全回归修复的善后）。
+    """
+    global _STATE_DIR
+    try:
+        _STATE_DIR = Path(workspace) / ".apd_state"
+        if _STATE_DIR.is_dir():
+            for stale in _STATE_DIR.glob("apd_cookie_*.json"):
+                try:
+                    stale.unlink()
+                    _log("stale_cookie_file_removed", path=str(stale))
+                except Exception:
+                    pass
+    except Exception:
+        _STATE_DIR = None
+
+def _state_file(key: str) -> Path | None:
+    if _STATE_DIR is None:
+        return None
+    return _STATE_DIR / (re.sub(r"[^A-Za-z0-9_.-]", "_", key) + ".json")
+
+def _is_cookie_key(key: str) -> bool:
+    """Cookie 是会话凭证：明确禁止落入 workspace 明文文件（v0.4.0 安全回归修复）。"""
+    return key.startswith("apd_cookie_")
+
+def _state_get(key: str) -> dict | None:
+    """读状态：SDK 优先；SDK 缺席且已知 workspace 时读文件。都不可用 → None。
+
+    Cookie 键不落文件（会话凭证明文落盘属安全回归），只走 SDK。
+    文件格式带版本号（D7）：{"v": 1, "value": "..."}；兼容读取无版本旧格式。
+    """
+    if _is_cookie_key(key):
+        try:
+            import omnicrawler_sdk
+            result = omnicrawler_sdk.call("state.get", {"key": key})
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            pass
+        return None
+    try:
+        import omnicrawler_sdk
+        result = omnicrawler_sdk.call("state.get", {"key": key})
+        if isinstance(result, dict):
+            return result
+    except Exception:
+        pass
+    try:
+        f = _state_file(key)
+        if f is not None and f.exists():
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "v" in data:
+                return {"value": data.get("value")} if data.get("v") == 1 else None
+            return {"value": data.get("value") if isinstance(data, dict) and "value" in data
+                    else f.read_text(encoding="utf-8")}
+    except Exception:
+        pass
+    return None
+
+def _state_set(key: str, value: str) -> None:
+    """写状态：SDK 优先；SDK 缺席且已知 workspace 时写文件。
+
+    Cookie 键禁止文件兜底：Cookie 是会话凭证，明文写入用户目录属安全回归。
+    """
+    if _is_cookie_key(key):
+        try:
+            import omnicrawler_sdk
+            omnicrawler_sdk.call("state.set", {"key": key, "value": value})
+        except Exception:
+            _log("cookie_state_sdk_only", level=logging.DEBUG)
+        return
+    try:
+        import omnicrawler_sdk
+        omnicrawler_sdk.call("state.set", {"key": key, "value": value})
+        return
+    except Exception:
+        pass
+    try:
+        f = _state_file(key)
+        if f is not None:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"v": 1, "value": value}, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+def _state_delete(key: str) -> None:
+    try:
+        import omnicrawler_sdk
+        omnicrawler_sdk.call("state.delete", {"key": key})
+        return
+    except Exception:
+        pass
+    try:
+        f = _state_file(key)
+        if f is not None and f.exists():
+            f.unlink()
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # DOI 解析
@@ -777,7 +890,8 @@ def _parse_input_file(file_path: str) -> list[dict[str, str]]:
             data = json.loads(text)
             if isinstance(data, list):
                 return [{k: str(v) for k, v in item.items()} for item in data]
-        except Exception: pass
+        except Exception as e:
+            _log("swallowed_exception", level=logging.DEBUG, where="input_json_parse", error=str(e))
 
     return []
 
@@ -1008,14 +1122,22 @@ def _generate_report(workspace: Path, results: list[dict], failed: list[dict]) -
             writer.writerow(["DOI", "Title", "Authors", "Year", "Journal", "Publisher",
                            "Source", "LocalPath", "FileSize", "Status", "Message"])
             for r in results:
+                verified = bool(r.get("verified", True))
                 writer.writerow([_csv_safe(r.get("doi","")), _csv_safe(r.get("title","")),
                                _csv_safe(r.get("authors","")), _csv_safe(r.get("year","")),
                                _csv_safe(r.get("journal","")), _csv_safe(r.get("publisher","")),
                                _csv_safe(r.get("download_source","")), _csv_safe(r.get("local_path","")),
-                               _csv_safe(r.get("file_size","")), "SUCCESS", ""])
+                               _csv_safe(r.get("file_size","")),
+                               "SUCCESS" if verified else "UNVERIFIED",
+                               "" if verified else "未能核验 DOI（文件已保留，不计入成功）"])
             for f_item in failed:
+                # v0.3.2：Message = "error_class@layer: 人类可读原因"（旧记录缺字段时逐级回退）。
+                # 注意：reason 必须先单独过 _csv_safe——拼接后整串不再以 "=" 开头，
+                # 外层转义不会加防公式前缀，注入防护会失效（test_report_output_is_injection_safe 守卫此点）。
+                msg = (f"{f_item.get('error_class', 'unknown')}@{f_item.get('layer', 'none')}: "
+                       f"{_csv_safe(f_item.get('reason') or _failure_reason(f_item.get('error_class', 'unknown')))}")
                 writer.writerow([_csv_safe(f_item.get("doi","")), _csv_safe(f_item.get("title","")),
-                               "", "", "", "", "", "", "", "FAILED", _csv_safe(f_item.get("reason",""))])
+                               "", "", "", "", "", "", "", "FAILED", _csv_safe(msg)])
         _log("report_generated", path=str(csv_path))
     except Exception as e:
         _logger.exception("CSV report generation failed: %s", e)
@@ -1024,21 +1146,48 @@ def _generate_report(workspace: Path, results: list[dict], failed: list[dict]) -
     html_path = report_dir / f"dashboard_{timestamp}.html"
     try:
         total = len(results) + len(failed)
-        success_count = len(results)
+        # ★ 未核验（DOI 提不出）的文件仍在 papers/，但**不计入 Success**（issue #22 §1）：
+        #   反爬挑战页/登录页/落地页都提不出 DOI，把它们算成成功正是报告失真的来源。
+        unverified_count = sum(1 for r in results if not r.get("verified", True))
+        success_count = len(results) - unverified_count
         rows_html = ''.join(
-            f'<tr><td>{_esc(r.get("doi",""))}</td><td>{_esc(r.get("title",""))}</td>'
+            f'<tr data-k="ok"><td>{_esc(r.get("doi",""))}</td><td>{_esc(r.get("title",""))}</td>'
             f'<td>{_esc(r.get("local_path",""))}</td></tr>' for r in results)
+        # U10：失败按 error_class 分组小计 + 行级 data-k 供筛选
+        fail_counts: dict[str, int] = {}
+        for f in failed:
+            ec = str(f.get("error_class", "unknown"))
+            fail_counts[ec] = fail_counts.get(ec, 0) + 1
+        summary_html = ' '.join(
+            f'<span class="tag">{_esc(ec)} × {n}</span>' for ec, n in
+            sorted(fail_counts.items(), key=lambda kv: -kv[1]))
         failed_html = ''.join(
-            f'<tr><td>{_esc(f.get("doi",""))}</td><td>{_esc(f.get("reason",""))}</td></tr>' for f in failed)
+            f'<tr data-k="fail"><td>{_esc(f.get("doi",""))}</td><td>{_esc(f.get("title",""))}</td>'
+            f'<td>{_esc(f.get("error_class","unknown"))} @ {_esc(f.get("layer","none"))}</td>'
+            f'<td>{_esc(f.get("reason") or _failure_reason(f.get("error_class","unknown")))}</td></tr>'
+            for f in failed)
         html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Download Dashboard</title>
 <style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5}}
 .card{{background:#fff;border-radius:8px;padding:20px;margin:10px;box-shadow:0 2px 4px rgba(0,0,0,.1)}}
 .success{{color:#2e7d32}} .fail{{color:#c62828}} .stat{{font-size:2em;font-weight:bold}}
-table{{border-collapse:collapse;width:100%}} th,td{{padding:8px;text-align:left;border-bottom:1px solid #ddd}}</style>
+.tag{{display:inline-block;background:#eee;border-radius:4px;padding:2px 8px;margin:2px;font-size:13px}}
+button{{margin-right:6px;padding:4px 10px;cursor:pointer}}
+table{{border-collapse:collapse;width:100%}} th,td{{padding:8px;text-align:left;border-bottom:1px solid #ddd}}
+th{{background:#fafafa}}</style>
+<script>
+function _show(k){{document.querySelectorAll('tr[data-k]').forEach(function(r){{
+r.style.display=(k==='all'||r.getAttribute('data-k')===k)?'':'none';}});}}
+</script>
 </head><body><h1>📚 Download Dashboard</h1>
-<div class="card"><span class="stat success">{success_count}</span> Success / <span class="stat fail">{len(failed)}</span> Failed / {total} Total</div>
-<div class="card"><h2>✅ 已下载</h2><table>{rows_html}</table></div>
-<div class="card"><h2>❌ 失败</h2><table>{failed_html}</table></div></body></html>"""
+<div class="card"><span class="stat success">{success_count}</span> Success / <span class="stat fail">{len(failed)}</span> Failed / <span class="stat">{unverified_count}</span> Unverified / {total} Total</div>
+<p>Unverified = 文件已落盘但**未能核验为请求的那篇**（PDF 内提不出 DOI）；不计入 Success。</p>
+<div class="card"><b>失败原因分布：</b> {summary_html or '（无失败）'}</div>
+<div class="card">
+<button onclick="_show('all')">全部</button>
+<button onclick="_show('ok')">仅成功</button>
+<button onclick="_show('fail')">仅失败</button>
+<h2>✅ 已下载</h2><table><tr><th>DOI</th><th>标题</th><th>本地文件</th></tr>{rows_html}</table>
+<h2>❌ 失败</h2><table><tr><th>DOI</th><th>标题</th><th>分类 @ 层</th><th>原因</th></tr>{failed_html}</table></div></body></html>"""
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html)
         _log("dashboard_generated", path=str(html_path))
@@ -1082,13 +1231,12 @@ def _parse_input_file_chunked(file_path: str, chunk_size: int = 500) -> Iterator
 # ---------------------------------------------------------------------------
 # Phase 1: seed（含 OpenAlex 批量预检 + 增量导入）
 # ---------------------------------------------------------------------------
-def _seed(payload: dict) -> dict:
-    _reload_plugin_config()  # 外部配置热重载（mtime 变化才生效）
-    
-    # 应用配置到运行时常量
+def _apply_runtime_tuning(config: dict) -> None:
+    """把 config 中的调优项收敛写入模块级运行时常量（D3：单一写入点）。
+
+    仅当 config 显式提供时才覆盖全局默认值（便于测试通过 monkeypatch 修改全局变量）。
+    """
     global _MAX_PDF_BYTES, _DONE_DOI_CAP, _OA_PRECHECK_LIMIT, _OA_PRECHECK_CONCURRENCY
-    config = payload.get("config", {})
-    # 仅当 config 显式提供时才覆盖全局默认值（便于测试通过 monkeypatch 修改全局变量）
     if "max_pdf_bytes" in config:
         _MAX_PDF_BYTES = int(config["max_pdf_bytes"])
     if "done_doi_cap" in config:
@@ -1097,9 +1245,24 @@ def _seed(payload: dict) -> dict:
         _OA_PRECHECK_LIMIT = int(config["oa_precheck_limit"])
     if "oa_precheck_concurrency" in config:
         _OA_PRECHECK_CONCURRENCY = int(config["oa_precheck_concurrency"])
-    
+
+def _seed(payload: dict) -> dict:
+    _reload_plugin_config()  # 外部配置热重载（mtime 变化才生效）
+
+    # 应用配置到运行时常量（D3：收敛到单一函数）
+    _apply_runtime_tuning(payload.get("config", {}))
+    config = payload.get("config", {})
+    # U6：新批次重置面板进度计数器
+    _RUN_STATS["success"] = 0
+    _RUN_STATS["failed"] = 0
+
     file_path = payload.get("file_path", "")
     workspace = payload.get("workspace", ".")
+    _set_state_dir(workspace)
+    try:
+        _view_sync_from_run(config, workspace)
+    except Exception:
+        pass
     incremental = config.get("incremental", True)
     dry_run = config.get("dry_run", False)
 
@@ -1110,12 +1273,11 @@ def _seed(payload: dict) -> dict:
 
     safe_input = _resolve_workspace_path(workspace, file_path)
 
-    # 增量模式：读取已下载列表
+    # 增量模式：读取已下载列表（SDK 优先，独立运行时读 workspace 文件）
     done_dois: set[str] = set()
     if incremental:
         try:
-            import omnicrawler_sdk
-            result = omnicrawler_sdk.call("state.get", {"key": _done_key(config)})
+            result = _state_get(_done_key(config))
             if result and result.get("value"):
                 for item in json.loads(result["value"]):
                     if isinstance(item, dict) and item.get("doi"):
@@ -1128,11 +1290,13 @@ def _seed(payload: dict) -> dict:
     # 解析输入文件（分块，避免大文件 OOM）
     papers: list[dict[str, Any]] = []
     seen_rows = 0
+    no_doi_rows = 0  # U3：无 DOI 的行显式计数，进 meta + warning（保证对账闭环）
     for chunk in _parse_input_file_chunked(str(safe_input)):
         for row in chunk:
             seen_rows += 1
             doi = _extract_doi(row)
             if not doi:
+                no_doi_rows += 1
                 continue
             doi_lower = doi.lower()
             if doi_lower in done_dois:
@@ -1187,6 +1351,14 @@ def _seed(payload: dict) -> dict:
         publisher = r["meta"]["paper"]["publisher"]
         r["meta"]["paper"]["is_oa"] = _is_known_oa(publisher, issn_by_doi.get(doi, ""), oa_status.get(doi, False))
 
+    # U2：Level≥2 未填 unpaywall_email 时显式提示（否则 Unpaywall 整层被跳过且用户无感知）
+    if config.get("level", 1) >= 2 and not config.get("unpaywall_email"):
+        warnings.append("未配置 unpaywall_email，Layer 2 的 Unpaywall OA 副本探测被跳过；"
+                        "填写邮箱可显著提升 OA 论文检出率")
+    # U3：无 DOI 行显式计数入 meta，保证对账闭环
+    if no_doi_rows:
+        warnings.append(f"{no_doi_rows} 行缺少 DOI，已跳过（无法定位文献）")
+
     # Dry-run 模式：仅生成计划，不下载
     if dry_run:
         plan = [{
@@ -1198,7 +1370,8 @@ def _seed(payload: dict) -> dict:
         _log("dry_run_plan", total=len(plan))
         return {
             "requests": [],
-            "meta": {"total_rows": seen_rows, "total_papers": len(requests), "oa_precheck": sum(1 for v in oa_status.values() if v), "dry_run": True, "plan": plan},
+            "meta": {"total_rows": seen_rows, "total_papers": len(requests), "no_doi_rows": no_doi_rows,
+                     "oa_precheck": sum(1 for v in oa_status.values() if v), "dry_run": True, "plan": plan},
             "errors": [], "warnings": warnings,
         }
 
@@ -1211,7 +1384,8 @@ def _seed(payload: dict) -> dict:
 
     return {
         "requests": requests,
-        "meta": {"total_rows": seen_rows, "total_papers": len(requests), "oa_precheck": sum(1 for v in oa_status.values() if v)},
+        "meta": {"total_rows": seen_rows, "total_papers": len(requests), "no_doi_rows": no_doi_rows,
+                 "oa_precheck": sum(1 for v in oa_status.values() if v)},
         "errors": [], "warnings": warnings,
     }
 
@@ -1239,7 +1413,7 @@ def _is_known_oa(publisher: str, issn: str, openalex_flag: bool = False) -> bool
         return True
     if issn and issn in _OA_JOURNALS:
         return True
-    if publisher in ("mdpi", "arxiv"):
+    if publisher in ("mdpi", "plos", "bmc", "arxiv"):
         return True
     return False
 
@@ -1281,7 +1455,14 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
         try:
             resp = httpx.get(f"https://api.unpaywall.org/v2/{doi}", params={"email": email}, timeout=_API_PROBE_TIMEOUT)
             if resp.status_code == 200:
-                loc = resp.json().get("best_oa_location") or {}
+                data = resp.json()
+                # v0.4.0 镜像优先：仓储副本（arXiv/PMC/机构库等）零反爬、httpx 直连必过，
+                # 显著优于出版商 endpoint（常见 bot_blocked）。出版商链接仅作后备。
+                locs = [loc for loc in (data.get("oa_locations") or []) if isinstance(loc, dict)]
+                for loc in locs:
+                    if loc.get("host_type") == "repository" and loc.get("url_for_pdf"):
+                        return loc.get("url_for_pdf")
+                loc = data.get("best_oa_location") or {}
                 return loc.get("url_for_pdf")
         except Exception:
             pass
@@ -1293,7 +1474,14 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
         try:
             resp = httpx.get(f"https://api.openalex.org/works/doi:{doi}", timeout=_API_PROBE_TIMEOUT)
             if resp.status_code == 200:
-                return resp.json().get("open_access", {}).get("oa_url")
+                data = resp.json()
+                # v0.6.3 镜像优先（与 Unpaywall 同策略）：best_oa_location.host_type ==
+                # repository 的副本零反爬，优先于出版商 endpoint
+                locs = [loc for loc in (data.get("locations") or []) if isinstance(loc, dict)]
+                for loc in locs:
+                    if loc.get("source", {}).get("host_type") == "repository" and loc.get("pdf_url"):
+                        return loc.get("pdf_url")
+                return data.get("open_access", {}).get("oa_url")
         except Exception:
             pass
         return None
@@ -1329,8 +1517,7 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
 # ---------------------------------------------------------------------------
 def _get_cached_cookie(config: dict) -> list[dict] | None:
     try:
-        import omnicrawler_sdk
-        result = omnicrawler_sdk.call("state.get", {"key": _cookie_key(config)})
+        result = _state_get(_cookie_key(config))
         if result and result.get("value"):
             cookies = json.loads(result["value"])
             now = time.time()
@@ -1338,20 +1525,21 @@ def _get_cached_cookie(config: dict) -> list[dict] | None:
                 exp = c.get("expires", -1)
                 if exp > 0 and exp < now: return None
             return cookies
-    except Exception: pass
+    except Exception as e:
+        _log("swallowed_exception", level=logging.DEBUG, where="cookie_get", error=str(e))
     return None
 
 def _save_cookie(config: dict, cookies: list[dict]) -> None:
     try:
-        import omnicrawler_sdk
-        omnicrawler_sdk.call("state.set", {"key": _cookie_key(config), "value": json.dumps(cookies)})
-    except Exception: pass
+        _state_set(_cookie_key(config), json.dumps(cookies))
+    except Exception as e:
+        _log("swallowed_exception", level=logging.DEBUG, where="cookie_set", error=str(e))
 
 def _invalidate_cookie(config: dict) -> None:
     try:
-        import omnicrawler_sdk
-        omnicrawler_sdk.call("state.delete", {"key": _cookie_key(config)})
-    except Exception: pass
+        _state_delete(_cookie_key(config))
+    except Exception as e:
+        _log("swallowed_exception", level=logging.DEBUG, where="cookie_delete", error=str(e))
 
 def _login_and_capture_cookie(config: dict) -> list[dict] | None:
     inst = config.get("institution", {})
@@ -1359,38 +1547,41 @@ def _login_and_capture_cookie(config: dict) -> list[dict] | None:
     if not login_url: return None
     proxy_url = _get_next_proxy(config)
     try:
+        from urllib.parse import urlparse
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, proxy={"server": proxy_url} if proxy_url else None)
             context = browser.new_context()
             page = context.new_page()
             page.goto(login_url)
-            page.wait_for_url("**/*", timeout=120000)
-            _solve_captcha_if_present(page)
+            # v0.4.0 修复：旧实现 wait_for_url("**/*") 在 goto 完成瞬间就匹配成功，
+            # 根本没等用户完成登录就把（很可能未登录的）Cookie 存走了。
+            # 现在轮询等待页面**离开登录域**（SSO 成功后必然跳到别的域），最多 120s，
+            # 超时则按现状捕获（宁可重登也不阻塞流程）。
+            try:
+                login_host = urlparse(login_url).netloc
+                deadline = time.time() + 120
+                print("[academic-paper-downloader] 请在弹出的浏览器窗口完成登录…", flush=True)
+                while time.time() < deadline:
+                    cur_host = ""
+                    try:
+                        cur_host = urlparse(page.url).netloc
+                    except Exception:
+                        pass
+                    if cur_host and cur_host != login_host:
+                        break
+                    page.wait_for_timeout(1000)
+            except Exception:
+                pass
             cookies = context.cookies()
             browser.close()
             if cookies:
                 _save_cookie(config, cookies)
                 return cookies
-    except Exception: pass
+    except Exception as e:
+        _log("swallowed_exception", level=logging.DEBUG, where="login_window", error=str(e))
     return None
 
-def _solve_captcha_if_present(page: Any) -> bool:
-    """探测验证码（仅上报；OCR 由宿主能力代理解析，subprocess 不 import 宿主核心）。"""
-    try:
-        captcha_selectors = [
-            "img[id*='captcha']", "img[class*='captcha']",
-            "iframe[src*='recaptcha']", "iframe[src*='hcaptcha']",
-            "#captcha-img", ".captcha-image"
-        ]
-        for sel in captcha_selectors:
-            el = page.query_selector(sel)
-            if el:
-                _log("captcha_detected", selector=sel)
-                return False
-        return False
-    except Exception:
-        return False
 
 # ---------------------------------------------------------------------------
 # 代理池管理
@@ -1400,12 +1591,11 @@ def _get_next_proxy(config: dict) -> str | None:
     if not proxy_list:
         return config.get("institution", {}).get("proxy_url")
     try:
-        import omnicrawler_sdk
         key = f"apd_proxy_idx_{hashlib.md5(str(config).encode()).hexdigest()[:8]}"
-        result = omnicrawler_sdk.call("state.get", {"key": key})
+        result = _state_get(key)
         idx = int(result.get("value", "0")) if result else 0
         proxy = _PROXY_HEALTH.get_best_proxy(proxy_list) or proxy_list[idx % len(proxy_list)]
-        omnicrawler_sdk.call("state.set", {"key": key, "value": str((idx + 1) % len(proxy_list))})
+        _state_set(key, str((idx + 1) % len(proxy_list)))
         return proxy
     except Exception:
         return proxy_list[0] if proxy_list else None
@@ -1416,7 +1606,10 @@ def _get_next_proxy(config: dict) -> str | None:
 def _build_headers(publisher: str) -> dict:
     cfg = _PUBLISHERS.get(publisher, {})
     return {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        # v0.6.6：UA 跟随时代（2024 年初的 Chrome/124 在 2026 年是 WAF 的
+        # 直接红旗——UA 新旧是反爬打分项）；真浏览器通道用原生 UA，本常量
+        # 只服务 httpx 直连通道，保持与主流真浏览器一致。
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
         "Accept": "application/pdf,*/*;q=0.8",
         "Referer": cfg.get("home", ""),
         "Accept-Language": "en;q=0.9,zh-CN;q=0.8",
@@ -1427,21 +1620,35 @@ class _PdfTooLarge(Exception):
 
 # 共享 HTTP 客户端（连接池复用，线程安全）
 _HTTP_CLIENT: httpx.Client | None = None
+_HTTP_CLIENT_PROXY: str = ""
 _HTTP_CLIENT_LOCK = threading.Lock()
 
 
 def _get_http_client() -> httpx.Client:
-    global _HTTP_CLIENT
+    """代理感知的 httpx 客户端：institution.proxy_url 变化时重建连接池（v0.3.3）。
+
+    之前代理只传给浏览器通道，HTTP 层完全无视 proxy_url —— 用户校外填了
+    机构代理后 HTTP 层依然直连失败。现在按"当前代理"缓存客户端，代理切换
+    （如补填代理重试）自动重建。
+    """
+    global _HTTP_CLIENT, _HTTP_CLIENT_PROXY
     config = _get_download_config()
+    proxy = ""
+    try:
+        proxy = _get_next_proxy(config) or ""
+    except Exception:
+        proxy = ""
     with _HTTP_CLIENT_LOCK:
-        if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
+        if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed or _HTTP_CLIENT_PROXY != proxy:
             max_conn = int(_get_config_value(config, "http_pool_max_connections", 20))
             max_keepalive = int(_get_config_value(config, "http_pool_max_keepalive", 10))
             _HTTP_CLIENT = httpx.Client(
                 timeout=60.0,
                 limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_keepalive),
                 follow_redirects=True,
+                proxy=proxy or None,
             )
+            _HTTP_CLIENT_PROXY = proxy
         return _HTTP_CLIENT
 
 
@@ -1594,7 +1801,8 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
     if not _validate_pdf(out_path):
         _log("pdf_validation_failed", doi=paper.get("doi"), path=str(out_path))
         try: out_path.unlink()
-        except Exception: pass
+        except Exception as e:
+            _log("swallowed_exception", level=logging.DEBUG, where="pdf_unlink_invalid", error=str(e))
         return None
 
     # 下载后重命名（用元数据修正，命中时复用已缓存的解析结果）
@@ -1602,20 +1810,36 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
 
     meta = _extract_pdf_meta(out_path)
 
-    # DOI 交叉核对：PDF 首页提取到的 DOI 与请求不一致 → 出版商发错文件，拒绝并清理
+    # DOI 交叉核对（**强校验**，issue #22 §1）：
+    #   - 请求了 DOI 却**提不出** DOI ⇒ 无法证明这就是目标论文（反爬挑战页/登录页/文章落地页
+    #     都提不到 DOI）。旧实现写成 `if ext_doi and req_doi and ...` ⇒ 提不到就**直接放行**，
+    #     于是 Cloudflare 验证页被当成成功论文计入报告；
+    #   - 提取到但与请求不一致 ⇒ 出版商发错文件，拒绝并清理。
     ext_doi = (meta.get("extracted_doi") or "").strip().lower().rstrip(".")
     req_doi = (paper.get("doi") or "").strip().lower().rstrip(".")
+    verified = True
     if ext_doi and req_doi and ext_doi != req_doi:
+        # v0.6.3 实机修正：mismatch 不再删文件——实机发现 MDPI 下载到的 PDF 很可能
+        # 是正确的（DOI 提取在排版上抽错），删除即丢掉"过了人机验证才拿到"的文件。
+        # 处理：保留并标记 UNVERIFIED（不计入成功，用户可人工确认）。
         _log("pdf_doi_mismatch", doi=req_doi, extracted=ext_doi, path=str(out_path))
-        try: out_path.unlink()
-        except Exception: pass
-        return None
+        verified = False
+    if req_doi and not ext_doi:
+        # ★ 提不出 DOI **不等于**文件是错的（arXiv/扫描版 PDF 本就提不出，见既有用例
+        #   `test_no_extracted_doi_accepted` 的理由），但也**绝不能**当作成功 ——
+        #   反爬挑战页/登录页/文章落地页同样提不出 DOI，那正是"假成功"的来源（issue #22 §1）。
+        #   取向：**保留文件、标记未核验、不计入成功** —— 两边的坑都避开。
+        verified = False
+        _log("pdf_doi_unverified", doi=req_doi, path=str(out_path))
 
     return {
         "doi": paper.get("doi", ""), "title": title, "authors": paper.get("authors", ""),
         "year": year, "journal": paper.get("journal", ""), "publisher": paper.get("publisher", ""),
         "pdf_url": "", "filename": out_path.name, "local_path": str(out_path.relative_to(workspace)),
         "download_source": source, "file_size": file_size, "pdf_meta": meta,
+        # 是否已核验为"请求的那篇"（DOI 交叉核对通过）。未核验仍保留文件，但不计入成功。
+        "verified": verified,
+        "verification": "doi_matched" if verified else "doi_not_found_in_pdf",
     }
 
 # 全局并发控制器（懒初始化）
@@ -1668,6 +1892,7 @@ def _process(payload: dict) -> dict:
 
 def _process_download(paper: dict, config: dict, workspace: Path, progress: dict) -> dict:
     """实际下载流程（在并发配额内执行）。"""
+    _set_state_dir(workspace)
     doi = paper.get("doi", "")
     publisher = paper.get("publisher", "unknown")
     is_oa = paper.get("is_oa", False)
@@ -1743,33 +1968,96 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
         _log("layer_failed", level=logging.DEBUG, doi=doi, layer=name, duration_ms=int((time.time() - t0) * 1000))
         return False, local_error
 
-    # --- Layer 1 ---
-    if robots_allowed:
-        ok, error_class = _try_layer("oa_direct", _try_oa_direct, doi, publisher, is_oa)
-    else:
-        ok, error_class = False, "robots_disallow"
-    # --- Layer 2 ---
-    if not ok:
-        ok, error_class = _try_layer("api", _try_api_probe, doi, config)
-    # --- Layer 3 ---
-    if not ok and config.get("level", 1) >= 3 and (cookies_raw or campus_direct):
-        ok, http_error = _try_layer("institutional_http", _http_download_with_cookie, doi, publisher, cookies, config)
-        error_class = http_error
+    # --- 通道计划（v0.4.0/v0.5.0→D6 数据驱动编排）---
+    # 顺序 = 成本升序（权限×通道），每个通道带运行时门控；
+    # 新增通道只需在 plan 里加一项，不改编排逻辑。
+    # U5：域级通道画像——出版商域刚发生 bot_blocked 时，跳过该域的 http 通道直接升级。
+    domain = _publisher_domain(publisher)
+    profile_skip_http = _domain_http_blocked(domain)
+    ctx: dict = {"ok": False, "error_class": "unknown", "saw_mismatch": False,
+                 "browser_tried": False, "http_failed": False, "http_error": None}
+    # 域画像本身就是通道不匹配证据：跳过 http 通道时必须同步建立升级信号，
+    # 否则后续所有通道都失败后升级通道不会触发。
+    if profile_skip_http:
+        ctx["saw_mismatch"] = True
+
+    def _mark(ok: bool, ec: str, browser: bool = False) -> None:
+        ctx["ok"] = bool(ok)
+        if ok:
+            ctx["error_class"] = "ok"
+        else:
+            if ec in ("bot_blocked", "captcha"):
+                ctx["saw_mismatch"] = True
+            # 实机回归教训：浏览器静默失败（unknown）不得抹掉先前层更有信息量的
+            # 分类（如 institutional_http 的 auth_required），否则有头轮漏目标。
+            if ec != "unknown" or ctx["error_class"] == "unknown":
+                ctx["error_class"] = ec
+        if browser and not ok:
+            ctx["browser_tried"] = True
+
+    plan: list[tuple[str, object, tuple, Callable[[], bool]]] = [
+        ("oa_direct", _try_oa_direct, (doi, publisher, is_oa),
+         lambda: robots_allowed and not profile_skip_http),
+        ("api", _try_api_probe, (doi, config), lambda: True),
+        ("institutional_http", _http_download_with_cookie, (doi, publisher, cookies, config),
+         lambda: config.get("level", 1) >= 3 and not profile_skip_http),
+        ("institutional_browser", _browser_download, (doi, publisher, cookies_raw, config),
+         lambda: config.get("level", 1) >= 3 and ctx["http_failed"]),
+        # 通道升级（横切）：bot_blocked/captcha 是"通道不匹配"信号而非终态，
+        # OA 内容（L1/L2）同样允许走浏览器通道重试（无需任何凭证）；
+        # 信号按累计判定（saw_mismatch），后续层的失败类型不会抹掉先前层证据。
+        ("browser_channel_upgrade", _browser_download, (doi, publisher, cookies_raw, config),
+         lambda: not ctx["browser_tried"] and (ctx["saw_mismatch"] or ctx["error_class"] in ("bot_blocked", "captcha"))),
+    ]
+
+    ok = False
+    error_class = "unknown"
+    for name, fn, args, gate in plan:
+        if ctx["ok"] or not gate():
+            continue
+        if "browser" in name:
+            _BROWSER_OUTCOME.reason = "unknown"
+        ok, ec = _try_layer(name, fn, *args)
+        if "browser" in name and not ok and _browser_outcome() == "blocked":
+            # v0.6.3：浏览器层证据传导——挑战页 = 需要人机验证 = bot_blocked，
+            # 否则该信号被浏览器静默失败抹掉，有头轮永远抓不到目标
+            ec = "bot_blocked"
+        if name == "institutional_http" and not ok:
+            ctx["http_failed"] = True
+            ctx["http_error"] = ec
+        _mark(ok, ec, browser=("browser" in name))
+
+    # 认证失效 → 重新登录后重试一次（仅此前已有 Cookie 时才触发）
+    if not ctx["ok"] and ctx["http_error"] == "auth_required" and cookies and config.get("level", 1) >= 3:
+        _invalidate_cookie(config)
+        _log("relogin_attempt", doi=doi, reason="auth_required")
+        new_cookies = _login_and_capture_cookie(config)
+        if new_cookies:
+            cookies_raw = new_cookies
+            cookies = {c["name"]: c["value"] for c in new_cookies}
+            ok, error_class = _try_layer("institutional_http_retry", _http_download_with_cookie, doi, publisher, cookies, config)
+            if not ok:
+                ok, error_class = _try_layer("institutional_browser_retry", _browser_download, doi, publisher, cookies_raw, config)
+        ctx["ok"] = bool(ok)
         if not ok:
-            ok, browser_error = _try_layer("institutional_browser", _browser_download, doi, publisher, cookies_raw, config)
-            if browser_error != "unknown":
-                error_class = browser_error
-            # 认证失效 → 重新登录后重试一次（仅此前已有 Cookie 时才触发）
-            if not ok and http_error == "auth_required" and cookies:
-                _invalidate_cookie(config)
-                _log("relogin_attempt", doi=doi, reason=http_error)
-                new_cookies = _login_and_capture_cookie(config)
-                if new_cookies:
-                    cookies_raw = new_cookies
-                    cookies = {c["name"]: c["value"] for c in new_cookies}
-                    ok, error_class = _try_layer("institutional_http_retry", _http_download_with_cookie, doi, publisher, cookies, config)
-                    if not ok:
-                        ok, error_class = _try_layer("institutional_browser_retry", _browser_download, doi, publisher, cookies_raw, config)
+            ctx["error_class"] = error_class
+    error_class = ctx["error_class"] if not ctx["ok"] else "ok"
+    ok = ctx["ok"]
+
+    # U5：把通道不匹配证据写入域画像，同域后续论文跳过 http 通道直连升级
+    if domain and (ctx["saw_mismatch"] or (not ok and error_class in ("bot_blocked", "captcha"))):
+        _profile_channel_mismatch(domain)
+    elif domain and ok and layer_used in ("institutional_http", "oa_direct"):
+        _profile_channel_clear(domain)
+
+    # D11：未知出版商全层失败时显式归类（区别于"网络抖动"类可重试失败）
+    if not ok and error_class in ("unknown",) and not _PUBLISHERS.get(publisher):
+        error_class = "unknown_publisher"
+    # v0.6.3：OA 内容 + auth_required → bot_blocked（OA 不该要权限，403 即反爬
+    # 而非订阅墙；实机回归：IOP OA 期刊 J.Phys.Commun/MLST/NJP 全被误分类）。
+    # 前提是浏览器通道已真实尝试过（browser_tried），避免把未尝试误判为反爬。
+    if not ok and error_class == "auth_required" and is_oa and ctx.get("browser_tried"):
+        error_class = "bot_blocked"
 
     duration_ms = int((time.time() - start_time) * 1000)
     _log("paper_finished", doi=doi, layer=layer_used, ok=bool(content), duration_ms=duration_ms,
@@ -1782,6 +2070,14 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
     speed = done / elapsed_sec if elapsed_sec > 0 else 0
     eta = (total - done) / speed if speed > 0 else 0
 
+    # U6：面板进度推送（每篇一次，兼任 drive_loop 会话保活——宿主每读到一行输出
+    # 重置会话超时，超过 ~30s 无输出会话会被回收）
+    if content:
+        _RUN_STATS["success"] += 1
+    else:
+        _RUN_STATS["failed"] += 1
+    _report_view_progress(done, total, doi, eta, _RUN_STATS["success"], _RUN_STATS["failed"])
+
     if content:
         record = _save_pdf(paper, content, workspace, layer_used)
         if record:
@@ -1792,11 +2088,18 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
                 "progress": {"done": done, "total": total, "current_doi": doi,
                              "eta_seconds": round(eta), "speed_papers_per_min": round(speed * 60, 2)},
             }
+        # 实机回归发现：通道成功（error_class=ok）但 _save_pdf 校验失败（假成功防护）
+        # 时，失败记录会带着 "ok" 分类落盘——显式改判为 pdf_invalid。
+        if error_class == "ok":
+            error_class = "pdf_invalid"
+            layer_used = layer_used or "unknown"
 
-    _mark_failed(config, doi, layer_used, error_class)
+    _mark_failed(config, doi, layer_used, error_class, title=paper.get("title", ""),
+                 first_author=paper.get("first_author", ""), year=str(paper.get("year", "")))
     return {
         "records": [],
         "errors": [{"doi": doi, "title": paper.get("title", ""), "reason": "all_layers_failed",
+                    "error_reason": _failure_reason(error_class),
                     "last_layer": layer_used, "error_class": error_class}],
         "progress": {"done": done, "total": total, "current_doi": doi,
                      "eta_seconds": round(eta), "speed_papers_per_min": round(speed * 60, 2)},
@@ -1805,14 +2108,13 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
 def _mark_done(config: dict, doi: str, record: dict | None = None) -> None:
     """记录成功论文：完整记录存 per-DOI 键（O(1)），done 列表只存 DOI 并限量。"""
     try:
-        import omnicrawler_sdk
         doi_lower = str(doi).lower()
         rec = record if record else {"doi": doi_lower}
         # per-DOI 完整记录，一次写入不重写全表
-        omnicrawler_sdk.call("state.set", {"key": _record_key(config, doi_lower), "value": json.dumps(rec)})
+        _state_set(_record_key(config, doi_lower), json.dumps(rec))
         # done 列表：仅 DOI 字符串，限量防无限增长
         key = _done_key(config)
-        result = omnicrawler_sdk.call("state.get", {"key": key})
+        result = _state_get(key)
         done = json.loads(result["value"]) if result and result.get("value") else []
         if not isinstance(done, list):
             done = []
@@ -1820,7 +2122,7 @@ def _mark_done(config: dict, doi: str, record: dict | None = None) -> None:
             (isinstance(d, dict) and str(d.get("doi", "")).lower() == doi_lower)
             or (isinstance(d, str) and d.lower() == doi_lower))]
         done.append(doi_lower)
-        omnicrawler_sdk.call("state.set", {"key": key, "value": json.dumps(done[-_DONE_DOI_CAP:])})
+        _state_set(key, json.dumps(done[-_DONE_DOI_CAP:]))
     except Exception:
         pass
 
@@ -1829,8 +2131,7 @@ def _load_done_records(config: dict) -> tuple[list, list]:
     records: list = []
     done_list: list = []
     try:
-        import omnicrawler_sdk
-        result = omnicrawler_sdk.call("state.get", {"key": _done_key(config)})
+        result = _state_get(_done_key(config))
         if result and result.get("value"):
             done_list = json.loads(result["value"])
         if not isinstance(done_list, list):
@@ -1840,7 +2141,7 @@ def _load_done_records(config: dict) -> tuple[list, list]:
                 records.append(item)
                 continue
             if isinstance(item, str):
-                rec_result = omnicrawler_sdk.call("state.get", {"key": _record_key(config, item)})
+                rec_result = _state_get(_record_key(config, item))
                 if rec_result and rec_result.get("value"):
                     try:
                         rec = json.loads(rec_result["value"])
@@ -1853,15 +2154,50 @@ def _load_done_records(config: dict) -> tuple[list, list]:
         return [], []
     return records, done_list
 
-def _mark_failed(config: dict, doi: str, layer: str, error_class: str = "unknown") -> None:
+_RETRYABLE_CLASSES = {"network", "rate_limit", "server_error"}
+
+def _mark_failed(config: dict, doi: str, layer: str, error_class: str = "unknown",
+                 title: str = "", first_author: str = "", year: str = "") -> None:
+    """记录失败文献：结构化字段（doi/layer/error_class）+ 人类可读 reason + 可重试标记。
+
+    v0.4.0+：冗余 first_author/year（U7）——输入文件被移动后重试成功的 PDF 仍能正确命名。
+    """
     try:
-        import omnicrawler_sdk
         key = _failed_key(config)
-        result = omnicrawler_sdk.call("state.get", {"key": key})
+        result = _state_get(key)
         failed = json.loads(result["value"]) if result and result.get("value") else []
-        failed.append({"doi": doi, "layer": layer, "error_class": error_class, "time": time.time()})
-        omnicrawler_sdk.call("state.set", {"key": key, "value": json.dumps(failed[-100:])})
-    except Exception: pass
+        failed.append({
+            "doi": doi,
+            "title": title or "",
+            "first_author": first_author or "",
+            "year": year or "",
+            "layer": layer,
+            "error_class": error_class,
+            "reason": _failure_reason(error_class),
+            "retryable": error_class in _RETRYABLE_CLASSES,
+            "time": time.time(),
+        })
+        _state_set(key, json.dumps(failed[-100:]))
+    except Exception as e:
+        _log("swallowed_exception", level=logging.DEBUG, where="failed_state_write", error=str(e))
+
+_FAILURE_REASON_MAP: dict[str, str] = {
+    "auth_required": "需要订阅权限或登录态（当前网络无权限，或 Cookie 已失效）",
+    "bot_blocked": "出版商反爬拦截（响应非 PDF 内容）",
+    "pdf_invalid": "PDF 落盘校验失败（假成功防护拦截，文件未计入成功）",
+    "rate_limit": "触发出版商限流（HTTP 429）",
+    "server_error": "出版商服务器错误（HTTP 5xx）",
+    "network": "网络不可达或请求超时",
+    "captcha": "下载过程遇到人机验证",
+    "robots_disallow": "robots.txt 禁止抓取该出版商 PDF 路径",
+    "unknown_publisher": "出版商未收录（无法构造下载链接）",
+    "internal_error": "插件内部异常",
+    "unknown": "未知错误",
+}
+
+def _failure_reason(error_class: str) -> str:
+    """error_class → 人类可读失败原因。"""
+    return _FAILURE_REASON_MAP.get(error_class, _FAILURE_REASON_MAP["unknown"])
 
 def _http_download_with_cookie(doi: str, publisher: str, cookies: dict, config: dict) -> str | None:
     cfg = _PUBLISHERS.get(publisher)
@@ -1934,44 +2270,193 @@ def _save_browser_download(dl) -> str | None:
         pass
     return None
 
+#: 反爬挑战 / 登录 / 拒绝页的文本特征 —— 假成功（issue #22 §1）的直接来源
+_BLOCK_PAGE_MARKERS = (
+    # 强特征：正文命中即可判拦截
+    "security verification",
+    "just a moment",
+    "checking your browser",
+    "captcha",
+    "are you a robot",
+    "verify you are human",
+    "access denied",
+    "enable javascript",
+    "cloudflare",
+)
+_LOGIN_PAGE_MARKERS = (
+    # v0.6.3 修复：这些词在**正常文章页页眉**里也大量出现（Sign in 链接），
+    # 正文匹配会造成大面积误判（实机回归：MDPI/IOP 文章页被误判为登录墙，
+    # 捕获逻辑在点下载按钮之前就放弃）。只在 title / URL 中匹配。
+    "sign in",
+    "log in",
+    "login",
+    "institutional login",
+)
+
+
+_CAPTCHA_WIDGET_SELECTORS = (
+    # v0.6.6：DOM 级验证组件检测（原 _solve_captcha_if_present 的探测部分）。
+    # 动因：验证页文本可能是中文/本地化文案（"请验证您是真人"），文本 marker
+    # 全 miss，而 iframe src 是稳定的英文特征——widget 检测有实打实的判定价值。
+    "iframe[src*='challenges.cloudflare.com']",   # Cloudflare Turnstile
+    "iframe[title*='Widget containing a Cloudflare']",
+    "iframe[src*='recaptcha']",                    # Google reCAPTCHA
+    "iframe[src*='hcaptcha']",                     # hCaptcha
+    "img[id*='captcha']", "img[class*='captcha']",
+    "#captcha-img", ".captcha-image",
+)
+
+
+def _captcha_widget_present(page) -> bool:
+    """页面是否存在验证码/人机验证组件（DOM 级探测，与语言无关）。"""
+    try:
+        for sel in _CAPTCHA_WIDGET_SELECTORS:
+            if page.query_selector(sel):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _page_block_reason(page) -> str | None:
+    """页面是否为反爬挑战/登录/拒绝页？命中即**不可**当成功（返回命中的特征短语）。"""
+    try:
+        title = (page.title() or "").casefold()
+        body = (page.inner_text("body") or "")[:4000].casefold()
+        url = (getattr(page, "url", "") or "").casefold()
+    except Exception:
+        return None
+    for marker in _BLOCK_PAGE_MARKERS:
+        if marker in title or marker in body:
+            return marker
+    for marker in _LOGIN_PAGE_MARKERS:
+        if marker in title or "/login" in url or "/signin" in url or "/sso" in url:
+            return marker
+    # v0.6.6：文本 marker 未命中时查 DOM 验证组件——验证页文案本地化（中文）
+    # 时文本特征会全 miss，iframe 特征与语言无关。**仅当正文极短**时才采信：
+    # 拦截页正文只有几十字符，而正常文章页即使页脚嵌了验证 widget（部分出版商
+    # 评论区有），正文也远超 300 字符——避免"文章页误判为挑战页"的回归。
+    if len(body.strip()) < 300 and _captcha_widget_present(page):
+        return "captcha"
+    return None
+
+
+def _looks_like_inline_pdf(page) -> bool:
+    """页面**本身**是不是 PDF 视图（而不是文章落地页/挑战页）。
+
+    只有这种页面才允许 ``page.pdf()`` 兜底：把落地页打印成 PDF 会产出"合法的 1 页 PDF"，
+    再被当成论文计入成功 —— 这正是本插件最严重的失败模式。
+    """
+    try:
+        url = (getattr(page, "url", "") or "").casefold()
+        # v0.6.3：IOP 的内联 PDF 以 /pdf 结尾（article/DOI/pdf），不含 ".pdf" 后缀
+        if url.endswith(".pdf") or ".pdf?" in url or ".pdf#" in url \
+           or url.endswith("/pdf") or "/pdf?" in url or "/pdf#" in url:
+            return True
+        for selector in (
+            "embed[type='application/pdf']",
+            "object[type='application/pdf']",
+            "embed[src*='.pdf']",
+            "object[src*='.pdf']",
+            "iframe[src*='.pdf']",
+            "iframe[src*='/pdf']",
+            "embed[src*='/pdf']",
+        ):
+            if page.query_selector(selector) is not None:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _browser_capture_pdf(context, page) -> str | None:
-    """在浏览器会话内下载 PDF：点击 → 捕获下载事件（同页或新标签页）。"""
-    selectors = [
-        "a[href*='pdf']",
-        "a[href*='download']",
-        "a.pdf-download",
-        "a[class*='pdf']",
-        "button[class*='pdf']",
-        "a[class*='download']",
-    ]
-    for sel in selectors:
+    """在浏览器会话内捕获 PDF。优先级（v0.6.3 重构）：
+
+    ① 页面内下载元素一键点击（selectors 单次扫描，命中即点，不再 6 个盲等）；
+    ② citation_pdf_url meta 直链导航（出版商自带的标准映射表，一次导航一次下载事件）；
+    ③ 内联 PDF 视图 → context.request 抓字节（有头可用；page.pdf() 仅无头兜底）。
+
+    ★ 两条 fail-closed 规则（issue #22 §1）：挑战/登录页直接放弃；
+      page.pdf() 只在页面本身就是 PDF 视图时允许。
+    """
+    block_reason = _page_block_reason(page)
+    if block_reason:
+        _log("browser_page_blocked", reason=block_reason, url=str(getattr(page, "url", "")))
+        return None
+
+    def _inline_bytes(target_url: str) -> str | None:
+        try:
+            resp = context.request.get(target_url)
+            body = resp.body() if resp is not None else None
+            if body and body[:5] == b"%PDF-" and len(body) > 1000:
+                tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                tmp.close()
+                Path(tmp.name).write_bytes(body)
+                return tmp.name
+        except Exception:
+            pass
+        return None
+
+    # ① citation_pdf_url meta：最快、最确定（一次导航触发下载事件；若内联渲染则抓字节）
+    try:
+        meta = page.query_selector("meta[name='citation_pdf_url']")
+        meta_url = (meta.get_attribute("content") or "").strip() if meta else ""
+        if meta_url:
+            _log("citation_pdf_url_found", url=meta_url)
+            try:
+                with page.expect_download(timeout=20000) as dl_info:
+                    try:
+                        page.goto(meta_url, wait_until="domcontentloaded", timeout=30000)
+                    except Exception:
+                        pass
+                saved = _save_browser_download(dl_info.value)
+                if saved:
+                    return saved
+            except Exception:
+                pass
+            if _looks_like_inline_pdf(page):
+                saved = _inline_bytes(str(getattr(page, "url", "") or meta_url))
+                if saved:
+                    return saved
+    except Exception:
+        pass
+
+    # ② 页面内下载元素：单次扫描，命中第一个候选就点（12s 下载 / 8s 新标签 + 12s）
+    for sel in ("a[href*='pdf']", "a[href*='download']", "a.pdf-download",
+                "a[class*='pdf']", "button[class*='pdf']", "a[class*='download']"):
         link = page.query_selector(sel)
         if not link:
             continue
-        # 同页触发下载
         try:
-            with page.expect_download(timeout=15000) as dl_info:
+            with page.expect_download(timeout=12000) as dl_info:
                 link.click()
             return _save_browser_download(dl_info.value)
         except Exception:
             pass
-        # 新标签页打开并触发下载
         try:
-            with context.expect_page(timeout=15000) as page_info:
+            with context.expect_page(timeout=8000) as page_info:
                 link.click()
             popup = page_info.value
             try:
-                popup.wait_for_load_state("domcontentloaded", timeout=20000)
-                with popup.expect_download(timeout=15000) as dl_info:
+                popup.wait_for_load_state("domcontentloaded", timeout=15000)
+                with popup.expect_download(timeout=12000) as dl_info:
                     popup.wait_for_timeout(500)
                 return _save_browser_download(dl_info.value)
             except Exception:
                 popup.close()
         except Exception:
             pass
-    # 兜底：内联渲染页面 → print to PDF
+        break  # 找到候选但点击失败：不再盲等其余 selectors
+
+    # ③ 内联 PDF 视图 → 抓字节（page.pdf() 仅无头兜底）
+    if not _looks_like_inline_pdf(page):
+        _log("browser_no_pdf_evidence", url=str(getattr(page, "url", "")))
+        return None
+    saved = _inline_bytes(str(getattr(page, "url", "") or ""))
+    if saved:
+        return saved
     try:
-        pdf_bytes = page.pdf()
+        pdf_bytes = page.pdf()  # 仅无头可用；有头窗口抛异常被吞掉
         if pdf_bytes and len(pdf_bytes) > 1000:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
             tmp.close()
@@ -1981,59 +2466,640 @@ def _browser_capture_pdf(context, page) -> str | None:
         pass
     return None
 
-def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dict) -> str | None:
-    """浏览器层：在真实浏览器会话内完成授权下载（校园 IP 直连 / 机构 Cookie）。"""
-    cfg = _PUBLISHERS.get(publisher)
-    if not cfg or not cfg.get("home"):
-        return None
-    home = cfg["home"]
+
+_HEADED_LOCK = threading.Lock()
+
+def _institution_headless(config: dict) -> bool:
+    """``institution.headless``（缺省 True：与既有行为一致）。"""
+    inst = config.get("institution") if isinstance(config, dict) else None
+    if isinstance(inst, dict) and "headless" in inst:
+        return bool(inst.get("headless"))
+    return True
+
+
+def _institution_visible_fallback(config: dict) -> bool:
+    """headless 被反爬挡下后，是否允许用**可见浏览器**重试一次。
+
+    v0.4.0：``defer_headed`` 开启时批处理内一律抑制弹窗——可见浏览器集中到
+    ``_deferred_headed_pass``（报告前的第二阶段）串行执行。
+    v0.4.0+：``defer_headed`` **默认开启**（两阶段是推荐形态），
+    显式传 ``defer_headed: false`` 恢复批内即时弹窗。
+    """
+    if isinstance(config, dict) and config.get("defer_headed", True):
+        return False
+    inst = config.get("institution") if isinstance(config, dict) else None
+    if isinstance(inst, dict) and "visible_fallback" in inst:
+        return bool(inst.get("visible_fallback"))
+    return True
+
+
+_BROWSER_OUTCOME = threading.local()  # 线程局部：最近一次浏览器尝试的失败原因
+_HEADED_COOKIES: list[dict] = []  # 有头/无头会话 Cookie 跨篇累积：每域只过一次验证
+
+def _merge_headed_cookies(new_cookies) -> None:
+    """浏览器会话 Cookie 并入累积池（同名同域覆盖）。"""
+    if not isinstance(new_cookies, list):
+        return
+    idx = {(c.get("name"), c.get("domain")): i for i, c in enumerate(_HEADED_COOKIES)}
+    for c in new_cookies:
+        if not isinstance(c, dict) or not c.get("name"):
+            continue
+        k = (c.get("name"), c.get("domain"))
+        if k in idx:
+            _HEADED_COOKIES[idx[k]] = c
+        else:
+            idx[k] = len(_HEADED_COOKIES)
+            _HEADED_COOKIES.append(c)
+
+def _browser_outcome() -> str:
+    return str(getattr(_BROWSER_OUTCOME, "reason", "unknown") or "unknown")
+
+# 无头指纹优化（v0.6.3）：隐藏 webdriver 等自动化特征，降低被反爬识别概率
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+window.chrome = window.chrome || { runtime: {} };
+"""
+
+def _browser_launch_chromium(p, *, headless: bool, proxy_url: str | None, config: dict):
+    """启动浏览器（v0.6.6）：优先**本机真浏览器**，回退链 ``chrome → msedge → 内置``。
+
+    动因（实机回归 2026-09-25）：ScienceDirect 的 Cloudflare Turnstile 在
+    Playwright 内置 Chromium 下**无限重置挑战**——点选后环境检测发现自动化
+    指纹（旧版 UA / CDP 痕迹）就重来一遍，人工永远点不过。真 Chrome/Edge
+    指纹干净（原生新版 UA + 原生插件栈），通过率显著更高。全部 channel 不可用
+    （本机既无 Chrome 也无 Edge）时回退 Playwright 内置 Chromium。
+    返回 ``(browser, used_real_browser)``。
+    """
+    proxy = {"server": proxy_url} if proxy_url else None
+    configured = str(config.get("browser_channel", "") or "").strip()
+    channels = [configured] if configured else ["chrome", "msedge"]
+    for channel in channels:
+        try:
+            return p.chromium.launch(headless=headless, proxy=proxy, channel=channel), True
+        except Exception as e:
+            _log("browser_channel_fallback", channel=channel, error=str(e)[:80])
+    return p.chromium.launch(headless=headless, proxy=proxy), False
+
+
+def _browser_attempt(
+    doi: str, publisher: str, home: str, cookies: list[dict], config: dict, *, headless: bool
+) -> str | None:
+    """一次浏览器尝试（同页/新标签页与「兜底必须有 PDF 证据」见 ``_browser_capture_pdf``）。
+
+    v0.6.3：失败原因写入线程局部 ``_BROWSER_OUTCOME.reason``
+    （blocked=挑战页需要人 / no_evidence=页面加载但无 PDF 证据 / navigation_failed=导航失败），
+    供编排层把"需要人"的失败升级为 bot_blocked → 触发有头轮。
+    """
     proxy_url = _get_next_proxy(config)
+    _BROWSER_OUTCOME.reason = "navigation_failed"
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy={"server": proxy_url} if proxy_url else None)
-            context = browser.new_context(user_agent=_build_headers(publisher)["User-Agent"], accept_downloads=True)
-            if cookies:
-                context.add_cookies(_normalize_cookies_for_browser(cookies, home))
+            browser, real_chrome = _browser_launch_chromium(
+                p, headless=headless, proxy_url=proxy_url, config=config)
+            ctx_kwargs = {"accept_downloads": True, "locale": "zh-CN", "timezone_id": "Asia/Shanghai"}
+            if not real_chrome:
+                # 仅内置 Chromium 需要自造 UA；真 Chrome 用**原生 UA**（自造旧版
+                # UA 本身就是 Turnstile 的自动化红旗，覆盖反而降低通过率）。
+                ctx_kwargs["user_agent"] = _build_headers(publisher)["User-Agent"]
+            context = browser.new_context(**ctx_kwargs)
+            context.add_init_script(_STEALTH_INIT_SCRIPT)
+            all_cookies = list(cookies or []) + list(_HEADED_COOKIES)
+            if all_cookies:
+                context.add_cookies(_normalize_cookies_for_browser(all_cookies, home))
             page = context.new_page()
-            page.goto(f"{home}/doi/{doi}", wait_until="domcontentloaded", timeout=30000)
+            # 统一走 doi.org：由解析器 301 到出版商的**实际**文章页。
+            # 旧实现写死 f"{home}/doi/{doi}"，对 Nature（/articles/<suffix>）、
+            # Elsevier（/science/article/pii/<pii>）等并不适用（issue #22 §3）。
+            page.goto(f"https://doi.org/{doi}", wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(1500)
-            _solve_captcha_if_present(page)
+            # v0.6.3：IOP/PerimeterX 类挑战需要 JS 执行后种 Cookie 才放行——轮询等挑战清除。
+            # 无头会被重定向到 validate.perfdrive.com 且无法通过（实测）→ 快速失败交有头轮；
+            # 有头会自动通过（诊断实测无需人工点击）。
+            challenge_deadline = time.time() + float(config.get("challenge_wait_timeout", 45))
+            while time.time() < challenge_deadline:
+                try:
+                    u = (page.url or "").lower()
+                    if "perfdrive" in u:
+                        _BROWSER_OUTCOME.reason = "blocked"
+                        break
+                    if _page_block_reason(page) is None:
+                        break
+                except Exception:
+                    pass
+                page.wait_for_timeout(1000)
+            if _page_block_reason(page):
+                _BROWSER_OUTCOME.reason = "blocked"
+            elif _BROWSER_OUTCOME.reason != "blocked":
+                _BROWSER_OUTCOME.reason = "pending"
+            if not headless and _BROWSER_OUTCOME.reason == "blocked":
+                # 有头 = 人在场：轮询等待用户通过挑战（挑战消失/页面跳离），
+                # 默认最长 180s（headed_solve_timeout 可配）。
+                try:
+                    solve_sec = int(config.get("headed_solve_timeout", 180))
+                    solve_deadline = time.time() + solve_sec
+                    print(f"[academic-paper-downloader] 检测到人机验证，请在弹出的窗口中完成"
+                          f"（{doi}，最长等待 {solve_sec} 秒）…", flush=True)
+                    while time.time() < solve_deadline:
+                        try:
+                            if not _page_block_reason(page):
+                                _BROWSER_OUTCOME.reason = "pending"
+                                break
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(1000)
+                    print("[academic-paper-downloader] 该篇处理完毕，继续…", flush=True)
+                except Exception:
+                    pass
             result = _browser_capture_pdf(context, page)
-            browser.close()
+            try:
+                _merge_headed_cookies(context.cookies())  # Cookie 跨篇累积：每域只过一次验证
+            except Exception:
+                pass
+            if result:
+                _BROWSER_OUTCOME.reason = "ok"
+            elif _BROWSER_OUTCOME.reason == "pending":
+                _BROWSER_OUTCOME.reason = "no_evidence"
             return result
     except Exception:
         return None
+    finally:
+        # v0.6.6：close 移入 finally——capture_pdf 抛异常时浏览器也必须显式关闭，
+        # 不再依赖 sync_playwright with 退出时的兜底清理（时机不受控）。
+        try:
+            browser.close()
+        except Exception:
+            pass
+
+
+#: v0.6.6 子进程运行体：import 插件本文件后调用 _browser_attempt，结果写 JSON。
+#: 插件市场打包硬性单文件（plugin.py）⇒ 子进程 ``import plugin`` 恰好加载同一份
+#: 代码，零逻辑复制；子进程内模块级状态全新初始化，天然隔离。
+_BROWSER_CHILD_CODE = (
+    "import sys, json, os\n"
+    "plugin_dir, payload_path, result_path = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+    "sys.path.insert(0, plugin_dir)\n"
+    "import plugin\n"
+    "payload = json.load(open(payload_path, encoding='utf-8'))\n"
+    "out, reason = None, 'child_exception'\n"
+    "try:\n"
+    "    out = plugin._browser_attempt(**payload)\n"
+    "    reason = getattr(plugin._BROWSER_OUTCOME, 'reason', None)\n"
+    "except Exception:\n"
+    "    pass\n"
+    "cookies = list(getattr(plugin, '_HEADED_COOKIES', []) or [])\n"
+    "with open(result_path, 'w', encoding='utf-8') as f:\n"
+    "    json.dump({'path': out, 'reason': reason, 'cookies': cookies}, f)\n"
+)
+
+
+def _kill_process_tree(proc) -> None:
+    """超时后杀掉子进程**及其浏览器进程树**（playwright: python→node→chrome）。"""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=10)
+        else:
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _run_browser_attempt_isolated(payload: dict, timeout: float) -> tuple[str | None, str | None]:
+    """浏览器尝试的**子进程隔离**执行（v0.6.6）。
+
+    线程版看门狗的根本缺陷：超时后无法终止正在运行的线程——Playwright 卡死时
+    线程与浏览器驱动进程持续累积（实测单篇挂 11.4h 的根源面）。子进程版超时
+    ``taskkill /T`` 整树击杀，僵尸归零。
+
+    返回 ``(pdf_path, outcome_reason)``；PDF 落系统临时目录，由调用方读字节后清理。
+    Cookie 由子进程回传，父进程合并进累积池（子进程内存随退出销毁）。
+    """
+    plugin_dir = str(Path(__file__).resolve().parent)
+    import tempfile
+    tmpdir = tempfile.mkdtemp(prefix="apd_browser_")
+    payload_path = os.path.join(tmpdir, "payload.json")
+    result_path = os.path.join(tmpdir, "result.json")
+    try:
+        with open(payload_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            kwargs["start_new_session"] = True
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _BROWSER_CHILD_CODE, plugin_dir, payload_path, result_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _log("browser_attempt_timeout", timeout=timeout, mode="process")
+            _kill_process_tree(proc)
+            return None, "timeout"
+        if proc.returncode != 0 or not os.path.exists(result_path):
+            return None, None  # 子进程崩溃：按普通失败处理（不误标 timeout）
+        with open(result_path, encoding="utf-8") as f:
+            out = json.load(f)
+        _merge_headed_cookies(out.get("cookies"))
+        return out.get("path"), out.get("reason")
+    except Exception:
+        return None, None
+    finally:
+        try:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dict) -> str | None:
+    """浏览器层：在真实浏览器会话内完成授权下载（校园 IP 直连 / 机构 Cookie）。
+
+    - URL 走 ``https://doi.org/<doi>``，不再假设各家都有 ``{home}/doi/{doi}`` 入口（#22 §3）；
+    - ``institution.headless`` 可配；headless 被反爬挡下时按 ``institution.visible_fallback``
+      用可见浏览器重试一次（#22 §4）——出版商对 headless 直接返回挑战页。
+    - v0.6.3：每次尝试带硬超时看门狗（无头 120s / 有头 headed_solve_timeout+300s），
+      防 Playwright 子线程偶发死锁拖死整个批处理。
+    - v0.6.5：预算跟随本段尝试的实际形态（headless=False 直入即有头预算）。
+    - v0.6.6：浏览器内核优先本机真 Chrome/Edge（回退链见 _browser_launch_chromium）。
+    """
+    cfg = _PUBLISHERS.get(publisher)
+    home = str((cfg or {}).get("home") or "")
+    if not home:
+        # 未知/未登记出版商（issue #22 §5）：仍走一次**通用路径** —— doi.org 解析到实际
+        # 文章页之后，由 ``_browser_capture_pdf`` 在页面上找 PDF 链接。
+        # 旧实现直接 return None ⇒ 这类 DOI 连一次尝试都没有（用户看到的是"直接放弃"）。
+        home = "https://doi.org"
+        _log("browser_generic_publisher", doi=doi, publisher=publisher)
+    headless = _institution_headless(config)
+    # v0.6.5：预算跟随本段尝试的实际形态——headless=False 传入时第一段就是有头
+    # （两阶段有头轮正是这么调用的），必须用有头预算；否则 120s 看门狗会在挑战
+    # 等待（180s）内把尝试砍掉，且 headless=False 又进不了下方 480s 重试分支。
+    if headless:
+        headless_timeout = float(config.get("browser_attempt_timeout", 120))
+    else:
+        headless_timeout = float(config.get("headed_solve_timeout", 180)) + 300.0
+    payload = {"doi": doi, "publisher": publisher, "home": home,
+               "cookies": list(cookies or []), "config": config, "headless": headless}
+    result, reason = _run_browser_attempt_isolated(payload, headless_timeout)
+    if reason:
+        _BROWSER_OUTCOME.reason = reason
+    if result is None and headless and _institution_visible_fallback(config):
+        # v0.4.0：可见浏览器全局串行——并发 3 时最多同时弹一个窗口，避免窗口轰炸
+        with _HEADED_LOCK:
+            if result is None:
+                _log("browser_visible_retry", doi=doi, publisher=publisher)
+                headed_timeout = float(config.get("headed_solve_timeout", 180)) + 300.0
+                result, reason = _run_browser_attempt_isolated(
+                    {**payload, "headless": False}, headed_timeout)
+                if reason:
+                    _BROWSER_OUTCOME.reason = reason
+    return result
 
 # ---------------------------------------------------------------------------
 # Hook: after_run — 生成报告
 # ---------------------------------------------------------------------------
+def _reindex_rows(file_path: str) -> dict[str, dict]:
+    """把输入文件重建为 {doi_lower: 行字典}，供失败重试时还原论文元数据。"""
+    out: dict[str, dict] = {}
+    try:
+        for chunk in _parse_input_file_chunked(str(file_path)):
+            for row in chunk:
+                doi = _extract_doi(row)
+                if doi:
+                    out[doi.lower()] = row
+    except Exception:
+        pass
+    return out
+
+
+def _paper_from_failed(f: dict, rows_by_doi: dict) -> dict:
+    """失败记录 → 可重试的 paper 结构（元数据优先从输入文件回查，其次失败记录冗余字段）。"""
+    doi = str(f.get("doi", "")).strip().lower()
+    row = rows_by_doi.get(doi, {})
+    authors = str(row.get("Author Full Names") or row.get("Authors") or f.get("authors") or "")
+    first_author = (authors.split(";")[0].split(",")[0].strip()
+                    if authors else str(f.get("first_author") or "Unknown"))
+    year = str(row.get("Publication Year") or row.get("Year") or f.get("year") or "")
+    return {
+        "doi": doi,
+        "title": row.get("Article Title") or row.get("Title") or f.get("title", ""),
+        "first_author": first_author,
+        "year": year,
+        "publisher": _resolve_publisher(doi),
+        "authors": authors,
+        "is_oa": False,
+    }
+
+
+def _rerun_failed(config: dict, workspace: Path, results: list, failed: list,
+                  file_path: str, runner: Callable[[dict], dict], label: str) -> tuple[list, list]:
+    """D4 统一失败重试执行器：重建元数据 → 逐篇 runner → 标准化失败记录。
+
+    runner(paper) 返回 processor 形状 {"records": [...], "errors": [...]}。
+    所有重试入口（机构代理补填 / 有头第二阶段 / 未来新通道）共用本循环，
+    避免"改一处忘一处"的漂移（今日 done 清单覆盖事故的同类根源）。
+    返回 (new_results, new_failed)——调用方用 _merge_retry 合并。
+    """
+    rows_by_doi = _reindex_rows(file_path) if file_path else {}
+    done_dois = {str(r.get("doi", "")).lower() for r in results if isinstance(r, dict)}
+    papers = [_paper_from_failed(f, rows_by_doi) for f in failed
+              if isinstance(f, dict) and str(f.get("doi", "")).strip().lower() not in done_dois]
+    if not papers:
+        return [], []
+    print(f"[academic-paper-downloader] {label}：重试 {len(papers)} 篇失败文献 ...", flush=True)
+    new_results: list = []
+    new_failed: list = []
+    for i, paper in enumerate(papers, 1):
+        res = runner(paper)
+        ok = bool(res.get("records"))
+        new_results.extend(res.get("records", []))
+        for e in res.get("errors", []):
+            ec = e.get("error_class", "unknown")
+            new_failed.append({
+                "doi": e.get("doi", paper["doi"]), "title": e.get("title", paper.get("title", "")),
+                "first_author": paper.get("first_author", ""), "year": str(paper.get("year", "")),
+                "layer": e.get("last_layer", "none"), "error_class": ec,
+                "reason": e.get("error_reason") or _failure_reason(ec),
+                "retryable": ec in _RETRYABLE_CLASSES,
+                "time": time.time(),
+            })
+        print(f"  [{i}/{len(papers)}] {paper['doi']} {'成功' if ok else '失败'}", flush=True)
+    print(f"  {label}结束：成功 {len(new_results)} / 仍失败 {len(new_failed)}", flush=True)
+    return new_results, new_failed
+
+
+def _merge_retry(results: list, failed: list, new_results: list, new_failed: list) -> tuple[list, list]:
+    """重试结果合并：成功者并入 results 并从失败列表剔除；仍失败者以最新记录覆盖。"""
+    ok_dois = {str(r.get("doi", "")).lower() for r in new_results if isinstance(r, dict)}
+    newfail_by_doi = {str(f.get("doi", "")).lower(): f for f in new_failed}
+    failed2 = [newfail_by_doi.get(str(f.get("doi", "")).lower(), f)
+               for f in failed if str(f.get("doi", "")).lower() not in ok_dois]
+    return results + new_results, failed2
+
+
+def _prompt_proxy_and_retry(config: dict, workspace: Path, results: list,
+                            failed: list, file_path: str = "") -> tuple[list, list, int]:
+    """最终报告之前：默认网络失败时给用户补填 VPN/机构代理并自动重试（v0.3.3）。
+
+    触发条件（全部满足才交互）：retry_prompt_proxy 开启 ∧ 有失败文献 ∧ 尚未配置代理
+    （含面板选择的代理）。非交互环境（stdin 关闭/EOF/用户 Ctrl-C）→ 静默跳过，
+    流程绝不因此中断。回车空输入 = 明确跳过。返回 (results, failed, retried_count)。
+    """
+    if not config.get("retry_prompt_proxy", False):
+        return results, failed, 0
+    if not failed:
+        return results, failed, 0
+    inst = config.get("institution") or {}
+    if inst.get("proxy_url") or inst.get("proxy_list"):
+        return results, failed, 0  # 已配置代理（含面板选择）：本轮已用代理跑过，不再问
+    try:
+        print(f"\n[academic-paper-downloader] {len(failed)} 篇文献下载失败。"
+              "若您在校外，可先连接学校 VPN，再填写机构代理后自动重试。", flush=True)
+        proxy_url = input("  机构代理 proxy_url（如 http://proxy.lib.xxx.edu.cn:8080，直接回车=跳过）: ").strip()
+        if not proxy_url:
+            print("  已选择跳过，即将生成最终报告。", flush=True)
+            return results, failed, 0
+        login_url = input("  登录页 login_url（可选，回车跳过）: ").strip()
+    except (EOFError, OSError, KeyboardInterrupt):
+        # 非交互环境（GUI 宿主/重定向 stdin）或用户取消：不打断流程
+        return results, failed, 0
+
+    cfg2 = {**config, "institution": {**inst, "proxy_url": proxy_url,
+                                      **({"login_url": login_url} if login_url else {})}}
+    new_results, new_failed = _rerun_failed(
+        cfg2, workspace, results, failed, file_path,
+        runner=lambda paper: _process({"paper": paper, "config": cfg2,
+                                       "workspace": str(workspace),
+                                       "progress": {"done": 0, "total": 1}}),
+        label="机构代理重试")
+    results2, failed2 = _merge_retry(results, failed, new_results, new_failed)
+    return results2, failed2, len(new_results)
+
+
+def _deferred_headed_pass(config: dict, workspace: Path, results: list,
+                          failed: list, file_path: str = "") -> tuple[list, list, int]:
+    """两阶段批处理的第二阶段（v0.4.0，defer_headed 开启时生效）。
+
+    第一阶段（_process_download 批处理）：defer_headed 抑制可见浏览器弹窗，
+    全部论文先走低成本组合（httpx/无头）。第二阶段（本函数，报告生成前）：
+    对 bot_blocked/captcha 失败集中走一轮**串行有头浏览器**——用户在场时可顺手
+    过掉人机验证。成功者并入 results，仍失败者覆盖原因。返回 (results, failed, saved)。
+    """
+    if not config.get("defer_headed", True):
+        return results, failed, 0
+    # v0.6.3 收紧（用户定案）：有头 = 只服务"需要人机验证"的失败。
+    # bot_blocked（挑战页）/captcha（验证码）→ 需要人；auth_required/unknown 等
+    # 走无头重试 + Cookie/域画像，不弹窗。浏览器失败原因由 _BROWSER_OUTCOME 传导。
+    # v0.6.3+：auth_required 也纳入——IOP/PerimeterX 对无头无解（perfdrive 重定向），
+    # 有头会自动通过挑战（无需人工）；若真是订阅墙，捕获失败照旧标记。
+    targets = [f for f in failed if isinstance(f, dict)
+               and f.get("error_class") in ("bot_blocked", "captcha", "auth_required")]
+    if not targets:
+        return results, failed, 0
+    try:
+        import playwright  # noqa: F401
+    except Exception:
+        return results, failed, 0
+    cfg2 = {**config, "institution": {**config.get("institution", {}), "headless": False}}
+
+    def runner(paper: dict) -> dict:
+        out = None
+        try:
+            out = _browser_download(paper["doi"], paper["publisher"], [], cfg2)
+        except Exception:
+            out = None
+        record = None
+        if out and os.path.exists(out):
+            content = Path(out).read_bytes()
+            try:
+                Path(out).unlink()
+            except Exception as e:
+                _log("swallowed_exception", level=logging.DEBUG, where="headed_tmp_cleanup", error=str(e))
+            record = _save_pdf(paper, content, workspace, "headed_deferred")
+        if record:
+            record["pdf_url"] = ""
+            _mark_done(config, paper["doi"], record)
+            return {"records": [record], "errors": []}
+        ec = "captcha"
+        return {"records": [], "errors": [{"doi": paper["doi"], "title": paper.get("title", ""),
+                 "last_layer": "headed_deferred", "error_class": ec}]}
+
+    with _HEADED_LOCK:
+        print(f"[academic-paper-downloader] 两阶段第二阶段：对 {len(targets)} 篇被反爬拦截"
+              "的文献集中走有头浏览器…如遇人机验证请顺手通过。", flush=True)
+        # ★ 实机回归修复：只把 targets（bot_blocked/captcha）传给执行器。
+        # v0.6.1 重构时误传了整个 failed 列表——44 篇全部弹有头窗口且每个只停留
+        # ~30s，人来不及过验证（正是"为什么这么快就用有头"的直接原因）。
+        new_results, new_failed = _rerun_failed(cfg2, workspace, results, targets,
+                                                file_path, runner, "有头浏览器")
+    results2, failed2 = _merge_retry(results, failed, new_results, new_failed)
+    return results2, failed2, len(new_results)
+
+
+def _retry_transient_pass(config: dict, workspace: Path, results: list,
+                          failed: list, file_path: str = "") -> tuple[list, list, int]:
+    """v0.6.6：消费 ``retryable`` 字段的设计目的——瞬时失败批末自动补一轮。
+
+    此前 ``_RETRYABLE_CLASSES``（network/rate_limit/server_error）只写进报告
+    （``retryable: true``）却没有任何逻辑读它——"可重试"是语义假象：有头轮
+    只服务"需要人"的失败（bot_blocked/captcha/auth_required），而网络类失败
+    （DNS 抖动、临时 5xx、限流窗口）既不弹窗也不进有头轮，**从头到尾只有一次
+    机会**。本轮补上：无头、无弹窗、只跑一轮；rate_limit 类失败每篇前留
+    5s 缓冲给限流窗口。
+    """
+    targets = [f for f in failed if isinstance(f, dict) and f.get("retryable")]
+    if not targets:
+        return results, failed, 0
+    orig_ec = {str(f.get("doi", "")).lower(): f.get("error_class") for f in targets}
+
+    def runner(paper: dict) -> dict:
+        if orig_ec.get(str(paper.get("doi", "")).lower()) == "rate_limit":
+            time.sleep(5.0)  # 限流窗口缓冲，立即重试只会再撞
+        try:
+            return _process({"paper": paper, "config": config, "workspace": str(workspace),
+                             "progress": {"done": 0, "total": 1}})
+        except Exception:
+            return {"records": [], "errors": [{"doi": paper.get("doi", ""),
+                     "title": paper.get("title", ""),
+                     "last_layer": "transient_retry", "error_class": "network"}]}
+
+    with _HEADED_LOCK:
+        new_results, new_failed = _rerun_failed(config, workspace, results, targets,
+                                                file_path, runner, "瞬时失败重试")
+    results2, failed2 = _merge_retry(results, failed, new_results, new_failed)
+    return results2, failed2, len(new_results)
+
+
 def _after_run(payload: dict) -> dict:
-    """下载完成后生成汇总报告（含成功论文明细）。"""
+    """下载完成后生成汇总报告（含成功论文明细）。
+
+    v0.3.3：报告生成前插入"机构代理补填 + 失败重试"环节 —— 默认网络失败时不直接
+    出报告收尾，给用户一次填写 VPN/机构代理（或明确跳过）的机会，重试完再出最终报告。
+    结果来源：宿主/运行器显式传入 payload["results"]/["failed"] 优先，否则回退 sdk state。
+    """
     workspace = Path(payload.get("workspace", ".")).resolve()
     config = payload.get("config", {})
-
-    # 读取 state 中的完成/失败列表
-    results, done_list = _load_done_records(config)
-    failed: list = []
+    _set_state_dir(workspace)
     try:
-        import omnicrawler_sdk
-        failed_result = omnicrawler_sdk.call("state.get", {"key": _failed_key(config)})
-        if failed_result and failed_result.get("value"):
-            failed = json.loads(failed_result["value"])
+        _view_sync_from_run(config, workspace)
     except Exception:
-        failed = []
-    if not isinstance(failed, list):
-        failed = []
+        pass
 
-    _generate_report(workspace, results, [f for f in failed if isinstance(f, dict)])
-    return {"report_generated": True, "success_count": len(results), "failed_count": len(failed)}
+    if "results" in payload or "failed" in payload:
+        results = list(payload.get("results") or [])
+        failed = list(payload.get("failed") or [])
+    else:
+        results, done_list = _load_done_records(config)
+        failed = []
+        try:
+            failed_result = _state_get(_failed_key(config))
+            if failed_result and failed_result.get("value"):
+                failed = json.loads(failed_result["value"])
+        except Exception:
+            failed = []
+        if not isinstance(failed, list):
+            failed = []
+
+    # U4（部分）：面板选择的机构代理参与失败重试——GUI 用户在面板选好代理后，
+    # 此处直接用该代理重跑一轮失败文献（低成本 http 通道优先，剩余反爬项再走有头）；
+    # 任务配置已显式带代理时不重复（说明批处理已用代理跑过）。
+    try:
+        vcfg = _view_cfg()
+        panel_proxy = str(vcfg.get("proxy_url", "") or "")
+    except Exception:
+        panel_proxy = ""
+    if panel_proxy and failed and not (config.get("institution") or {}).get("proxy_url"):
+        cfg2 = {**config, "institution": {**config.get("institution", {}), "proxy_url": panel_proxy}}
+        new_results, new_failed = _rerun_failed(
+            cfg2, workspace, results, failed, str(payload.get("file_path", "") or ""),
+            runner=lambda paper: _process({"paper": paper, "config": cfg2,
+                                           "workspace": str(workspace),
+                                           "progress": {"done": 0, "total": 1}}),
+            label="面板代理重试")
+        results, failed = _merge_retry(results, failed, new_results, new_failed)
+
+    # 两阶段第二阶段：defer_headed 时集中走一轮串行有头（bot_blocked/captcha 失败）
+    results, failed, headed_saved = _deferred_headed_pass(
+        config, workspace, results, failed, file_path=str(payload.get("file_path", "") or ""))
+
+    # v0.6.6：retryable 字段的消费端——网络类瞬时失败批末自动补一轮（无头、无弹窗）
+    results, failed, transient_saved = _retry_transient_pass(
+        config, workspace, results, failed, file_path=str(payload.get("file_path", "") or ""))
+
+    results, failed, retried = _prompt_proxy_and_retry(
+        config, workspace, results, [f for f in failed if isinstance(f, dict)],
+        file_path=str(payload.get("file_path", "") or ""))
+
+    _generate_report(workspace, results, failed)
+    # 与报告同口径：Success 只算**已核验**的记录，未核验单列（issue #22 §1）
+    unverified_count = sum(1 for r in results if isinstance(r, dict) and not r.get("verified", True))
+    return {
+        "report_generated": True,
+        "success_count": len(results) - unverified_count,
+        "unverified_count": unverified_count,
+        "failed_count": len(failed),
+        "proxy_retried": retried,
+        "headed_saved": headed_saved,
+        "transient_saved": transient_saved,
+    }
 
 # ---------------------------------------------------------------------------
 # robots.txt 合规检查
 # ---------------------------------------------------------------------------
+_ROBOTS_CACHE: dict[str, bool] = {}
+_ROBOTS_CACHE_LOCK = threading.Lock()
+
+# U5：域级通道画像——出版商域发生 bot_blocked/captcha 后，冷却期内同域论文
+# 跳过 http 通道直接从浏览器通道起步，避免重复支付注定失败的探测成本。
+_CHANNEL_PROFILE: dict[str, dict] = {}
+_CHANNEL_PROFILE_LOCK = threading.Lock()
+_CHANNEL_PROFILE_COOLDOWN_SEC = 1800.0
+
+def _publisher_domain(publisher: str) -> str:
+    home = str((_PUBLISHERS.get(publisher) or {}).get("home") or "")
+    if not home:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        return urlparse(home).netloc
+    except Exception:
+        return ""
+
+def _domain_http_blocked(domain: str) -> bool:
+    if not domain:
+        return False
+    with _CHANNEL_PROFILE_LOCK:
+        info = _CHANNEL_PROFILE.get(domain)
+    return bool(info and info.get("until", 0) > time.time())
+
+def _profile_channel_mismatch(domain: str) -> None:
+    if not domain:
+        return
+    with _CHANNEL_PROFILE_LOCK:
+        info = _CHANNEL_PROFILE.setdefault(domain, {})
+        info["count"] = info.get("count", 0) + 1
+        info["until"] = time.time() + _CHANNEL_PROFILE_COOLDOWN_SEC
+
+def _profile_channel_clear(domain: str) -> None:
+    with _CHANNEL_PROFILE_LOCK:
+        _CHANNEL_PROFILE.pop(domain, None)
+
 def _check_robots_txt(domain: str) -> bool:
-    """检查 robots.txt 是否允许爬取 /pdf 路径。"""
+    """检查 robots.txt 是否允许爬取 /pdf 路径（按域缓存，进程内只请求一次）。"""
+    if not domain:
+        return True
+    with _ROBOTS_CACHE_LOCK:
+        if domain in _ROBOTS_CACHE:
+            return _ROBOTS_CACHE[domain]
+    allowed = True
     try:
         import httpx
         resp = httpx.get(f"https://{domain}/robots.txt", timeout=5)
@@ -2045,10 +3111,13 @@ def _check_robots_txt(domain: str) -> bool:
                 if line.startswith("disallow:"):
                     path = line.split(":", 1)[1].strip()
                     if path in ("/pdf", "/pdf/", "/*pdf", "/*pdf*"):
-                        return False
+                        allowed = False
+                        break
     except Exception:
-        pass
-    return True
+        allowed = True
+    with _ROBOTS_CACHE_LOCK:
+        _ROBOTS_CACHE[domain] = allowed
+    return allowed
 
 
 # ---------------------------------------------------------------------------
@@ -2086,13 +3155,9 @@ def _validate_config(config: dict) -> list[str]:
     errors = []
     level = config.get("level", 1)
     if level not in (1, 2, 3): errors.append("level 必须是 1/2/3")
-    if level >= 3:
-        inst = config.get("institution", {})
-        if not _campus_direct(config):
-            if not inst.get("proxy_url") and not inst.get("proxy_list"):
-                errors.append("level 3 需要 institution.proxy_url 或 proxy_list 或开启 campus_ip")
-            if not inst.get("login_url"):
-                errors.append("level 3 需要 institution.login_url 或开启 campus_ip")
+    # v0.3.2：Level 3 不再要求 proxy_url/login_url/campus_ip 前置配置。
+    # 机构层改为“直接用当前网络尝试，结果判定”：在校园网 → 成功；
+    # 普通网络 → 失败并按 error_class 记录原因后继续队列，不再中断流程等待人工确认。
     if config.get("delay_min", 3) < 1: errors.append("delay_min 建议 >= 1")
     if config.get("max_per_session", 50) > 200: errors.append("max_per_session 建议 <= 200")
     return errors
@@ -2100,9 +3165,192 @@ def _validate_config(config: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# View 面板（v0.5.0）：登录态控制中心
+#
+# 宿主 view 契约 = 声明式控件面板（label/button/select/...），不是浏览器引擎，
+# 无法内嵌出版商登录页（反爬挑战页在受限渲染中不可用）。因此形态为：
+#   面板（状态显示 + 按钮） ──▶ 弹出独立有头 Chromium 窗口（真实浏览器：
+#   输入/点击/滚动/验证码原生可用）──▶ Cookie 自动捕获入库，后续下载复用。
+# Cookie 经 SDK state 存取（宿主上下文），绝不落 workspace 明文（见 _state_set）。
+# ---------------------------------------------------------------------------
+_VIEW_KEY = "apd_view_cfg"
+_VIEW_ID = "academic-paper-downloader.main"
+_LOGIN_THREAD: threading.Thread | None = None
+# U6：批处理计数器（面板进度用），_seed 时重置
+_RUN_STATS: dict = {"success": 0, "failed": 0}
+
+def _report_view_progress(done: int, total: int, current_doi: str, eta_seconds: float,
+                          success: int, failed: int) -> None:
+    """U6：向宿主面板推送批处理进度（view.progress，协议 v1）。
+
+    仅宿主 SDK 可用时生效（独立运行 no-op）。字段面与 broker 白名单一致
+    （done/total/eta_seconds/success/failed 强转，current_doi 字符串）。
+    每篇调用一次，兼任 drive_loop 会话保活（宿主每读到一行输出重置会话超时）。
+    """
+    try:
+        import omnicrawler_sdk
+        omnicrawler_sdk.call("view.progress", {
+            "done": int(done), "total": int(total),
+            "current_doi": str(current_doi or ""),
+            "eta_seconds": round(float(eta_seconds or 0), 1),
+            "success": int(success), "failed": int(failed),
+        })
+    except Exception:
+        pass
+
+def _view_cfg() -> dict:
+    result = _state_get(_VIEW_KEY)
+    try:
+        if result and result.get("value"):
+            data = json.loads(result["value"])
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {"login_url": "", "proxy_url": "", "workspace": "", "message": "就绪"}
+
+def _view_cfg_save(data: dict) -> None:
+    _state_set(_VIEW_KEY, json.dumps(data, ensure_ascii=False))
+
+def _view_sync_from_run(config: dict, workspace) -> None:
+    """运行时把任务配置同步给面板（登录页/代理/workspace），供面板按钮复用。
+
+    ★ Cookie 的 state 键按 proxy_url 哈希分键——面板登录与任务下载需使用同一
+    代理设置才能命中同一键；本同步保证"跑过任务再点面板"时两者一致。
+    """
+    data = _view_cfg()
+    inst = config.get("institution", {}) or {}
+    changed = False
+    for key in ("login_url", "proxy_url"):
+        if inst.get(key) and inst.get(key) != data.get(key):
+            data[key] = inst[key]
+            changed = True
+    # U4：任务配置里的 proxy_list 同步给面板（select 组件供 GUI 用户选择）
+    if inst.get("proxy_list"):
+        data["proxy_list"] = list(inst["proxy_list"])
+    ws = str(workspace or "")
+    if ws and ws != data.get("workspace"):
+        data["workspace"] = ws
+        changed = True
+    if changed:
+        _view_cfg_save(data)
+
+def _view_cookie_status() -> str:
+    data = _view_cfg()
+    config = {"institution": {"proxy_url": data.get("proxy_url", "")}}
+    try:
+        cookies = _get_cached_cookie(config)
+    except Exception:
+        cookies = None
+    if not cookies:
+        return "无登录态（未登录或已清除）"
+    exps = [c.get("expires", -1) for c in cookies if isinstance(c, dict) and c.get("expires", -1) > 0]
+    if exps and min(exps) < time.time():
+        return "登录态已失效，请点“打开登录窗口”重新登录"
+    return f"登录态有效（{len(cookies)} 条 Cookie，后续下载自动复用）"
+
+def _view_components() -> list:
+    data = _view_cfg()
+    # U4：宿主 v528cedc 提供 text 组件后，代理/登录页可直接在面板填写（此前仅 TTY）。
+    # 文本输入取代旧 select（自由输入覆盖预设列表）。
+    return [
+        {"type": "label", "id": "status", "label": "登录态", "text": _view_cookie_status()},
+        {"type": "text", "id": "proxy-input", "label": "机构代理",
+         "value": data.get("proxy_url", ""),
+         "placeholder": "http://proxy.lib.xxx.edu.cn:8080（留空=直连/校园 IP）",
+         "maxlength": 512, "action": "configure-proxy"},
+        {"type": "text", "id": "login-url-input", "label": "登录页",
+         "value": data.get("login_url", ""),
+         "placeholder": "https://login.lib.xxx.edu.cn（学校统一认证入口）",
+         "maxlength": 512, "action": "configure-login-url"},
+        {"type": "button", "id": "open-login", "label": "打开登录窗口", "action": "open-login"},
+        {"type": "button", "id": "clear-login", "label": "清除登录态", "action": "clear-login"},
+        {"type": "button", "id": "refresh", "label": "刷新状态", "action": "refresh"},
+        {"type": "label", "id": "message", "label": "消息", "text": str(data.get("message", "就绪"))},
+    ]
+
+def _view() -> dict:
+    return {"view_id": _VIEW_ID, "title": "论文下载 · 登录中心",
+            "preferred_zone": "right", "movable": True, "resizable": True, "floatable": True,
+            "default_width": 420, "default_height": 440, "minimum_width": 280,
+            "minimum_height": 280, "components": _view_components()}
+
+def _view_open_login() -> dict:
+    """后台线程弹出有头登录窗口（不阻塞面板动作调用）。
+
+    生命周期：窗口由用户关闭或登录域跳离后自动收尾；Cookie 捕获成功即入库；
+    页面加载失败/异常 → 消息区显示原因；重复点击 → 提示进行中。
+    """
+    global _LOGIN_THREAD
+    data = _view_cfg()
+    login_url = data.get("login_url", "")
+    if not login_url:
+        return {"view": _view(),
+                "message": "尚未配置登录页：请先运行一次含 institution.login_url 的任务"}
+    if _LOGIN_THREAD is not None and _LOGIN_THREAD.is_alive():
+        return {"view": _view(), "message": "登录窗口已在进行中，请查看已打开的浏览器窗口"}
+
+    def _work() -> None:
+        global _LOGIN_THREAD
+        try:
+            cookies = _login_and_capture_cookie(
+                {"institution": {"login_url": login_url,
+                                 "proxy_url": _view_cfg().get("proxy_url", "")}})
+            data2 = _view_cfg()
+            data2["message"] = ("登录成功，Cookie 已保存并在后续下载中复用" if cookies
+                                else "登录未完成（超时或窗口被关闭），可重试")
+        except Exception as e:  # 页面加载失败、playwright 异常等
+            data2 = _view_cfg()
+            data2["message"] = f"登录窗口异常：{type(e).__name__}: {str(e)[:100]}"
+        _view_cfg_save(data2)
+        _LOGIN_THREAD = None
+
+    _LOGIN_THREAD = threading.Thread(target=_work, daemon=True)
+    _LOGIN_THREAD.start()
+    data["message"] = "登录窗口已打开，请在窗口中完成登录（含验证码），完成后点“刷新状态”"
+    _view_cfg_save(data)
+    return {"view": _view(), "message": data["message"]}
+
+def _view_action(payload: dict) -> dict:
+    action = str((payload or {}).get("action", ""))
+    value = str(((payload or {}).get("payload") or {}).get("value", "")).strip()[:512]
+    if action == "open-login":
+        return _view_open_login()
+    if action == "configure-proxy":
+        # U4：面板文本输入的机构代理；_after_run 的失败重试自动使用（清空=直连/校园 IP）
+        data = _view_cfg()
+        data["proxy_url"] = value
+        _view_cfg_save(data)
+        msg = f"机构代理已更新：{value}" if value else "机构代理已清空（直连/校园 IP）"
+        return {"view": _view(), "message": msg}
+    if action == "configure-login-url":
+        # U4：面板填写的登录页供"打开登录窗口"使用
+        data = _view_cfg()
+        data["login_url"] = value
+        _view_cfg_save(data)
+        msg = f"登录页已更新：{value}" if value else "登录页已清空"
+        return {"view": _view(), "message": msg}
+    if action == "choose-proxy":  # 兼容旧 select 动作（已由 text 取代）
+        data = _view_cfg()
+        data["proxy_url"] = value
+        _view_cfg_save(data)
+        return {"view": _view(), "message": f"已选择机构代理：{value or '无'}"}
+    if action == "clear-login":
+        data = _view_cfg()
+        _invalidate_cookie({"institution": {"proxy_url": data.get("proxy_url", "")}})
+        data["message"] = "登录态已清除"
+        _view_cfg_save(data)
+        return {"view": _view(), "message": data["message"]}
+    if action == "refresh":
+        return {"view": _view()}
+    return {"view": _view(), "message": f"未知操作: {action}"}
+
 def handle(operation: str, payload: dict) -> dict:
     if operation == "source.seed": return _seed(payload)
     if operation == "processor.process": return _process(payload)
     if operation == "hook.after_run": return _after_run(payload)
     if operation == "hook.before_run": return _before_run(payload)
+    if operation == "view.describe": return {"view": _view()}
+    if operation == "view.action": return _view_action(payload)
     return {"error": "unsupported_operation", "operation": str(operation)}

@@ -67,3 +67,95 @@ publishers:
     auth_method: none
     rate_limit: 1.0
     notes: "全部 OA"
+
+  # ---------------------------------------------------------------------------
+  # 常见前缀补遗（issue #22 §2）
+  #
+  # 为什么补：实测一批 WoS 导出里 Nature/Science/Optica/T&F 等前缀**不在表内**
+  # ⇒ `_resolve_publisher()` 返回 None ⇒ Layer1/2 直接放弃，这批全变 unknown。
+  #
+  # ★ 诚实标注：下面 `oa_pattern` 里标注「待实机验证」的条目，其直链模板**我尚未在真机
+  #   核实**，但登记本身已经有价值 —— ① 机构 Cookie 会按 `home` 落到正确域名；
+  #   ② Layer3 浏览器层现在统一经 doi.org 解析到实际文章页（见 plugin.py `_browser_attempt`），
+  #   不依赖直链模板。模板错的代价被 §1 的 fail-closed 兜住（不会再产出"假成功 PDF"）。
+  # ---------------------------------------------------------------------------
+
+  nature:
+    doi_prefix: "10.1038/"
+    oa_pattern: "https://www.nature.com/articles/{doi_suffix}.pdf"
+    home: "https://www.nature.com"
+    auth_method: proxy
+    rate_limit: 3.0
+    notes: "doi_suffix = 10.1038/ 之后的编号（如 s41586-021-00001-2）；待实机验证"
+
+  science:
+    doi_prefix: "10.1126/"
+    oa_pattern: "https://www.science.org/doi/pdf/{doi}"
+    home: "https://www.science.org"
+    auth_method: cookie
+    rate_limit: 3.0
+    notes: "AAAS；待实机验证"
+
+  taylor_francis:
+    doi_prefix: "10.1080/"
+    oa_pattern: ""
+    home: "https://www.tandfonline.com"
+    auth_method: cookie
+    rate_limit: 3.0
+    notes: "OA 直链模板未核实；经 doi.org 通用路径"
+
+  optica:
+    doi_prefix: "10.1364/"
+    oa_pattern: ""
+    home: "https://opg.optica.org"
+    auth_method: proxy
+    rate_limit: 2.0
+    notes: "OA 直链模板未核实；经 doi.org 通用路径"
+
+  bmc:
+    doi_prefix: "10.1186/"
+    oa_pattern: "https://link.springer.com/content/pdf/{doi}.pdf"
+    home: "https://link.springer.com"
+    auth_method: none
+    rate_limit: 3.0
+    notes: "BMC 归 Springer 平台；全 OA"
+
+  plos:
+    doi_prefix: "10.1371/"
+    oa_pattern: "https://journals.plos.org/plosone/article/file?id={doi}&type=printable"
+    home: "https://journals.plos.org"
+    auth_method: none
+    rate_limit: 2.0
+    notes: "全 OA；待实机验证"
+
+  iop:
+    doi_prefix: "10.1088/"
+    oa_pattern: ""
+    home: "https://iopscience.iop.org"
+    auth_method: proxy
+    rate_limit: 3.0
+    notes: "OA 直链模板未核实；经 doi.org 通用路径"
+
+  oup:
+    doi_prefix: "10.1093/"
+    oa_pattern: ""
+    home: "https://academic.oup.com"
+    auth_method: cookie
+    rate_limit: 3.0
+    notes: "Oxford；OA 直链模板未核实；经 doi.org 通用路径"
+
+  bmj:
+    doi_prefix: "10.1136/"
+    oa_pattern: ""
+    home: "https://www.bmj.com"
+    auth_method: cookie
+    rate_limit: 3.0
+    notes: "OA 直链模板未核实；经 doi.org 通用路径"
+
+  ecs:
+    doi_prefix: "10.1149/"
+    oa_pattern: ""
+    home: "https://iopscience.iop.org"
+    auth_method: proxy
+    rate_limit: 3.0
+    notes: "ECS 与 IOP 同平台；OA 直链模板未核实；经 doi.org 通用路径"

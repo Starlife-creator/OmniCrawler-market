@@ -70,16 +70,18 @@ class TestPdfValidation:
 
 
 class TestPdfDoiCrossCheck:
-    def test_mismatched_doi_rejected_and_cleaned(self, monkeypatch, tmp_path):
-        """PDF 首页 DOI 与请求不一致（出版商发错文件）→ 拒绝并删除，不落盘。"""
+    def test_mismatched_doi_kept_as_unverified(self, monkeypatch, tmp_path):
+        """v0.6.3 实机修正：DOI 提取抽错的 PDF 保留为 UNVERIFIED（不计成功），
+        不再删除——实机发现过验证拿到的文件可能因提取排版误判而被白删。"""
         monkeypatch.setattr("plugin._validate_pdf", lambda p: True)
         monkeypatch.setattr("plugin._rename_with_metadata", lambda paper, p: p)
         monkeypatch.setattr("plugin._extract_pdf_meta",
                             lambda p: {"extracted_doi": "10.9999/Different.1"})
         paper = {"doi": "10.1007/s40468-024-99999-9", "title": "T", "first_author": "A", "year": "2025"}
         record = _save_pdf(paper, b"%PDF-1.4\n%%EOF\nx", Path(tmp_path), "browser")
-        assert record is None
-        assert not list((Path(tmp_path) / "papers").glob("*.pdf"))  # 文件已清理
+        assert record is not None
+        assert record["verified"] is False
+        assert list((Path(tmp_path) / "papers").glob("*.pdf"))  # 文件保留供人工确认
 
     def test_matched_doi_accepted(self, monkeypatch, tmp_path):
         """提取 DOI 与请求一致（忽略大小写/末尾点）→ 正常保存。"""
