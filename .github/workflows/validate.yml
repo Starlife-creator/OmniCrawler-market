@@ -68,12 +68,15 @@ jobs:
         run: python tools/validate_submission.py
       - name: 凭据扫描器回归检查
         run: python tools/check_scan_plugin.py
-      - name: DCO（仅 Pull Request）
+      - name: DCO（仅 Pull Request；机器账号不适用）
         if: github.event_name == 'pull_request'
         run: >-
           python tools/check_dco.py
           --base "${{ github.event.pull_request.base.sha }}"
           --head "${{ github.event.pull_request.head.sha }}"
+          --author "${{ github.event.pull_request.user.login }}"
+      - name: DCO 门禁回归检查（机器账号豁免不得泄漏）
+        run: python tools/check_dco_regression.py
       - name: 正式发布门禁（发布目录发生变化时）
         shell: bash
         run: |
