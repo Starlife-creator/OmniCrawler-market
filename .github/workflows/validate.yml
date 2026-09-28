@@ -2,6 +2,17 @@ name: validate
 
 # 独立仓库 CI（拆库后生效）：把本文件复制到独立仓库根 .github/workflows/ 即用。
 # 校验插件清单合法、与 catalog.json 一致、作者指纹匹配、签名有效。
+#
+# ★ paths 必须覆盖「PR 可能改动的全部路径」，否则 required check `validate-catalog`
+#   永远不会上报，PR 会**永久卡在 blocked**（不是失败，是永远等不到结果）。
+#   实测（2026-09-28）：dependabot 的 `chore(ci): bump actions/*` PR 只改
+#   `.github/workflows/**`，而 paths 不含该目录 ⇒ 三个 PR 拿不到任何 CI、
+#   无法正常合并。故把 `.github/**` 纳入触发面。
+#   `permissions` 显式收到 `contents: read`：本工作流只读，workflow 文件自身的
+#   改动也在触发面内，最小权限是必须的。
+
+permissions:
+  contents: read
 
 concurrency:
   group: validate-${{ github.ref }}
@@ -19,6 +30,7 @@ on:
       - "catalog.json"
       - "catalog.json.sig"
       - "submissions/**"
+      - ".github/**"
   pull_request:
     paths:
       - "plugins/**"
@@ -29,6 +41,7 @@ on:
       - "catalog.json"
       - "catalog.json.sig"
       - "submissions/**"
+      - ".github/**"
 
 jobs:
   validate-catalog:
