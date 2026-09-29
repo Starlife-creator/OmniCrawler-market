@@ -128,7 +128,7 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.3.0",
+    "version": "0.6.4",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
@@ -939,7 +939,7 @@ def _fetch_oa_status(doi: str) -> tuple[str, bool]:
             "https://api.openalex.org/works",
             params={"filter": f"doi:{doi}", "select": "id,doi,open_access", "per-page": "1"},
             timeout=30,
-            headers={"User-Agent": "academic-paper-downloader/0.3.0 (mailto:plugin-owner@example.com)"},
+            headers={"User-Agent": "academic-paper-downloader/0.6.4 (mailto:plugin-owner@example.com)"},
         )
         if resp.status_code != 200:
             return doi, False
