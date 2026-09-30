@@ -85,6 +85,17 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     for entry in entries:
         expected = str(manifests.get(str(entry.get("id")), {}).get("author_fingerprint", ""))
         _check_creator_rail(registry, entry, expected or None)
+        # ★ 2026-09-30：把**创作者公钥指纹**写进条目。
+        #   客户端多源聚合（`market_client.aggregate_catalogs`）的去重键是
+        #   `(id, creator_fingerprint)`；条目缺这个字段就退化成 `(id, "")`
+        #   ⇒ 同一个 id 由**不同创作者**发布时不会被标 `_conflict`，而会被当成同一条
+        #   按 priority 静默择一（单源时无感，多源/联邦索引时才暴露）。
+        #   取值来源＝清单的 `author_fingerprint`（`market.yaml`），它与客户端
+        #   `identity.derive_fingerprint` **同一算法**：SHA-256(ed25519 原始 32 字节) 前 16 字节 hex。
+        #   注：`_TOP_LEVEL_EXTRA` 里的 `author_fingerprint` 是**输入侧**键名且不入 catalog，
+        #   写进条目的是**契约名** `creator_fingerprint`（与主仓多索引用例、客户端读取一致）。
+        if expected:
+            entry["creator_fingerprint"] = expected
         for key in (
             "description_file", "plugin_file", "package_manifest_file",
             "creator_package_signature_file", "maintainer_package_signature_file",
@@ -127,6 +138,9 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     for entry in template_entries:
         expected = str(template_markets.get(str(entry.get("id")), {}).get("author_fingerprint", ""))
         _check_creator_rail(registry, entry, expected or None)
+        # 与插件条目同理（客户端对 templates 用**同一套**去重键）：
+        if expected:
+            entry["creator_fingerprint"] = expected
         for key in (
             "template_file", "signature_file", "description_file", "creator_signature_file",
             "creator_identity_file", "package_manifest_file",

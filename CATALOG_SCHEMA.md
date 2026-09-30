@@ -52,6 +52,7 @@
 | `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |
 | `gates_evidence` | object | | 门禁证据摘要，包括检查状态、时间戳和 tag 哈希；随 catalog 签名覆盖，供离线审批验证 |
 | `creator_signature_file` / `creator_identity_file` | string | | 旧版单文件创作者签名与公钥身份字段；现代包使用下方整包签名字段 |
+| `creator_fingerprint` | string (hex32) | | **创作者公钥指纹**（由清单的 `author_fingerprint` 生成）。多源聚合的**去重键**是 `(id, creator_fingerprint)`：同一 `id` 从不同指纹出现 ⇒ 双方标冲突交用户判断；缺该字段会退化为 `(id, "")`，把不同创作者的同名插件静默并成一条 |
 | `package_manifest_file` | string | 现代包必填 | 创作者签名的规范整包 manifest 路径 |
 | `creator_package_signature_file` | string | 现代包必填 | 创作者对整包 manifest 的签名 |
 | `maintainer_package_signature_file` | string | 发布态必填 | 维护者对同一 manifest 字节的复签 |
@@ -83,6 +84,7 @@
 | `compatible_core` | string | `>=` + `template:` 块的 `min_core_version` |
 | `license` / `tags` / `updated_at` | | 取自 `template:` 块（`updated_at` ← `verified_at`） |
 | `package_manifest_file` / `creator_package_signature_file` / `maintainer_package_signature_file` / `package_manifest_sha256` | string | 与插件相同的现代整包双签字段；模板不再使用较弱的旁路信任模型 |
+| `creator_fingerprint` | string (hex32) | 与插件条目**同一语义、同一取值来源**（`author_fingerprint`）；客户端对 `templates` 用同一套 `(id, creator_fingerprint)` 去重键 |
 
 ## 清单源（`plugins/<id>/plugin.yaml`）
 
