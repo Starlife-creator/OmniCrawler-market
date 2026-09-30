@@ -1,12 +1,16 @@
 name: deploy-pages
 
-# §10.12 Web 发现页：push main ⇒ fail-closed 验签 catalog ⇒ 生成静态发现页 ⇒ 部署 Pages。
-# 安全语义：生成器先验 catalog.json.sig（信任根公钥），验签失败拒绝生成——
+# §10.12 Web 发现页：push main ⇒ fail-closed 验签 catalog ⇒ 生成三级静态站（首页/列表/详情）
+# ⇒ 部署 Pages。安全语义：生成器先验 catalog.json.sig（信任根公钥），验签失败拒绝生成——
 # 被篡改的目录永远上不了 Pages。动作全部钉 commit SHA（与 validate.yml 同惯例）。
+# 站点资产（favicon / og / manifest）按 §10.12.3 #4 **构建期从主仓取用**：
+# 不搬家、不落仓（唯一真源仍在主仓 assets/branding/web/）；主仓资产变更后
+# 用 workflow_dispatch 手动重跑本工作流即可刷新站点。
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,14 +29,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 取用主仓站点资产（§10.12.3 #4：不搬家、不落仓）
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Starlife-creator/OmniCrawler
+          ref: main
+          path: main-repo
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       # 与 validate.yml 同规格：PyYAML 精确 pin（signing.py 依赖）、cryptography 对齐上限
       - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51"
+      # 资产缺失 ⇒ 生成器退出码 2（拒绝为半配置站点出页），不会静默部署一个没有图标的站点
       - name: Fail-closed 验签并生成发现页
-        run: python tools/generate_discovery_page.py --output _pages
+        run: python tools/generate_discovery_page.py --output _pages --web-assets main-repo/assets/branding/web
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
