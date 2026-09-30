@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: MIT
 """DCO 门禁的轻量回归，不依赖第三方测试框架。
 
-两个方向都必须钉住，缺一即「护栏只绿不红」：
+三个方向都必须钉住，缺一即「护栏只绿不红」：
 
 * 机器账号没有签署**不该**红 —— 否则 dependabot 的依赖升级 PR 会永久卡在
   blocked（实测 #26/#27/#28：只差 DCO 这一步）；
+* **合并提交没有签署也不该红** —— 它由 GitHub 代作者生成，作者补不了签署
+  （实测 #35：一次「Update branch」就让 DCO 永久红，只能本地线性化返工）；
 * 人类提交没有签署**必须**红 —— 否则豁免会泄漏成「谁都不用签」。
 
-并且验证**豁免是承重的**：把机器账号判定关掉后，原来绿的用例必须转红。
+并且验证**豁免是承重的**：把机器账号判定 / 合并提交排除关掉后，原来绿的用例必须转红。
 """
 
 from __future__ import annotations
@@ -90,7 +92,35 @@ def main() -> int:
             missing, _, _ = check_dco.review(unsigned, signed, author=author, cwd=root)
             assert missing == [], f"{author} 下已签署提交被判红: {missing!r}"
 
-    print("OK DCO regression: 机器账号不适用签署；人类未签署仍判红；关掉豁免即转红")
+        # ⑥ 合并提交不适用签署要求（2026-09-30 实测坑：GitHub 的「Update branch」
+        #    会代作者造一个合并提交，作者既没写它、也补不了 Signed-off-by）。
+        main_branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        _git(root, "checkout", "-b", "side")
+        _commit(root, "side work", sign_off=True)
+        _git(root, "checkout", main_branch)
+        _git(root, "merge", "--no-ff", "-m", "Merge branch 'side'（刻意不带签署）", "side")
+        merged = _git(root, "rev-parse", "HEAD")
+
+        missing, _, _ = check_dco.review(signed, merged, author="alice", cwd=root)
+        assert missing == [], f"合并提交不该被判红: {missing!r}"
+        # 跳过必须可见：个数要能被调用方取到（main 会打印它）。
+        assert check_dco.merge_revision_count(signed, merged, cwd=root) == 1, (
+            "合并提交数应为 1（否则 main 打印不出「跳过了什么」）"
+        )
+
+        # ⑦ ★ 反向：关掉合并提交排除后，⑥ 必须转红 —— 证明这层豁免是承重的。
+        saved_exclude = check_dco.REVISION_EXCLUDE_ARGS
+        check_dco.REVISION_EXCLUDE_ARGS = ()
+        try:
+            missing, _, _ = check_dco.review(signed, merged, author="alice", cwd=root)
+            assert missing == [merged], "关掉合并提交豁免后本应转红，说明豁免没有起作用"
+        finally:
+            check_dco.REVISION_EXCLUDE_ARGS = saved_exclude
+
+    print(
+        "OK DCO regression: 机器账号不适用签署；合并提交不适用签署（关掉即转红）；"
+        "人类未签署仍判红"
+    )
     return 0
 
 
