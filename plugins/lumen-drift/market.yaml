@@ -1,11 +1,11 @@
 id: lumen-drift
-name: Lumen Drift
-version: 0.4.0
+name: lumen-drift
+version: 0.5.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
-category: appearance
+category: resource_provider
 summary: 安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源
-description_file: plugins/lumen-drift/versions/0.4.0/listing.md
+description_file: plugins/lumen-drift/versions/0.5.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.12.0'
 license: MIT
@@ -15,15 +15,15 @@ tags:
 - video
 - wallpaper-engine
 - declarative-ui
-updated_at: '2026-09-04'
-creator_signature_file: plugins/lumen-drift/versions/0.4.0/creator.sig
-creator_identity_file: plugins/lumen-drift/versions/0.4.0/creator.identity
-package_manifest_file: plugins/lumen-drift/versions/0.4.0/package.manifest.json
-creator_package_signature_file: plugins/lumen-drift/versions/0.4.0/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/lumen-drift/versions/0.4.0/package.manifest.maintainer.sig
-package_manifest_sha256: 9ba159289c9a9b156bd516f28a43659a97591c04aa2aa500de78e4c27e47e5e7
-plugin_file: plugins/lumen-drift/versions/0.4.0/plugin.py
-signature_file: plugins/lumen-drift/versions/0.4.0/plugin.py.sig
+updated_at: '2026-10-03'
+creator_signature_file: plugins/lumen-drift/versions/0.5.0/creator.sig
+creator_identity_file: plugins/lumen-drift/versions/0.5.0/creator.identity
+package_manifest_file: plugins/lumen-drift/versions/0.5.0/package.manifest.json
+creator_package_signature_file: plugins/lumen-drift/versions/0.5.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/lumen-drift/versions/0.5.0/package.manifest.maintainer.sig
+package_manifest_sha256: 9f7d8309c15bad9e024966473f357234fe248ddeaf79711accd911ad829ae70d
+plugin_file: plugins/lumen-drift/versions/0.5.0/plugin.py
+signature_file: plugins/lumen-drift/versions/0.5.0/plugin.py.sig
 permissions:
 - resources:read
 - surfaces:background
@@ -39,8 +39,6 @@ dependencies: []
 required_capabilities:
   resources.enumerate: '>=1'
   resources.read: '>=1'
-  render.html.snapshot: '>=1'
-  render.html.live.start: '>=1'
   surface.background.set: '>=2'
   surface.background.configure: '>=2'
   surface.background.capabilities: '>=1'

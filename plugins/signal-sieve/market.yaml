@@ -1,11 +1,11 @@
 id: signal-sieve
 name: signal-sieve
-version: 0.2.0
+version: 0.3.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: extractor
 summary: 融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断
-description_file: plugins/signal-sieve/listing.md
+description_file: plugins/signal-sieve/versions/0.3.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.11.2'
 license: MIT
@@ -14,15 +14,15 @@ tags:
 - article
 - metadata
 - explainable
-updated_at: '2026-08-31'
-creator_signature_file: plugins/signal-sieve/creator.sig
-creator_identity_file: plugins/signal-sieve/creator.identity
-package_manifest_file: plugins/signal-sieve/package.manifest.json
-creator_package_signature_file: plugins/signal-sieve/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/signal-sieve/package.manifest.maintainer.sig
-package_manifest_sha256: c5d47641523244a97f6b6aaadbe67efcb46e9ab9ac3cb4fe15cfc36ae451eeb2
-plugin_file: plugins/signal-sieve/plugin.py
-signature_file: plugins/signal-sieve/plugin.py.sig
+updated_at: '2026-10-03'
+creator_signature_file: plugins/signal-sieve/versions/0.3.0/creator.sig
+creator_identity_file: plugins/signal-sieve/versions/0.3.0/creator.identity
+package_manifest_file: plugins/signal-sieve/versions/0.3.0/package.manifest.json
+creator_package_signature_file: plugins/signal-sieve/versions/0.3.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/signal-sieve/versions/0.3.0/package.manifest.maintainer.sig
+package_manifest_sha256: f2057ffac65e4cb410d71a5ebdb0a2fc1ddf108335a5daa2681376041eaa74bc
+plugin_file: plugins/signal-sieve/versions/0.3.0/plugin.py
+signature_file: plugins/signal-sieve/versions/0.3.0/plugin.py.sig
 permissions: []
 plugin_types:
 - extractor

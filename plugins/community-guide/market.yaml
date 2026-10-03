@@ -1,11 +1,11 @@
 id: community-guide
 name: community-guide
-version: 1.0.0
+version: 1.1.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: view
 summary: 官方社区引导：仓库 Discussions / Issues / 贡献指南的外链导航
-description_file: plugins/community-guide/listing.md
+description_file: plugins/community-guide/versions/1.1.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.14.0'
 license: MIT
@@ -15,15 +15,15 @@ tags:
 - 外链
 - 官方
 - 引导
-updated_at: '2026-09-24'
-creator_signature_file: plugins/community-guide/creator.sig
-creator_identity_file: plugins/community-guide/creator.identity
-package_manifest_file: plugins/community-guide/package.manifest.json
-creator_package_signature_file: plugins/community-guide/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/community-guide/package.manifest.maintainer.sig
-package_manifest_sha256: ce912eee4941ea7f13144dacff1b68b001b50cd5f0ddf9d07fd02f6ab59a41d4
-plugin_file: plugins/community-guide/plugin.py
-signature_file: plugins/community-guide/plugin.py.sig
+updated_at: '2026-10-03'
+creator_signature_file: plugins/community-guide/versions/1.1.0/creator.sig
+creator_identity_file: plugins/community-guide/versions/1.1.0/creator.identity
+package_manifest_file: plugins/community-guide/versions/1.1.0/package.manifest.json
+creator_package_signature_file: plugins/community-guide/versions/1.1.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/community-guide/versions/1.1.0/package.manifest.maintainer.sig
+package_manifest_sha256: 6f373c56c319dde05ff5321361752520fe12061ef86583b6295feb11d06b6079
+plugin_file: plugins/community-guide/versions/1.1.0/plugin.py
+signature_file: plugins/community-guide/versions/1.1.0/plugin.py.sig
 permissions: []
 plugin_types:
 - view
