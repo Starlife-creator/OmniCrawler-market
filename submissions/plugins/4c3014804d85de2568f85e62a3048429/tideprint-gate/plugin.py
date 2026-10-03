@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 PLUGIN_METADATA = {
     "name": "tideprint-gate",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "api_version": 1,
     "description": "以持久指纹建议条件重验证，并输出当前运行的可解释变化分类",
     "plugin_types": ["processor", "hook"],
@@ -34,7 +34,9 @@ PLUGIN_METADATA = {
 MAX_ENTRIES = 10_000
 WHITESPACE = re.compile(rb"\s+")
 _state: dict[str, dict[str, Any]] = {}
-_counts = {"new": 0, "unchanged": 0, "changed": 0, "bypassed": 0}
+_persistent_seen: dict[str, dict[str, Any]] = {}
+_persistent_counts = {"new": 0, "unchanged": 0, "changed": 0, "bypassed": 0, "invalid": 0}
+_counts = {"new": 0, "unchanged": 0, "changed": 0, "bypassed": 0, "invalid": 0}
 
 
 def normalize_url(url: str) -> str:
@@ -88,6 +90,9 @@ def classify(url: str, body: bytes, *, normalize_text: bool = True) -> dict[str,
 
 def _reset() -> None:
     _state.clear()
+    _persistent_seen.clear()
+    for key in _persistent_counts:
+        _persistent_counts[key] = 0
     for key in _counts:
         _counts[key] = 0
 
@@ -103,9 +108,11 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {"status": "ready", "scope": "persistent_host_state"}
     if operation == "hook.after_run":
         summary = {
-            "counts": dict(_counts),
+            "counts": dict(_persistent_counts) if _persistent_seen else dict(_counts),
+            "current_run_counts": dict(_counts),
+            "persistent_counts": dict(_persistent_counts),
             "tracked_urls": len(_state),
-            "scope": "persistent_host_state",
+            "scope": "persistent_host_state" if _persistent_seen else "current_run_only",
         }
         _reset()
         return summary
@@ -129,10 +136,18 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         import omnicrawler_sdk
 
         result = dict(payload.get("result") or {})
-        url = str(result.get("final_url") or result.get("url") or "")
+        url = str(result.get("final_url") or result.get("url") or (result.get("request") or {}).get("url") or "")
         digest = str(result.get("content_hash") or "")
-        if not url or len(digest) != 64:
-            return {}
+        status_code = int(result.get("status") or 0)
+        if status_code == 304:
+            key = normalize_url(url)
+            _persistent_seen[key] = {"status": "unchanged", "revalidated": True}
+            _persistent_counts["unchanged"] += 1
+            return {"persistent_change": dict(_persistent_seen[key])}
+        if not url or not re.fullmatch(r"[0-9a-fA-F]{64}", digest) or not 200 <= status_code < 300:
+            _persistent_counts["bypassed"] += 1
+            return {"persistent_change": {"status": "bypassed", "reason": "unsuccessful_response_or_missing_hash"}}
+        digest = digest.lower()
         key = _state_key(url)
         previous = omnicrawler_sdk.call("state.get", {"key": key})
         previous_value = previous.get("value") if previous.get("found") else None
@@ -151,7 +166,16 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 },
             },
         )
-        return {"persistent_change": {"status": status, "previous_sha256": previous_digest or None}}
+        change = {"status": status, "previous_sha256": previous_digest or None, "sha256": digest, "scope": "persistent_host_state"}
+        if len(_persistent_seen) >= MAX_ENTRIES and normalize_url(url) not in _persistent_seen:
+            del _persistent_seen[next(iter(_persistent_seen))]
+        _persistent_seen[normalize_url(url)] = change
+        _persistent_counts[status] += 1
+        # Remember both ends of redirects so the original seed can revalidate next run.
+        original = str((result.get("request") or {}).get("url") or result.get("url") or "")
+        if original and _state_key(original) != key:
+            omnicrawler_sdk.call("state.set", {"key": _state_key(original), "value": {"sha256": digest, "normalized_url": normalize_url(url), "status": status_code}})
+        return {"persistent_change": change}
     if operation.startswith("hook."):
         return {}
     if operation != "processor.process":
@@ -159,16 +183,32 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     result = dict(payload.get("result") or {})
     options = dict(payload.get("options") or {})
-    url = str(result.get("url") or result.get("final_url") or "")
+    url = str(result.get("final_url") or result.get("url") or (result.get("request") or {}).get("url") or "")
     if options.get("skip_incremental"):
         _counts["bypassed"] += 1
         change = {"status": "bypassed", "normalized_url": normalize_url(url), "scope": "current_run_only"}
     else:
-        try:
-            body = base64.b64decode(str(result.get("body_b64") or ""), validate=True)
-        except (ValueError, TypeError):
-            body = b""
-        change = classify(url, body, normalize_text=bool(options.get("normalize_text", True)))
+        status_code = int(result.get("status") or 200)
+        persistent = _persistent_seen.get(normalize_url(url))
+        if persistent:
+            change = {**persistent, "normalized_url": normalize_url(url)}
+        elif status_code == 304 or not 200 <= status_code < 300:
+            _counts["bypassed"] += 1
+            change = {"status": "bypassed", "reason": "response_has_no_fresh_body", "scope": "current_run_only"}
+        else:
+            try:
+                if result.get("body_b64") is None:
+                    raise ValueError("missing body")
+                body = base64.b64decode(str(result["body_b64"]), validate=True)
+            except (ValueError, TypeError):
+                _counts["invalid"] += 1
+                change = {"status": "invalid", "reason": "missing_or_invalid_body", "scope": "current_run_only"}
+            else:
+                content_type = str(result.get("content_type") or "").lower()
+                textual = content_type.startswith("text/") or any(t in content_type for t in ("json", "xml", "javascript"))
+                # With no type declaration, preserve original bytes rather than guessing.
+                normalize = bool(options.get("normalize_text", True)) and textual
+                change = classify(url, body, normalize_text=normalize)
     evidence = hashlib.sha256(json.dumps(change, sort_keys=True).encode()).hexdigest()
     return {
         "records": [

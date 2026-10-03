@@ -8,14 +8,13 @@ import json
 import omnicrawler_sdk
 
 PLUGIN_METADATA = {
-    "name": "lumen-drift", "version": "0.4.0", "api_version": 1,
+    "name": "lumen-drift", "version": "0.5.0", "api_version": 1,
     "description": "安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源",
     "plugin_types": ["resource_provider", "view"], "category": "appearance",
     "tags": ["wallpaper", "ambient", "video", "wallpaper-engine", "declarative-ui"],
     "permissions": ["resources:read", "surfaces:background", "render:local", "render:scripted"],
     "required_capabilities": {
         "resources.enumerate": ">=1", "resources.read": ">=1",
-        "render.html.snapshot": ">=1", "render.html.live.start": ">=1",
         "surface.background.set": ">=2", "surface.background.configure": ">=2",
         "surface.background.capabilities": ">=1",
         "surface.background.clear": ">=1",
@@ -32,6 +31,7 @@ _state = {
     "panel_opacity": 88, "dim": 15, "blur": 4, "fit": "cover",
     "scope": "workspace", "preset": "balanced", "paused": False,
     "html_mode": "snapshot", "filter": "all", "active": False, "now_playing": "",
+    "query": "", "page": 0, "scan_limited": False,
 }
 
 
@@ -73,6 +73,7 @@ def _scan(handle: str) -> list[dict]:
     response = omnicrawler_sdk.call("resources.enumerate", {
         "handle": handle, "relative": "", "recursive": True, "limit": 2000,
     })
+    _state["scan_limited"] = int(response.get("count") or len(response.get("items", []))) >= 2000
     entries = [item for item in response.get("items", []) if isinstance(item, dict)]
     files = {
         _relative(item.get("relative")): item for item in entries
@@ -108,20 +109,25 @@ def _scan(handle: str) -> list[dict]:
         })
         if len(found) >= 500:
             break
+    _state["scan_limited"] = _state["scan_limited"] or len(found) >= 500
     return found[:500]
 
 
 def _visible_items() -> list[dict]:
     kind = _state["filter"]
     suffixes = {"image": _IMAGE, "video": _VIDEO, "html": _HTML}
-    return [item for item in _state["items"] if (
+    query = str(_state.get("query", "")).casefold()
+    return [item for item in _state["items"] if (not query or query in item["label"].casefold() or query in item["id"].casefold()) and (
         kind == "all" or (kind == "unsupported" and not item["supported"])
         or (kind in suffixes and item["supported"] and _suffix(item["id"]) in suffixes[kind])
     )]
 
 
 def _components() -> list[dict]:
-    items = [{key: item[key] for key in ("id", "label", "subtitle")} for item in _visible_items()]
+    visible = _visible_items()
+    page = max(0, min(int(_state.get("page", 0)), max(0, (len(visible) - 1) // 50)))
+    _state["page"] = page
+    items = [{key: item[key] for key in ("id", "label", "subtitle")} for item in visible[page * 50:(page + 1) * 50]]
     return [
         {"type": "label", "id": "safety-note", "text":
          "文件访问经用户授权句柄完成；媒体与网页快照均由 OmniCrawler 宿主渲染。"},
@@ -140,7 +146,11 @@ def _components() -> list[dict]:
             ("已暂停：" if _state["paused"] else "当前背景：") + _state["now_playing"]
             if _state["active"] else "背景已停用；选择资源开始呈现")},
         {"type": "label", "id": "scan-limits", "text":
-         "每次最多枚举 2000 个目录项、显示 500 个资源；大目录请手动选择更小的子目录。"},
+         ("扫描达到上限，结果可能不完整；请选择更小的子目录。" if _state.get("scan_limited") else "扫描未触达上限；每页显示 50 项。")},
+        {"type": "text", "id": "resource-search", "label": "搜索资源", "value": _state.get("query", ""), "maxlength": 200, "action": "search-resources"},
+        {"type": "label", "id": "page-status", "text": f"第 {page + 1} 页 / 共 {max(1, (len(visible) + 49) // 50)} 页"},
+        {"type": "button", "id": "previous-page", "label": "上一页", "action": "previous-page"},
+        {"type": "button", "id": "next-page", "label": "下一页", "action": "next-page"},
         {"type": "resource_list", "id": "wallpaper-list", "label":
          f"资源（显示 {len(items)} / 共 {len(_state['items'])}）",
          "items": items, "empty_text": "尚未选择目录，或当前分类没有资源", "action": "play-resource"},
@@ -220,26 +230,31 @@ def _play(relative: str) -> dict:
     item = next((entry for entry in _state["items"] if entry["id"] == relative), None)
     if item is None or not item["supported"]:
         return {"message": "此 Wallpaper Engine 资源类型尚不能安全呈现"}
+    background = {"handle": _state["handle"], "relative": relative}
+    fallback = False
     if _suffix(relative) in _HTML:
-        operation = (
-            "render.html.live.start" if _state["html_mode"] == "live"
-            else "render.html.snapshot"
-        )
-        rendered = omnicrawler_sdk.call(operation, {
-            "handle": _state["handle"], "relative": relative,
+        operation = "render.html.live.start" if _state["html_mode"] == "live" else "render.html.snapshot"
+        request = {"handle": _state["handle"], "relative": relative,
             "width": 1280 if operation.endswith("live.start") else 1920,
-            "height": 720 if operation.endswith("live.start") else 1080,
-            "scripted": False,
-        })
-        omnicrawler_sdk.call("surface.background.set", {"render_handle": rendered["handle"]})
-    else:
-        omnicrawler_sdk.call("surface.background.set", {"handle": _state["handle"], "relative": relative})
-    _state.update({"selected_id": relative, "active": True, "now_playing": item["label"]})
+            "height": 720 if operation.endswith("live.start") else 1080, "scripted": False}
+        try:
+            rendered = omnicrawler_sdk.call(operation, request)
+        except RuntimeError:
+            if operation != "render.html.live.start":
+                raise
+            rendered = omnicrawler_sdk.call("render.html.snapshot", {**request, "scripted": False})
+            fallback = True
+        background = {"render_handle": rendered["handle"]}
+    # Configure before publishing the replacement; update UI only after both succeed.
     omnicrawler_sdk.call("surface.background.configure", {
         "opacity": _state["opacity"], "panel_opacity": _state["panel_opacity"],
         "dim": _state["dim"], "blur": _state["blur"], "fit": _state["fit"],
         "scope": _state["scope"], "paused": _state["paused"],
     })
+    omnicrawler_sdk.call("surface.background.set", background)
+    _state.update({"selected_id": relative, "active": True, "now_playing": item["label"]})
+    if fallback:
+        return {"view": _view(), "message": "动态渲染不可用，已使用静态快照"}
     return {"view": _view(), "message": f"已呈现：{item['label']}"}
 
 
@@ -265,6 +280,12 @@ def _handle(operation: str, payload: dict) -> dict:
         return {"handled": False}
     action, value = str(payload.get("action", "")), payload.get("payload", {})
     value = value if isinstance(value, dict) else {}
+    if action == "search-resources":
+        _state.update(query=str(value.get("value") or "")[:200], page=0)
+        return {"view": _view()}
+    if action in {"previous-page", "next-page"}:
+        _state["page"] = max(0, int(_state.get("page", 0)) + (1 if action == "next-page" else -1))
+        return {"view": _view()}
     if action in {"source-selected", "refresh-source"}:
         resource = value.get("resource_handle", "") if action == "source-selected" else _state["handle"]
         if not isinstance(resource, str) or not resource:
@@ -272,7 +293,7 @@ def _handle(operation: str, payload: dict) -> dict:
         items = _scan(resource)
         if resource != _state["handle"] or not any(item["id"] == _state["selected_id"] for item in items):
             _state["selected_id"] = ""
-        _state.update({"handle": resource, "items": items})
+        _state.update({"handle": resource, "items": items, "page": 0})
         playable = sum(bool(item["supported"]) for item in items)
         return {"view": _view(), "message": f"发现 {len(items)} 个资源，其中 {playable} 个可尝试呈现"}
     if action == "filter-resources":
@@ -280,6 +301,7 @@ def _handle(operation: str, payload: dict) -> dict:
         if kind not in {"all", "image", "video", "html", "unsupported"}:
             return {"message": "不支持的资源分类"}
         _state["filter"] = kind
+        _state["page"] = 0
         return {"view": _view()}
     if action == "play-resource":
         return _play(str(value.get("item_id", "")))

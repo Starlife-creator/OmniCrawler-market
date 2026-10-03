@@ -204,7 +204,7 @@ class TestProcessFlow:
 
         monkeypatch.setattr(plugin_module, "_process_download", explode)
         monkeypatch.setattr(plugin_module, "_DistributedLock",
-                            lambda cfg: type("L", (), {"acquire": lambda s, d: True, "release": lambda s, d: None})())
+                            lambda cfg, workspace=None: type("L", (), {"acquire": lambda s, d: True, "release": lambda s, d: None})())
 
         res = plugin_module._process(
             {"paper": {"doi": "10.1007/x", "title": "T"}, "config": {"level": 1},
@@ -228,7 +228,7 @@ class TestProcessFlow:
                 release_calls["n"] += 1
 
         monkeypatch.setattr(plugin_module, "_process_download", one)
-        monkeypatch.setattr(plugin_module, "_DistributedLock", lambda cfg: FakeLock())
+        monkeypatch.setattr(plugin_module, "_DistributedLock", lambda cfg, workspace=None: FakeLock())
 
         for _ in range(2):
             res = plugin_module._process(

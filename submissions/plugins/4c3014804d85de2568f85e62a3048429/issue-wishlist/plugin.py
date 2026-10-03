@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import base64
 import json
+import time
+from datetime import datetime, UTC
 from typing import Any
 
 import omnicrawler_sdk
 
 PLUGIN_METADATA = {
     "name": "issue-wishlist",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "api_version": 1,
     "description": "官方需求清单：只读浏览 OmniCrawler 仓库的开放 Issues",
     "plugin_types": ["view"],
@@ -38,93 +40,90 @@ REPO_ISSUES_URL = (
     "?state=open&per_page=30&sort=created&direction=desc"
 )
 
-_state: dict[str, Any] = {"issues": [], "error": "", "fetched": False}
+MAX_PAGES = 5
+PAGE_SIZE = 30
+REFRESH_INTERVAL = 30
+_state: dict[str, Any] = {"issues": [], "error": "", "fetched": False,
+    "updated_at": "", "last_attempt": None, "retry_after": 0.0,
+    "complete": False, "query": "", "label": "all", "selected": ""}
 
 
 def _components() -> list[dict]:
     if _state["error"]:
-        segments = [
-            {"type": "heading", "text": "需求清单"},
-            {"type": "paragraph", "text": f"上次刷新失败：{_state['error']}"},
-            {"type": "paragraph", "text": "请点「刷新」重试；持续失败多为网络或配额限制。"},
-        ]
+        segments = [{"type": "heading", "text": "需求清单"},
+            {"type": "paragraph", "text": f"上次刷新失败：{_state['error']}；保留上次成功数据。"}]
     elif not _state["fetched"]:
-        segments = [
-            {"type": "heading", "text": "需求清单"},
-            {
-                "type": "paragraph",
-                "text": "这里只读展示 OmniCrawler 仓库的开放 Issues（ Roadmap 与需求讨论）。",
-            },
-            {"type": "paragraph", "text": "点「刷新」拉取最新列表。"},
-        ]
+        segments = [{"type": "heading", "text": "需求清单"},
+            {"type": "paragraph", "text": "只读展示仓库开放 Issues，点“刷新”加载。"}]
     else:
-        segments = [
-            {"type": "heading", "text": f"开放 Issues（{len(_state['issues'])}）"},
-            {
-                "type": "paragraph",
-                "text": "只读展示；点击条目可查看对应链接。发言请到仓库 Discussions。",
-            },
-        ]
-    items = [
-        {
-            "id": str(issue["number"]),
-            "label": f"#{issue['number']} {issue['title']}",
-            "subtitle": f"{issue['state']} · {issue['html_url']}",
-        }
-        for issue in _state["issues"]
-    ]
-    return [
-        {"type": "rich_text", "id": "intro", "segments": segments},
-        {
-            "type": "button", "id": "refresh", "label": "刷新", "action": "refresh",
-        },
-        {
-            "type": "resource_list", "id": "issues", "label": "Issues",
-            "items": items, "empty_text": "尚无数据——点「刷新」拉取", "action": "open-issue",
-        },
-    ]
+        segments = [{"type": "heading", "text": f"开放 Issues（{len(_state['issues'])}）"},
+            {"type": "paragraph", "text": "点击条目后使用下方链接到 GitHub 查看或参与讨论。"}]
+    if _state["updated_at"]:
+        segments.append({"type": "paragraph", "text": f"上次成功刷新：{_state['updated_at']}；" + ("已读取全部当前结果" if _state["complete"] else "达到分页上限，结果可能不完整")})
+    query = _state["query"].casefold()
+    visible = [i for i in _state["issues"] if (not query or query in i["title"].casefold() or query in str(i["number"])) and (_state["label"] == "all" or _state["label"] in i.get("labels", []))]
+    components = [{"type": "rich_text", "id": "intro", "segments": segments},
+        {"type": "button", "id": "refresh", "label": "刷新", "action": "refresh"},
+        {"type": "resource_list", "id": "issues", "label": "Issues", "items": [
+            {"id": str(i["number"]), "label": f"#{i['number']} {i['title']}", "subtitle": " · ".join(i.get("labels", [])) or i["state"]} for i in visible],
+            "empty_text": "无匹配条目；可刷新或调整筛选", "action": "open-issue"},
+        {"type": "text", "id": "search", "label": "搜索标题 / 编号", "value": _state["query"], "maxlength": 200, "action": "search"},
+        {"type": "select", "id": "label-filter", "label": "标签", "value": _state["label"], "action": "filter-label",
+            "options": [{"label": "全部", "value": "all"}] + [{"label": t, "value": t} for t in sorted({t for i in _state["issues"] for t in i.get("labels", [])})[:50]]}]
+    selected = next((i for i in _state["issues"] if str(i["number"]) == _state["selected"]), None)
+    if selected:
+        components.append({"type": "rich_text", "id": "selected-issue", "segments": [{"type": "link", "text": f"在 GitHub 打开 #{selected['number']}", "url": selected["html_url"]}]})
+    return components
 
 
 def _view() -> dict:
-    return {
-        "view_id": "issue-wishlist.main",
-        "title": "需求清单",
-        "preferred_zone": "right",
-        "movable": True,
-        "resizable": True,
-        "floatable": True,
-        "default_width": 400,
-        "default_height": 640,
-        "minimum_width": 280,
-        "minimum_height": 320,
-        "components": _components(),
-    }
+    return {"view_id": "issue-wishlist.main", "title": "需求清单", "preferred_zone": "right",
+        "movable": True, "resizable": True, "floatable": True, "default_width": 400,
+        "default_height": 640, "minimum_width": 280, "minimum_height": 320, "components": _components()}
 
 
 def _fetch_issues() -> None:
-    response = omnicrawler_sdk.call("network.fetch", {"url": REPO_ISSUES_URL})
-    status = int(response.get("status", 0))
-    body = base64.b64decode(str(response.get("body_b64", "")))
-    if status != 200:
-        _state["error"] = f"GitHub API 返回 {status}"
-        _state["issues"] = []
+    now = time.monotonic()
+    if now < _state["retry_after"]:
+        _state["error"] = "GitHub API 限流，请稍后重试"
         return
-    payload = json.loads(body.decode("utf-8"))
-    issues = []
-    for item in payload if isinstance(payload, list) else []:
-        if "pull_request" in item:  # GitHub API 的 PR 也出现在 issues 端点，排除
-            continue
-        issues.append(
-            {
-                "number": int(item.get("number", 0)),
-                "title": str(item.get("title", ""))[:200],
+    if _state["last_attempt"] is not None and now - _state["last_attempt"] < REFRESH_INTERVAL:
+        _state["error"] = "刷新间隔至少 30 秒，请稍后再试"
+        return
+    _state["last_attempt"] = now
+    issues, seen = [], set()
+    complete = False
+    for page in range(1, MAX_PAGES + 1):
+        url = REPO_ISSUES_URL + f"&page={page}"
+        response = omnicrawler_sdk.call("network.fetch", {"url": url})
+        status = int(response.get("status", 0))
+        if status != 200:
+            _state["error"] = f"GitHub API 返回 {status}"
+            if status in {403, 429}:
+                _state["retry_after"] = time.monotonic() + 60
+                _state["error"] += "；可能达到配额或访问受限，至少等待 60 秒"
+            return
+        body = base64.b64decode(str(response.get("body_b64", "")), validate=True)
+        data = json.loads(body.decode("utf-8"))
+        if not isinstance(data, list):
+            raise ValueError("GitHub 返回了无效列表")
+        for item in data:
+            if not isinstance(item, dict) or "pull_request" in item:
+                continue
+            number = item.get("number")
+            if isinstance(number, bool) or not isinstance(number, int) or number <= 0 or number in seen:
+                continue
+            seen.add(number)
+            issues.append({"number": number, "title": str(item.get("title") or "无标题")[:200],
                 "state": str(item.get("state", "open")),
-                "html_url": str(item.get("html_url", "")),
-            }
-        )
-    _state["issues"] = issues
-    _state["error"] = ""
-    _state["fetched"] = True
+                "html_url": f"https://github.com/Starlife-creator/omnicrawler/issues/{number}",
+                "labels": [str(t.get("name", ""))[:80] for t in item.get("labels", []) if isinstance(t, dict) and t.get("name")]})
+        if len(data) < PAGE_SIZE:
+            complete = True
+            break
+    # Publish only a fully successful bounded refresh; failures leave the old list intact.
+    _state.update(issues=issues, error="", fetched=True, complete=complete,
+        updated_at=datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"))
 
 
 def handle(operation: str, payload: dict) -> dict:
@@ -133,24 +132,29 @@ def handle(operation: str, payload: dict) -> dict:
     if operation != "view.action":
         return {"handled": False}
     action = str(payload.get("action", ""))
-    value = payload.get("payload", {})
+    value = payload.get("payload") or {}
     value = value if isinstance(value, dict) else {}
     if action == "refresh":
         try:
             _fetch_issues()
-        except Exception as exc:  # noqa: BLE001 - 任何异常都收敛为面板内错误文案
-            _state["error"] = str(exc)[:200]
-            _state["fetched"] = True
-        message = (
-            f"已刷新：{len(_state['issues'])} 个开放 Issues"
-            if not _state["error"]
-            else f"刷新失败：{_state['error']}"
-        )
+        except Exception:
+            _state["error"] = "网络或响应解析失败，请稍后重试"
+        message = f"已刷新：{len(_state['issues'])} 个开放 Issues" if not _state["error"] else f"刷新失败：{_state['error']}"
         return {"view": _view(), "message": message}
+    if action == "search":
+        _state["query"] = str(value.get("value") or "")[:200]
+        return {"view": _view()}
+    if action == "filter-label":
+        label = str(value.get("value") or "all")
+        allowed = {"all"} | {t for i in _state["issues"] for t in i.get("labels", [])}
+        if label in allowed:
+            _state["label"] = label
+        return {"view": _view()}
     if action == "open-issue":
         number = str(value.get("item_id", ""))
         match = next((i for i in _state["issues"] if str(i["number"]) == number), None)
         if match is None:
             return {"message": "条目已过期，请刷新"}
-        return {"message": f"{match['title']}\n{match['html_url']}"}
+        _state["selected"] = number
+        return {"view": _view(), "message": f"{match['title']}\n{match['html_url']}"}
     return {"handled": False}

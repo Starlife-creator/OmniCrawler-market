@@ -31,11 +31,11 @@ class TestCookieMonitor:
 class TestDistributedLock:
     def test_lock_key_format(self):
         lock = _DistributedLock({"institution": {"proxy_url": "http://test"}})
-        key = lock._key
-        assert "apd_lock_" in key
+        assert isinstance(lock._directory, Path)
 
     def test_acquire_degrade_on_sdk_error(self):
         """SDK 不可用时降级为允许下载。"""
         lock = _DistributedLock({})
         result = lock.acquire("99.9999/test")
-        assert result is True  # 降级
+        assert result is True  # 本地 OS 锁不依赖 SDK
+        lock.release("99.9999/test")
