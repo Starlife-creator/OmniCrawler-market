@@ -1,0 +1,27 @@
+# Requires the newly signed upstream-lantern package.
+project:
+  name: upstream-monitor
+  workspace: work/upstream-monitor
+plugins:
+  paths: [../plugin.py]
+source:
+  kind: upstream-lantern
+  seeds: [https://api.github.com/repos/psf/requests]
+  params:
+    feeds: [releases, workflow_runs]
+    per_page: 30
+    pages: 3
+    max_requests: 6
+    adaptive_pagination: true
+    track_changes: true
+extract:
+  extractor: upstream-lantern
+crawl:
+  allow_domains: [api.github.com]
+  max_pages: 6
+  max_depth: 2
+egress:
+  allowed_domains: [api.github.com]
+http:
+  respect_robots: true
+  delay_seconds: 1

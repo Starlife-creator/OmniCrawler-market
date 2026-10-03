@@ -1,11 +1,11 @@
 id: issue-wishlist
 name: issue-wishlist
-version: 1.0.0
+version: 1.1.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: view
 summary: 官方需求清单：只读浏览 OmniCrawler 仓库的开放 Issues
-description_file: plugins/issue-wishlist/listing.md
+description_file: plugins/issue-wishlist/versions/1.1.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.14.0'
 license: MIT
@@ -15,15 +15,15 @@ tags:
 - roadmap
 - 官方
 - 只读
-updated_at: '2026-09-24'
-creator_signature_file: plugins/issue-wishlist/creator.sig
-creator_identity_file: plugins/issue-wishlist/creator.identity
-package_manifest_file: plugins/issue-wishlist/package.manifest.json
-creator_package_signature_file: plugins/issue-wishlist/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/issue-wishlist/package.manifest.maintainer.sig
-package_manifest_sha256: 03708885a0fe64651d93fcf79ccdd5d13565d82244bce7ecdd39cf73b7774f68
-plugin_file: plugins/issue-wishlist/plugin.py
-signature_file: plugins/issue-wishlist/plugin.py.sig
+updated_at: '2026-10-03'
+creator_signature_file: plugins/issue-wishlist/versions/1.1.0/creator.sig
+creator_identity_file: plugins/issue-wishlist/versions/1.1.0/creator.identity
+package_manifest_file: plugins/issue-wishlist/versions/1.1.0/package.manifest.json
+creator_package_signature_file: plugins/issue-wishlist/versions/1.1.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/issue-wishlist/versions/1.1.0/package.manifest.maintainer.sig
+package_manifest_sha256: 86df09336c940952b49b2ee75a488a19140d322b102b4a5f487ade8576cfb26c
+plugin_file: plugins/issue-wishlist/versions/1.1.0/plugin.py
+signature_file: plugins/issue-wishlist/versions/1.1.0/plugin.py.sig
 permissions:
 - network:scoped
 plugin_types:
