@@ -28,8 +28,8 @@ def test_view_is_static_link_panel(plugin: dict) -> None:
     (component,) = view["components"]
     assert component["type"] == "rich_text"
     links = [s for s in component["segments"] if s["type"] == "link"]
-    assert len(links) == 4
-    assert all(s["url"].startswith("https://github.com/Starlife-creator/omnicrawler") for s in links)
+    assert len(links) == 6
+    assert all(s["url"].startswith("https://github.com/Starlife-creator/") for s in links)
 
 
 def test_metadata_declares_zero_network(plugin: dict) -> None:

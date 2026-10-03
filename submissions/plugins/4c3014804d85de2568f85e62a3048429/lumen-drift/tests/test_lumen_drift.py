@@ -52,7 +52,7 @@ def setup_function() -> None:
 
 
 def test_metadata_uses_isolated_declarative_contract() -> None:
-    assert plugin.PLUGIN_METADATA["version"] == "0.4.0"
+    assert plugin.PLUGIN_METADATA["version"] == "0.5.0"
     assert plugin.PLUGIN_METADATA["plugin_types"] == ["resource_provider", "view"]
     assert plugin.PLUGIN_METADATA["execution_mode"] == "subprocess"
     assert "surfaces:background" in plugin.PLUGIN_METADATA["permissions"]

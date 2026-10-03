@@ -10,13 +10,13 @@
 from __future__ import annotations
 
 import csv
+import codecs
 import hashlib
 import html
 import io
 import json
 import logging
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -31,12 +31,7 @@ from pathlib import Path
 from typing import Any
 from typing import Callable
 from typing import Dict
-from typing import Generator
 from typing import List
-from typing import Optional
-from typing import Set
-from typing import Tuple
-from typing import Union
 from typing import Iterator
 
 try:
@@ -130,7 +125,7 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.6.4",
+    "version": "0.7.0",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
@@ -352,46 +347,57 @@ _PROXY_HEALTH = _ProxyHealthChecker()
 # 分布式锁（基于 state）
 # ---------------------------------------------------------------------------
 class _DistributedLock:
-    def __init__(self, config: dict) -> None:
-        self._config = config
-        self._key = f"apd_lock_{hashlib.md5(str(config).encode()).hexdigest()[:8]}"
+    """Workspace-local OS file lock; crash/exit releases it without stale TTL races.
+
+    Lock files remain as stable inodes. Never unlink a lock while another process
+    might be waiting on it. This is same-machine coordination, not a cluster lock.
+    """
+    def __init__(self, config: dict, workspace: Path | None = None) -> None:
+        self._directory = (workspace or _STATE_DIR or Path(tempfile.gettempdir()) / "apd-locks")
+        self._handles: dict[str, Any] = {}
 
     def acquire(self, doi: str, timeout: int = 300) -> bool:
-        """尝试获取锁，超时返回 False。"""
+        folder = self._directory / ".apd_locks"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (hashlib.sha256(doi.lower().encode()).hexdigest() + ".lock")
+        stream = open(path, "a+b")
         try:
-            import omnicrawler_sdk
-            lock_key = f"{self._key}_{doi.lower()}"
-            result = omnicrawler_sdk.call("state.get", {"key": lock_key})
-            if result and result.get("value"):
-                locked_at = float(result["value"])
-                if time.time() - locked_at < timeout:
-                    time.sleep(random.uniform(0, 0.3))  # 抖动，避免多实例蜂拥
-                    return False  # 已被锁定
-            omnicrawler_sdk.call("state.set", {"key": lock_key, "value": str(time.time())})
-            return True
-        except Exception:
-            return True  # 锁不可用时降级为允许下载
+            stream.seek(0, 2)
+            if stream.tell() == 0:
+                stream.write(b"0")
+                stream.flush()
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            stream.close()
+            return False
+        self._handles[doi.lower()] = stream
+        return True
 
     def release(self, doi: str) -> None:
-        """释放锁。"""
+        stream = self._handles.pop(doi.lower(), None)
+        if stream is None:
+            return
         try:
-            import omnicrawler_sdk
-            lock_key = f"{self._key}_{doi.lower()}"
-            omnicrawler_sdk.call("state.delete", {"key": lock_key})
-        except Exception:
-            pass
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
 
     @staticmethod
     def cleanup_stale_locks(config: dict, max_age: int = 3600) -> int:
-        """清理过期的锁（TTL 自动过期）。返回清理数量。"""
-        try:
-            import omnicrawler_sdk
-            prefix = f"apd_lock_{hashlib.md5(str(config).encode()).hexdigest()[:8]}_"
-            # 注意：state 存储不支持前缀查询，这里仅作演示
-            # 实际需要 state 存储支持 scan/keys 操作
-            return 0
-        except Exception:
-            return 0
+        # OS releases locks on crash; stable files must not be unlinked.
+        return 0
 
 # ---------------------------------------------------------------------------
 # 登录态监控
@@ -751,7 +757,17 @@ def _state_set(key: str, value: str) -> None:
         f = _state_file(key)
         if f is not None:
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(json.dumps({"v": 1, "value": value}, ensure_ascii=False), encoding="utf-8")
+            tmp = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=f.parent, prefix=f.name + ".", suffix=".tmp", delete=False) as stream:
+                    tmp = Path(stream.name)
+                    stream.write(json.dumps({"v": 1, "value": value}, ensure_ascii=False))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(tmp, f)
+            finally:
+                if tmp is not None and tmp.exists():
+                    tmp.unlink()
     except Exception:
         pass
 
@@ -1225,7 +1241,35 @@ def _parse_input_file_chunked(file_path: str, chunk_size: int = 500) -> Iterator
             pass
         return
 
-    # 非 Excel 直接返回全量
+    if suffix in (".csv", ".tsv"):
+        sample = path.open("rb")
+        try:
+            prefix = sample.read(8192)
+        finally:
+            sample.close()
+        encoding = None
+        for candidate in ("utf-8-sig", "gb18030", "gbk", "utf-16"):
+            try:
+                codecs.getincrementaldecoder(candidate)(errors="strict").decode(prefix, final=False)
+                encoding = candidate
+                break
+            except UnicodeError:
+                continue
+        if encoding is None:
+            return
+        with path.open("r", encoding=encoding, newline="") as stream:
+            reader = csv.DictReader(stream, delimiter="\t" if suffix == ".tsv" else ",")
+            buf = []
+            for row in reader:
+                if None in row:
+                    raise ValueError("输入行列数超过表头")
+                buf.append({str(k): str(v or "") for k, v in row.items()})
+                if len(buf) >= chunk_size:
+                    yield _normalize_tsv_headers(buf) if suffix == ".tsv" else buf
+                    buf = []
+            if buf:
+                yield _normalize_tsv_headers(buf) if suffix == ".tsv" else buf
+        return
     yield _parse_input_file(file_path)
 
 # ---------------------------------------------------------------------------
@@ -1247,6 +1291,10 @@ def _apply_runtime_tuning(config: dict) -> None:
         _OA_PRECHECK_CONCURRENCY = int(config["oa_precheck_concurrency"])
 
 def _seed(payload: dict) -> dict:
+    config = payload.get("config", {})
+    cfg_errors = _validate_config(config)
+    if cfg_errors:
+        return {"requests": [], "errors": [{"config": e} for e in cfg_errors], "warnings": cfg_errors}
     _reload_plugin_config()  # 外部配置热重载（mtime 变化才生效）
 
     # 应用配置到运行时常量（D3：收敛到单一函数）
@@ -1259,6 +1307,8 @@ def _seed(payload: dict) -> dict:
     file_path = payload.get("file_path", "")
     workspace = payload.get("workspace", ".")
     _set_state_dir(workspace)
+    _CANCEL_EVENT.clear()
+    _state_set(_CANCEL_KEY, "false")
     try:
         _view_sync_from_run(config, workspace)
     except Exception:
@@ -1290,6 +1340,8 @@ def _seed(payload: dict) -> dict:
     # 解析输入文件（分块，避免大文件 OOM）
     papers: list[dict[str, Any]] = []
     seen_rows = 0
+    eligible_count = 0
+    candidate_seen: set[str] = set()
     no_doi_rows = 0  # U3：无 DOI 的行显式计数，进 meta + warning（保证对账闭环）
     for chunk in _parse_input_file_chunked(str(safe_input)):
         for row in chunk:
@@ -1301,7 +1353,12 @@ def _seed(payload: dict) -> dict:
             doi_lower = doi.lower()
             if doi_lower in done_dois:
                 continue
-            papers.append({"doi": doi_lower, "row": row})
+            if doi_lower in candidate_seen:
+                continue
+            candidate_seen.add(doi_lower)
+            eligible_count += 1
+            if dry_run or len(papers) < config.get("max_per_session", 50):
+                papers.append({"doi": doi_lower, "row": row})
     if not papers and seen_rows == 0:
         return {"requests": [], "errors": [{"file": file_path, "reason": "empty_or_unreadable"}], "warnings": []}
 
@@ -1346,6 +1403,8 @@ def _seed(payload: dict) -> dict:
 
     # 把预检结果按 DOI 回填到请求的 is_oa
     warnings: list[str] = []
+    if not dry_run and eligible_count > len(requests):
+        warnings.append(f"超过 max_per_session={config.get('max_per_session', 50)}，仅前 {len(requests)} 篇入队，其余可在下次增量续跑")
     for r in requests:
         doi = r["meta"]["paper"]["doi"]
         publisher = r["meta"]["paper"]["publisher"]
@@ -1621,7 +1680,28 @@ class _PdfTooLarge(Exception):
 # 共享 HTTP 客户端（连接池复用，线程安全）
 _HTTP_CLIENT: httpx.Client | None = None
 _HTTP_CLIENT_PROXY: str = ""
-_HTTP_CLIENT_LOCK = threading.Lock()
+_HTTP_CLIENT_LOCK = threading.RLock()
+_HTTP_CLIENT_USERS: dict[int, int] = {}
+_RETIRED_HTTP_CLIENTS: list[Any] = []
+
+
+def _close_http_clients() -> None:
+    global _HTTP_CLIENT, _HTTP_CLIENT_PROXY
+    with _HTTP_CLIENT_LOCK:
+        clients = _RETIRED_HTTP_CLIENTS[:]
+        _RETIRED_HTTP_CLIENTS.clear()
+        if _HTTP_CLIENT is not None:
+            clients.append(_HTTP_CLIENT)
+        _HTTP_CLIENT, _HTTP_CLIENT_PROXY = None, ""
+    for client in clients:
+        try:
+            client.close()
+        except Exception as exc:
+            _log("http_client_close_failed", level=logging.DEBUG, error=type(exc).__name__)
+
+
+import atexit
+atexit.register(_close_http_clients)
 
 
 def _get_http_client() -> httpx.Client:
@@ -1642,6 +1722,7 @@ def _get_http_client() -> httpx.Client:
         if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed or _HTTP_CLIENT_PROXY != proxy:
             max_conn = int(_get_config_value(config, "http_pool_max_connections", 20))
             max_keepalive = int(_get_config_value(config, "http_pool_max_keepalive", 10))
+            old_client = _HTTP_CLIENT
             _HTTP_CLIENT = httpx.Client(
                 timeout=60.0,
                 limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_keepalive),
@@ -1649,16 +1730,42 @@ def _get_http_client() -> httpx.Client:
                 proxy=proxy or None,
             )
             _HTTP_CLIENT_PROXY = proxy
+            if old_client is not None and not old_client.is_closed:
+                _RETIRED_HTTP_CLIENTS.append(old_client) if _HTTP_CLIENT_USERS.get(id(old_client), 0) else old_client.close()
         return _HTTP_CLIENT
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _client_stream(*args, **kwargs):
+    # Retire clients only after every stream using that client has exited.
+    with _HTTP_CLIENT_LOCK:
+        client = _get_http_client()
+        identity = id(client)
+        _HTTP_CLIENT_USERS[identity] = _HTTP_CLIENT_USERS.get(identity, 0) + 1
+    try:
+        with client.stream(*args, **kwargs) as response:
+            yield response
+    finally:
+        with _HTTP_CLIENT_LOCK:
+            users = _HTTP_CLIENT_USERS.get(identity, 1) - 1
+            if users:
+                _HTTP_CLIENT_USERS[identity] = users
+            else:
+                _HTTP_CLIENT_USERS.pop(identity, None)
+                if client in _RETIRED_HTTP_CLIENTS:
+                    _RETIRED_HTTP_CLIENTS.remove(client)
+                    client.close()
 
 
 def _fetch_pdf(pdf_url: str, headers: dict, cookies: dict, timeout: int = 60) -> tuple[bytes | None, int | None]:
     """内存下载（供最小链路复用），带大小上限。返回 (content, status_code)。"""
     if not _HAS_HTTPX:
         return None, None
-    client = _get_http_client()
     try:
-        with client.stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
+        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
             if resp.status_code != 200:
                 return None, resp.status_code
             ct = resp.headers.get("content-type", "")
@@ -1684,9 +1791,8 @@ def _stream_pdf(pdf_url: str, headers: dict, cookies: dict, timeout: int, dest: 
     """流式写到临时文件（正文不驻留内存），超限即中断清理。返回 (path, status_code)。"""
     if not _HAS_HTTPX:
         return None, None
-    client = _get_http_client()
     try:
-        with client.stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
+        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
             if resp.status_code != 200:
                 return None, resp.status_code
             ct = resp.headers.get("content-type", "")
@@ -1856,6 +1962,12 @@ def _get_concurrency_controller(config: ConfigDict) -> _ConcurrencyController:
 # ---------------------------------------------------------------------------
 def _process(payload: dict) -> dict:
     """完整三层降级 + 并发控制 + 分布式锁。"""
+    config_errors = _validate_config(payload.get("config", {}))
+    if config_errors:
+        return {"records": [], "errors": [{"config": e} for e in config_errors]}
+    _set_state_dir(payload.get("workspace", "."))
+    if _cancel_requested():
+        return {"records": [], "errors": [{"doi": (payload.get("paper") or {}).get("doi", ""), "error_class": "cancelled", "reason": "用户取消；已完成的增量状态保留", "retryable": False}]}
     _reload_plugin_config()  # 外部配置热重载（mtime 变化才生效）
     paper = payload.get("paper", {})
     config = payload.get("config", {})
@@ -1864,7 +1976,7 @@ def _process(payload: dict) -> dict:
 
     doi = paper.get("doi", "")
 
-    lock = _DistributedLock(config)
+    lock = _DistributedLock(config, workspace)
     if not lock.acquire(doi):
         return {"records": [], "errors": [{"doi": doi, "reason": "already_downloading"}], "progress": progress}
 
@@ -2105,6 +2217,26 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
                      "eta_seconds": round(eta), "speed_papers_per_min": round(speed * 60, 2)},
     }
 
+from functools import wraps
+
+
+def _serialize_state_lists(function):
+    @wraps(function)
+    def wrapped(config, *args, **kwargs):
+        lock = _DistributedLock(config, _STATE_DIR)
+        deadline = time.monotonic() + 5
+        while not lock.acquire("__state_index__"):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("增量索引正在写入，请重试")
+            time.sleep(0.01)
+        try:
+            return function(config, *args, **kwargs)
+        finally:
+            lock.release("__state_index__")
+    return wrapped
+
+
+@_serialize_state_lists
 def _mark_done(config: dict, doi: str, record: dict | None = None) -> None:
     """记录成功论文：完整记录存 per-DOI 键（O(1)），done 列表只存 DOI 并限量。"""
     try:
@@ -2156,6 +2288,7 @@ def _load_done_records(config: dict) -> tuple[list, list]:
 
 _RETRYABLE_CLASSES = {"network", "rate_limit", "server_error"}
 
+@_serialize_state_lists
 def _mark_failed(config: dict, doi: str, layer: str, error_class: str = "unknown",
                  title: str = "", first_author: str = "", year: str = "") -> None:
     """记录失败文献：结构化字段（doi/layer/error_class）+ 人类可读 reason + 可重试标记。
@@ -2210,10 +2343,9 @@ def _http_download_with_cookie(doi: str, publisher: str, cookies: dict, config: 
         return None
     _set_download_config(config)
     try:
-        client = _get_http_client()
         headers = _build_headers(publisher)
         # 只流式读响应头校验，不下载正文（正文统一由 _download_with_retry 下载一次）
-        with client.stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=60) as resp:
+        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=60) as resp:
             ct = resp.headers.get("content-type", "")
             if resp.status_code == 200 and "pdf" in ct:
                 return pdf_url
@@ -2818,6 +2950,8 @@ def _rerun_failed(config: dict, workspace: Path, results: list, failed: list,
     new_results: list = []
     new_failed: list = []
     for i, paper in enumerate(papers, 1):
+        if _cancel_requested():
+            break
         res = runner(paper)
         ok = bool(res.get("records"))
         new_results.extend(res.get("records", []))
@@ -2853,7 +2987,7 @@ def _prompt_proxy_and_retry(config: dict, workspace: Path, results: list,
     （含面板选择的代理）。非交互环境（stdin 关闭/EOF/用户 Ctrl-C）→ 静默跳过，
     流程绝不因此中断。回车空输入 = 明确跳过。返回 (results, failed, retried_count)。
     """
-    if not config.get("retry_prompt_proxy", False):
+    if _cancel_requested() or not config.get("retry_prompt_proxy", False):
         return results, failed, 0
     if not failed:
         return results, failed, 0
@@ -2893,7 +3027,7 @@ def _deferred_headed_pass(config: dict, workspace: Path, results: list,
     对 bot_blocked/captcha 失败集中走一轮**串行有头浏览器**——用户在场时可顺手
     过掉人机验证。成功者并入 results，仍失败者覆盖原因。返回 (results, failed, saved)。
     """
-    if not config.get("defer_headed", True):
+    if _cancel_requested() or not config.get("defer_headed", True):
         return results, failed, 0
     # v0.6.3 收紧（用户定案）：有头 = 只服务"需要人机验证"的失败。
     # bot_blocked（挑战页）/captcha（验证码）→ 需要人；auth_required/unknown 等
@@ -2955,6 +3089,8 @@ def _retry_transient_pass(config: dict, workspace: Path, results: list,
     机会**。本轮补上：无头、无弹窗、只跑一轮；rate_limit 类失败每篇前留
     5s 缓冲给限流窗口。
     """
+    if _cancel_requested():
+        return results, failed, 0
     targets = [f for f in failed if isinstance(f, dict) and f.get("retryable")]
     if not targets:
         return results, failed, 0
@@ -2988,6 +3124,8 @@ def _after_run(payload: dict) -> dict:
     workspace = Path(payload.get("workspace", ".")).resolve()
     config = payload.get("config", {})
     _set_state_dir(workspace)
+    _CANCEL_EVENT.clear()
+    _state_set(_CANCEL_KEY, "false")
     try:
         _view_sync_from_run(config, workspace)
     except Exception:
@@ -3125,6 +3263,8 @@ def _check_robots_txt(domain: str) -> bool:
 # ---------------------------------------------------------------------------
 def _before_run(payload: dict) -> dict:
     """运行前检查代理健康、登录态、robots.txt。"""
+    _CANCEL_EVENT.clear()
+    _state_set(_CANCEL_KEY, "false")
     config = payload.get("config", {})
     proxy_list = config.get("institution", {}).get("proxy_list", [])
     if proxy_list:
@@ -3152,14 +3292,39 @@ def _campus_direct(config: dict) -> bool:
     return bool(config.get("campus_ip", False)) or bool((config.get("institution") or {}).get("campus_ip", False))
 
 def _validate_config(config: dict) -> list[str]:
+    if not isinstance(config, dict):
+        return ["config 必须是对象"]
     errors = []
     level = config.get("level", 1)
-    if level not in (1, 2, 3): errors.append("level 必须是 1/2/3")
-    # v0.3.2：Level 3 不再要求 proxy_url/login_url/campus_ip 前置配置。
-    # 机构层改为“直接用当前网络尝试，结果判定”：在校园网 → 成功；
-    # 普通网络 → 失败并按 error_class 记录原因后继续队列，不再中断流程等待人工确认。
-    if config.get("delay_min", 3) < 1: errors.append("delay_min 建议 >= 1")
-    if config.get("max_per_session", 50) > 200: errors.append("max_per_session 建议 <= 200")
+    if isinstance(level, bool) or not isinstance(level, int) or level not in (1, 2, 3):
+        errors.append("level 必须是 1/2/3")
+    integers = {"max_pdf_bytes": (1024, 1024 * 1024 * 1024), "done_doi_cap": (1, 100000),
+        "oa_precheck_limit": (0, 100000), "oa_precheck_concurrency": (1, 32),
+        "max_concurrent": (1, 32), "max_per_session": (1, 200),
+        "http_pool_max_connections": (1, 200), "http_pool_max_keepalive": (0, 200),
+        "headed_solve_timeout": (1, 3600)}
+    for key, (low, high) in integers.items():
+        if key not in config:
+            continue
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            errors.append("max_per_session 建议 <= 200 且 >= 1" if key == "max_per_session" else f"{key} 必须是 {low}..{high} 的整数")
+    for key in ("delay_min", "delay_max", "retry_base_delay", "retry_max_delay", "challenge_wait_timeout"):
+        if key not in config:
+            continue
+        value = config[key]
+        low = 1 if key == "delay_min" else 0
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= 3600:
+            errors.append("delay_min 建议 >= 1 且 <= 3600" if key == "delay_min" else f"{key} 必须是 {low}..3600 的数值")
+    institution = config.get("institution", {})
+    if not isinstance(institution, dict):
+        errors.append("institution 必须是对象")
+    else:
+        for key in ("proxy_url", "login_url"):
+            if key in institution and not isinstance(institution[key], str):
+                errors.append(f"institution.{key} 必须是字符串")
+        if "proxy_list" in institution and (not isinstance(institution["proxy_list"], list) or any(not isinstance(p, str) for p in institution["proxy_list"])):
+            errors.append("institution.proxy_list 必须是字符串列表")
     return errors
 
 # ---------------------------------------------------------------------------
@@ -3179,6 +3344,16 @@ _VIEW_ID = "academic-paper-downloader.main"
 _LOGIN_THREAD: threading.Thread | None = None
 # U6：批处理计数器（面板进度用），_seed 时重置
 _RUN_STATS: dict = {"success": 0, "failed": 0}
+_CANCEL_EVENT = threading.Event()
+_CANCEL_KEY = "apd_cancel_requested"
+
+
+def _cancel_requested() -> bool:
+    # Shared host state bridges view and processing subprocess sessions.
+    result = _state_get(_CANCEL_KEY)
+    if isinstance(result, dict) and result.get("value") == "true":
+        return True
+    return _CANCEL_EVENT.is_set()
 
 def _report_view_progress(done: int, total: int, current_doi: str, eta_seconds: float,
                           success: int, failed: int) -> None:
@@ -3268,6 +3443,7 @@ def _view_components() -> list:
         {"type": "button", "id": "clear-login", "label": "清除登录态", "action": "clear-login"},
         {"type": "button", "id": "refresh", "label": "刷新状态", "action": "refresh"},
         {"type": "label", "id": "message", "label": "消息", "text": str(data.get("message", "就绪"))},
+        {"type": "button", "id": "cancel-downloads", "label": "取消后续下载", "action": "cancel-downloads"},
     ]
 
 def _view() -> dict:
@@ -3306,15 +3482,19 @@ def _view_open_login() -> dict:
         _view_cfg_save(data2)
         _LOGIN_THREAD = None
 
-    _LOGIN_THREAD = threading.Thread(target=_work, daemon=True)
-    _LOGIN_THREAD.start()
     data["message"] = "登录窗口已打开，请在窗口中完成登录（含验证码），完成后点“刷新状态”"
     _view_cfg_save(data)
+    _LOGIN_THREAD = threading.Thread(target=_work, daemon=True)
+    _LOGIN_THREAD.start()
     return {"view": _view(), "message": data["message"]}
 
 def _view_action(payload: dict) -> dict:
     action = str((payload or {}).get("action", ""))
     value = str(((payload or {}).get("payload") or {}).get("value", "")).strip()[:512]
+    if action == "cancel-downloads":
+        _CANCEL_EVENT.set()
+        _state_set(_CANCEL_KEY, "true")
+        return {"view": _view(), "message": "已请求取消：当前网络操作完成后停止，已完成记录可续跑"}
     if action == "open-login":
         return _view_open_login()
     if action == "configure-proxy":
@@ -3349,7 +3529,11 @@ def _view_action(payload: dict) -> dict:
 def handle(operation: str, payload: dict) -> dict:
     if operation == "source.seed": return _seed(payload)
     if operation == "processor.process": return _process(payload)
-    if operation == "hook.after_run": return _after_run(payload)
+    if operation == "hook.after_run":
+        try:
+            return _after_run(payload)
+        finally:
+            _close_http_clients()
     if operation == "hook.before_run": return _before_run(payload)
     if operation == "view.describe": return {"view": _view()}
     if operation == "view.action": return _view_action(payload)

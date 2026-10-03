@@ -5,19 +5,17 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
-import io
 import json
 import re
 import uuid
-import zlib
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
 
 PLUGIN_METADATA = {
     "name": "chronicle-capsule",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "api_version": 1,
     "description": "以隐私、元数据或原始保全模式生成有界 WARC 1.1 归档",
     "plugin_types": ["exporter"],
@@ -43,6 +41,29 @@ PLUGIN_METADATA = {
 
 SENSITIVE_KEY = re.compile(r"(?:authorization|cookie|token|secret|password|api[_-]?key)", re.I)
 MAX_RECORDS = 5000
+URL_PATTERN = re.compile(r"https?://[^\s<>\"]+", re.I)
+VALUE_SECRET = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/-]+=*|((?:token|password|secret|api[_-]?key)\s*[=:]\s*)[^\s&,;]+")
+
+
+def redact_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"}:
+            return value
+        host = parts.hostname or ""
+        if ":" in host:
+            host = "[" + host + "]"
+        if parts.port:
+            host += ":" + str(parts.port)
+        query = [(k, "[REDACTED]" if SENSITIVE_KEY.search(k) else v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
+        return urlunsplit((parts.scheme, host, parts.path, urlencode(query), "[REDACTED]" if parts.fragment else ""))
+    except ValueError:
+        return "[REDACTED INVALID URL]"
+
+
+def redact_text(value: str) -> str:
+    value = URL_PATTERN.sub(lambda m: redact_url(m.group(0)), value)
+    return VALUE_SECRET.sub(lambda m: (m.group(1) or m.group(2)) + "[REDACTED]", value)
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 WRITE_CHUNK_BYTES = 512 * 1024
 
@@ -55,6 +76,8 @@ def redact(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [redact(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 
@@ -70,6 +93,7 @@ def _warc_payload(
     *,
     media_type: str = "application/octet-stream",
     record_type: str = "resource",
+    truncated: bool = False,
 ) -> bytes:
     digest = hashlib.sha256(payload).hexdigest()
     safe_media_type = media_type.replace("\r", "").replace("\n", "")[:200]
@@ -85,13 +109,15 @@ def _warc_payload(
         "",
         "",
     ]
+    if truncated:
+        headers.insert(-2, "WARC-Truncated: length")
     return "\r\n".join(headers).encode("ascii") + payload + b"\r\n\r\n"
 
 
 def _warc_record(record: dict[str, Any], timestamp: str) -> bytes:
     safe = redact(record)
     payload = json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    target = record.get("source_url") or f"urn:omnicrawler:record:{record.get('record_id', 'unknown')}"
+    target = safe.get("source_url") or f"urn:omnicrawler:record:{record.get('record_id', 'unknown')}"
     return _warc_payload(
         str(target), payload, timestamp, media_type="application/json; charset=utf-8"
     )
@@ -103,29 +129,31 @@ def build_archive(
     """Small in-memory helper retained for tests and private-folder use."""
 
     timestamp = created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    raw = b"".join(_warc_record(record, timestamp) for record in records)
-    if len(raw) > MAX_ARCHIVE_BYTES:
+    chunks = [_warc_record(record, timestamp) for record in records]
+    raw_size = sum(map(len, chunks))
+    if raw_size > MAX_ARCHIVE_BYTES:
         raise ValueError("归档未压缩载荷超过 25 MiB 安全上限")
-    output = io.BytesIO()
-    with gzip.GzipFile(fileobj=output, mode="wb", filename="", mtime=0) as stream:
-        stream.write(raw)
-    archive = output.getvalue()
+    archive = b"".join(gzip.compress(chunk, compresslevel=6, mtime=0) for chunk in chunks)
     return archive, {
         "format": "WARC/1.1",
         "records": len(records),
-        "uncompressed_bytes": len(raw),
+        "uncompressed_bytes": raw_size,
         "archive_bytes": len(archive),
         "sha256": hashlib.sha256(archive).hexdigest(),
-        "redaction": "sensitive-key-recursive-v1",
+        "redaction": "sensitive-key-url-and-pattern-v2",
     }
 
 
 def _pages(sdk: Any, operation: str, key: str, limit: int) -> Iterator[dict[str, Any]]:
     cursor = None
     remaining = limit
+    seen_cursors = set()
     while remaining > 0:
         request = {"limit": min(250, remaining)}
         if cursor:
+            if cursor in seen_cursors:
+                raise ValueError("分页游标重复，归档已中止")
+            seen_cursors.add(cursor)
             request["cursor"] = cursor
         page = sdk.call(operation, request)
         items = list(page.get(key) or [])
@@ -161,6 +189,7 @@ def _iter_warc_records(
     for response in _pages(sdk, "responses.page", "responses", limit):
         target = str(response.get("final_url") or response.get("url") or "")
         if mode == "metadata":
+            target = redact_url(target)
             content = json.dumps(
                 redact(response), ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")
@@ -178,7 +207,9 @@ def _iter_warc_records(
             {"response_ref": response_ref, "maximum_bytes": max(1, min(remaining, 16 * 1024 * 1024))},
         )
         try:
-            content = base64.b64decode(str(result.get("content_b64") or ""), validate=True)
+            if "content_b64" not in result:
+                raise ValueError("missing payload")
+            content = base64.b64decode(str(result["content_b64"]), validate=True)
         except (ValueError, TypeError):
             stats["missing_payloads"] += 1
             continue
@@ -188,8 +219,11 @@ def _iter_warc_records(
             target,
             content,
             timestamp,
+            # Payload capability exposes body only, not an HTTP status/header block.
+            # A resource record is interoperable without inventing an HTTP response.
             media_type=str(response.get("content_type") or "application/octet-stream"),
-            record_type="response",
+            record_type="resource",
+            truncated=bool(result.get("truncated")),
         )
 
 
@@ -202,7 +236,12 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     mode = str(options.get("mode", "privacy")).casefold()
     if mode not in {"privacy", "metadata", "preservation"}:
         mode = "privacy"
-    limit = max(1, min(int(options.get("max_records", 1000)), MAX_RECORDS))
+    try:
+        if isinstance(options.get("max_records"), bool):
+            raise ValueError("boolean limit")
+        limit = max(1, min(int(options.get("max_records", 1000)), MAX_RECORDS))
+    except (TypeError, ValueError):
+        raise ValueError("max_records 必须是整数") from None
     name = str(options.get("name") or f"chronicle-capsule-{mode}.warc.gz")
     if not name.endswith(".warc.gz") or "/" in name or "\\" in name:
         name = f"chronicle-capsule-{mode}.warc.gz"
@@ -210,7 +249,8 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         "artifact.stream.open", {"name": name, "media_type": "application/warc+gzip"}
     )
     handle_id = str(opened["handle"])
-    compressor = zlib.compressobj(level=9, method=zlib.DEFLATED, wbits=31)
+    digest = hashlib.sha256()
+    archive_bytes = 0
     stats = {
         "records": 0,
         "uncompressed_bytes": 0,
@@ -224,8 +264,16 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             if stats["uncompressed_bytes"] > MAX_ARCHIVE_BYTES:
                 raise ValueError("归档未压缩载荷超过 25 MiB 安全上限")
             stats["records"] += 1
-            _write_chunk(omnicrawler_sdk, handle_id, compressor.compress(warc_record))
-        _write_chunk(omnicrawler_sdk, handle_id, compressor.flush())
+            # One gzip member per WARC record supports independent seeking/readers.
+            compressed = gzip.compress(warc_record, compresslevel=6, mtime=0)
+            digest.update(compressed)
+            archive_bytes += len(compressed)
+            _write_chunk(omnicrawler_sdk, handle_id, compressed)
+            if stats["records"] % 25 == 0 or stats["records"] == limit:
+                try:
+                    omnicrawler_sdk.call("view.progress", {"done": stats["records"], "total": limit})
+                except Exception:
+                    pass
         artifact = omnicrawler_sdk.call("artifact.stream.commit", {"handle": handle_id})
     except Exception:
         try:
@@ -239,6 +287,14 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             **stats,
             "format": "WARC/1.1",
             "mode": mode,
-            "redaction": "sensitive-key-recursive-v1" if mode != "preservation" else "none",
+            "archive_bytes": archive_bytes,
+            "sha256": digest.hexdigest(),
+            "max_records": limit,
+            "record_limit_reached": stats["records"] == limit,
+            "maximum_uncompressed_bytes": MAX_ARCHIVE_BYTES,
+            "payload_representation": "body-only-resource" if mode == "preservation" else "redacted-json",
+            "complete_payloads": stats["records"] - stats["truncated_payloads"],
+            "redaction_scope": "字段名、URL 凭据与敏感查询参数、Bearer 及常见密钥模式；不保证识别所有正文秘密" if mode != "preservation" else "无脱敏",
+            "redaction": "sensitive-key-url-and-pattern-v2" if mode != "preservation" else "none",
         },
     }

@@ -271,9 +271,10 @@ class TestProcessIsolation:
         assert isinstance(reason, str) and reason  # 必须回传一个可读原因
         assert reason not in ("timeout",)  # 60s 预算内不该超时
 
-    def test_timeout_kills_child(self):
+    def test_timeout_kills_child(self, monkeypatch):
         """真实超时路径：子进程 import 插件需要数秒 ⇒ 1s 看门狗必超时，
         验证超时分支返回 (None, 'timeout') 且进程被击杀。"""
+        monkeypatch.setattr(plugin_module, "_BROWSER_CHILD_CODE", "import time; time.sleep(30)")
         payload = {"doi": "10.1/x", "publisher": "unknown-pub", "home": "https://doi.org",
                    "cookies": [], "config": {}, "headless": True}
         t0 = time.time()

@@ -1,7 +1,7 @@
 {
-    "creator_fingerprint":  "4c3014804d85de2568f85e62a3048429",
-    "package_manifest_sha256":  "3d1b1fcb3c61ba69b6d2d65ab24239e7bf9f18da0095b9eab79e3fe6341a73e3",
-    "requested_username":  "starlife",
-    "schema_version":  1,
-    "status":  "creator_signed"
+  "schema_version": 1,
+  "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+  "package_manifest_sha256": "b1626fba1607f49e43e9be5ecf328febed8812c4f9a884b30c6a974901198660",
+  "requested_username": "starlife",
+  "status": "creator_signed"
 }

@@ -1,15 +1,19 @@
 """Upstream Lantern: bounded discovery for public GitHub upstream signals."""
 
+import base64
+import hashlib
+import json
 from datetime import datetime
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 PLUGIN_METADATA = {
     "name": "upstream-lantern",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "api_version": 1,
     "description": "将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求",
-    "plugin_types": ["source"],
-    "permissions": [],
+    "plugin_types": ["source", "extractor"],
+    "permissions": ["state:read", "state:write"],
+    "state_schema_version": 1,
     "domains": ["api.github.com"],
     "input_files": [],
     "dependencies": [],
@@ -66,6 +70,8 @@ _PRESETS = {
 _PARAM_FIELDS = frozenset(
     {
         "advisory_packages",
+        "adaptive_pagination",
+        "track_changes",
         "feeds",
         "max_requests",
         "pages",
@@ -609,7 +615,17 @@ def _seed(payload):
             errors,
         )
     )
+    for field in ("adaptive_pagination", "track_changes"):
+        if field in params and not isinstance(params[field], bool):
+            errors.append(f"source.params.{field} 必须是布尔值")
     planned_requests = len(requests)
+    if not errors:
+        for request in requests:
+            request["meta"].update({"track_changes": bool(params.get("track_changes", False)),
+                "adaptive_pagination": bool(params.get("adaptive_pagination", False)),
+                "page_limit": pages, "per_page": per_page})
+        if params.get("adaptive_pagination"):
+            requests = [r for r in requests if r["meta"].get("page", 1) == 1]
     if planned_requests > max_requests:
         errors.append(
             "计划请求数超过 source.params.max_requests："
@@ -636,8 +652,79 @@ def _seed(payload):
     }
 
 
+def _extract(payload):
+    result = payload.get("result") or {}
+    request = result.get("request") or {}
+    meta = request.get("meta") or result.get("meta") or {}
+    source_url = str(result.get("final_url") or result.get("url") or request.get("url") or "")
+    status = int(result.get("status") or 0)
+    signal = str(meta.get("lantern_signal") or "unknown")
+    subject = str(meta.get("repository") or meta.get("package") or "")
+    if status == 304:
+        return {"records": [], "requests": [], "summary": {"status": "revalidated", "complete": True}}
+    if not 200 <= status < 300:
+        error = "rate_limited_or_forbidden" if status in {403, 429} else "not_found_or_private" if status == 404 else "http_error"
+        return {"records": [{"source_url": source_url, "record_type": "upstream_error",
+            "data": {"signal": signal, "subject": subject, "http_status": status, "reason": error, "complete": False}}], "requests": []}
+    try:
+        data = json.loads(base64.b64decode(str(result.get("body_b64") or ""), validate=True).decode("utf-8"))
+    except (ValueError, TypeError, UnicodeError):
+        return {"records": [{"source_url": source_url, "record_type": "upstream_error", "data": {"signal": signal, "reason": "invalid_json", "complete": False}}], "requests": []}
+    raw_items = data.get("workflow_runs", []) if signal == "workflow_runs" and isinstance(data, dict) else data
+    items = raw_items if isinstance(raw_items, list) else [raw_items]
+    records = []
+    for item in items[:100]:
+        if not isinstance(item, dict):
+            continue
+        identity = str(item.get("id") or item.get("ghsa_id") or item.get("sha") or item.get("tag_name") or item.get("name") or subject)
+        concise = {"signal": signal, "subject": subject, "id": identity,
+            "title": str(item.get("name") or item.get("title") or item.get("summary") or item.get("tag_name") or item.get("commit", {}).get("message", ""))[:500],
+            "url": str(item.get("html_url") or "")[:1000]}
+        for field in ("tag_name", "published_at", "prerelease", "draft", "status", "conclusion", "severity", "score", "default_branch", "archived"):
+            if field in item:
+                concise[field] = item[field]
+        digest = hashlib.sha256(json.dumps(concise, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        change = "untracked"
+        if meta.get("track_changes"):
+            try:
+                import omnicrawler_sdk
+                key = "lantern." + hashlib.sha256((signal + ":" + subject + ":" + identity).encode()).hexdigest()
+                previous = omnicrawler_sdk.call("state.get", {"key": key})
+                old = previous.get("value") if previous.get("found") else None
+                change = "new" if not old else "unchanged" if old == digest else "changed"
+                omnicrawler_sdk.call("state.set", {"key": key, "value": digest})
+            except Exception:
+                change = "tracking_unavailable"
+        concise["change"] = change
+        concise["attention"] = change in {"new", "changed"} and (signal in {"releases", "advisories"} or signal == "workflow_runs" and item.get("conclusion") in {"failure", "timed_out", "action_required"})
+        records.append({"source_url": source_url, "record_type": "upstream_signal", "data": concise,
+            "evidence": {"method": "upstream-lantern-v2", "sha256": digest}})
+    requests = []
+    page = int(meta.get("page") or 1)
+    limit = max(1, min(5, int(meta.get("page_limit") or 1)))
+    per_page = max(1, min(100, int(meta.get("per_page") or 30)))
+    has_more = isinstance(raw_items, list) and len(raw_items) >= per_page
+    if meta.get("adaptive_pagination") and signal in {"releases", "tags", "commits", "workflow_runs"} and has_more and page < limit:
+        parts = urlsplit(str(request.get("url") or source_url))
+        # Follow only a generated endpoint; never trust server-provided Link targets.
+        owner_repo = _parse_repository(subject)
+        suffix = {"releases": "/releases", "tags": "/tags", "commits": "/commits", "workflow_runs": "/actions/runs"}[signal]
+        expected = "/repos/" + subject + suffix
+        if owner_repo and parts.scheme == "https" and parts.netloc == "api.github.com" and parts.path == expected:
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            query["page"] = str(page + 1)
+            following = _request(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), "")), signal, repository=subject, page=page + 1)
+            following["meta"].update({**meta, "page": page + 1, "lantern_key": f"{signal}:{subject}:page-{page + 1}"})
+            requests.append(following)
+    return {"records": records, "requests": requests, "artifact_path": None,
+        "summary": {"signal": signal, "records": len(records), "page": page, "complete": not has_more,
+            "page_limit_reached": has_more and page >= limit, "next_page_planned": bool(requests)}}
+
+
 def handle(operation, payload):
-    """Contract 2 entry point. It performs no network or filesystem access."""
+    """Contract 2 entry point; HTTP remains entirely host-owned."""
     if operation == "source.seed":
         return _seed(payload)
+    if operation == "extractor.process":
+        return _extract(payload if isinstance(payload, dict) else {})
     return {"error": "unsupported_operation", "operation": str(operation)}

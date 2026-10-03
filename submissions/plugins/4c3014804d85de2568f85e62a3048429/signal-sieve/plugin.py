@@ -7,11 +7,12 @@ import html
 import json
 import re
 from html.parser import HTMLParser
+from collections import deque
 from typing import Any
 
 PLUGIN_METADATA = {
     "name": "signal-sieve",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "api_version": 1,
     "description": "融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断",
     "plugin_types": ["extractor", "transformer"],
@@ -36,7 +37,8 @@ MAX_JSONLD_CHARS = 256 * 1024
 class _Extractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.stack: list[str] = []
+        self.stack: list[tuple[str, bool, bool]] = []
+        self.jsonld_size = 0
         self.skip_depth = 0
         self.link_depth = 0
         self.current: list[str] = []
@@ -52,7 +54,14 @@ class _Extractor(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.casefold()
-        self.stack.append(tag)
+        values = {str(key).casefold(): str(value or "") for key, value in attrs}
+        marker = values.get("class", "") + " " + values.get("id", "")
+        parent_noise = any(frame[1] for frame in self.stack)
+        semantic = tag in {"article", "main"} or any(frame[2] for frame in self.stack)
+        noise = parent_noise or bool(BOILERPLATE.search(marker))
+        # Void elements never acquire ancestry or skip state.
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append((tag, noise, semantic))
         if tag in SKIP_TAGS:
             self.skip_depth += 1
         if tag == "a":
@@ -63,6 +72,7 @@ class _Extractor(HTMLParser):
         if tag == "script" and values.get("type", "").casefold() == "application/ld+json":
             self.in_jsonld = True
             self.jsonld_parts = []
+            self.jsonld_size = 0
         if tag == "meta":
             key = (values.get("property") or values.get("name") or "").casefold()
             content = values.get("content", "").strip()
@@ -79,7 +89,8 @@ class _Extractor(HTMLParser):
             self._flush()
             self.current_tag = tag
             marker = values.get("class", "") + " " + values.get("id", "")
-            self.current_penalty = 80 if BOILERPLATE.search(marker) else 0
+            self.current_penalty = 1000000 if noise else 0
+            self.current_semantic = semantic
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.casefold()
@@ -95,14 +106,19 @@ class _Extractor(HTMLParser):
             self.link_depth -= 1
         if tag in SKIP_TAGS and self.skip_depth:
             self.skip_depth -= 1
-        if self.stack:
-            self.stack.pop()
+        matching = next((i for i in range(len(self.stack) - 1, -1, -1) if self.stack[i][0] == tag), None)
+        if matching is not None:
+            del self.stack[matching:]
+        self.skip_depth = sum(frame[0] in SKIP_TAGS for frame in self.stack)
+        self.link_depth = sum(frame[0] == "a" for frame in self.stack)
 
     def handle_data(self, data: str) -> None:
         if self.in_jsonld:
-            used = sum(len(part) for part in self.jsonld_parts)
+            used = self.jsonld_size
             if used < MAX_JSONLD_CHARS:
-                self.jsonld_parts.append(data[: MAX_JSONLD_CHARS - used])
+                part = data[: MAX_JSONLD_CHARS - used]
+                self.jsonld_parts.append(part)
+                self.jsonld_size += len(part)
             return
         if self.skip_depth:
             return
@@ -111,6 +127,7 @@ class _Extractor(HTMLParser):
             return
         if self.in_title:
             self.title_parts.append(text)
+            return
         self.current.append(text)
         if self.link_depth:
             self.current_links += len(text)
@@ -126,7 +143,7 @@ class _Extractor(HTMLParser):
             link_ratio = self.current_links / max(length, 1)
             semantic = (
                 28
-                if self.current_tag in {"article", "main"}
+                if getattr(self, "current_semantic", False)
                 else 12
                 if self.current_tag in {"p", "pre", "blockquote"}
                 else 0
@@ -145,6 +162,7 @@ class _Extractor(HTMLParser):
                     "text": text,
                     "score": score,
                     "link_ratio": round(link_ratio, 3),
+                    "noise": bool(self.current_penalty),
                 }
             )
         self.current = []
@@ -157,8 +175,11 @@ class _Extractor(HTMLParser):
             value = json.loads(source)
         except (json.JSONDecodeError, TypeError):
             return
-        queue = value if isinstance(value, list) else [value]
-        for item in queue[:20]:
+        queue = deque(value[:20] if isinstance(value, list) else [value])
+        visited = 0
+        while queue and visited < 100:
+            item = queue.popleft()
+            visited += 1
             if not isinstance(item, dict):
                 continue
             graph = item.get("@graph")
@@ -195,7 +216,7 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
     accepted = [
         block
         for block in parser.blocks
-        if block["score"] >= thresholds[effective_mode] and block["link_ratio"] <= 0.55
+        if not block["noise"] and block["score"] >= thresholds[effective_mode] and block["link_ratio"] <= 0.55
     ]
     unique = []
     seen = set()
@@ -206,7 +227,7 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
             unique.append(block)
     fallback_used = False
     if not unique and parser.blocks:
-        candidate = max(parser.blocks, key=lambda item: item["score"])
+        candidate = max((b for b in parser.blocks if not b["noise"]), key=lambda item: item["score"], default={"text": "", "link_ratio": 1})
         if len(candidate["text"]) >= 80 and candidate["link_ratio"] <= 0.65:
             unique = [candidate]
             fallback_used = True
@@ -217,7 +238,7 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
         confidence = min(confidence, 0.45)
     cjk = sum("\u3400" <= char <= "\u9fff" for char in text)
     language = "zh" if text and cjk / len(text) > 0.15 else "und"
-    word_count = cjk + len(re.findall(r"\b[\w'-]+\b", text))
+    word_count = cjk + len(re.findall(r"\b[\w'-]+\b", re.sub(r"[\u3400-\u9fff]", " ", text)))
     return {
         "ok": bool(text),
         "title": title,
@@ -225,7 +246,7 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
         "published_at": parser.metadata.get("published_at", ""),
         "text": text,
         "markdown": "\n\n".join(
-            ("# " + block["text"] if block["tag"] == "h1" else "## " + block["text"] if block["tag"] in {"h2", "h3"} else block["text"])
+            ("# " + block["text"] if block["tag"] == "h1" else "## " + block["text"] if block["tag"] in {"h2", "h3"} else "- " + block["text"] if block["tag"] == "li" else "```\n" + block["text"] + "\n```" if block["tag"] == "pre" else "> " + block["text"] if block["tag"] == "blockquote" else block["text"])
             for block in unique
         ),
         "language": language,
@@ -249,7 +270,23 @@ def _html_from_result(result: dict[str, Any]) -> str:
     if not body:
         return ""
     try:
-        return base64.b64decode(str(body), validate=True).decode("utf-8", errors="replace")
+        raw = base64.b64decode(str(body), validate=True)
+        headers = result.get("headers") or {}
+        content_type = str(result.get("content_type") or next((v for k, v in headers.items() if str(k).lower() == "content-type"), "")) if isinstance(headers, dict) else ""
+        match = re.search(r"charset\s*=\s*['\"]?([\w-]+)", content_type, re.I)
+        declared = match.group(1) if match else ""
+        if not declared:
+            match = re.search(rb"charset\s*=\s*['\"]?([\w-]+)", raw[:4096], re.I)
+            declared = match.group(1).decode("ascii") if match else ""
+        encodings = (["utf-16"] if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else []) + [declared, "utf-8-sig", "gb18030", "windows-1252"]
+        for encoding in encodings:
+            if not encoding:
+                continue
+            try:
+                return raw.decode(encoding)
+            except (UnicodeError, LookupError):
+                continue
+        return raw.decode("utf-8", errors="replace")
     except (ValueError, TypeError):
         return ""
 

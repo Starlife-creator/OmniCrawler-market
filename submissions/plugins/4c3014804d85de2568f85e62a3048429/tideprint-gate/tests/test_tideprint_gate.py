@@ -36,7 +36,7 @@ def test_processor_and_hook_contract() -> None:
     assert result["requests"] == []
     summary = plugin.handle("hook.after_run", {})
     assert summary["counts"]["new"] == 1
-    assert summary["scope"] == "persistent_host_state"
+    assert summary["scope"] == "current_run_only"
 
 
 def test_hooks_use_host_state_and_return_advice(monkeypatch) -> None:

@@ -54,7 +54,7 @@ def test_describe_is_read_only_view(plugin: dict) -> None:
     view = plugin["handle"]("view.describe", {})["view"]
     assert view["view_id"] == "issue-wishlist.main"
     kinds = [c["type"] for c in view["components"]]
-    assert kinds == ["rich_text", "button", "resource_list"]
+    assert kinds == ["rich_text", "button", "resource_list", "text", "select"]
     # 未刷新前不携带数据（安装即用、不自动联网）
     assert view["components"][2]["items"] == []
 

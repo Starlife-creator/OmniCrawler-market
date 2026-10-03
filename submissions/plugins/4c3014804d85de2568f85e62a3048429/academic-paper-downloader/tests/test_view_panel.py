@@ -18,7 +18,7 @@ class TestViewDescribe:
         assert view["view_id"] == "academic-paper-downloader.main"
         ids = [c["id"] for c in view["components"]]
         assert ids == ["status", "proxy-input", "login-url-input",
-                       "open-login", "clear-login", "refresh", "message"]
+                       "open-login", "clear-login", "refresh", "message", "cancel-downloads"]
         texts = {c["id"]: c for c in view["components"] if c["type"] == "text"}
         assert texts["proxy-input"]["action"] == "configure-proxy"
         assert texts["login-url-input"]["action"] == "configure-login-url"
