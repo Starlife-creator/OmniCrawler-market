@@ -1,11 +1,11 @@
 id: lumen-drift
 name: lumen-drift
-version: 0.5.0
+version: 0.6.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: resource_provider
 summary: 安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源
-description_file: plugins/lumen-drift/versions/0.5.0/listing.md
+description_file: plugins/lumen-drift/versions/0.6.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.12.0'
 license: MIT
@@ -15,20 +15,22 @@ tags:
 - video
 - wallpaper-engine
 - declarative-ui
-updated_at: '2026-10-03'
-creator_signature_file: plugins/lumen-drift/versions/0.5.0/creator.sig
-creator_identity_file: plugins/lumen-drift/versions/0.5.0/creator.identity
-package_manifest_file: plugins/lumen-drift/versions/0.5.0/package.manifest.json
-creator_package_signature_file: plugins/lumen-drift/versions/0.5.0/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/lumen-drift/versions/0.5.0/package.manifest.maintainer.sig
-package_manifest_sha256: 9f7d8309c15bad9e024966473f357234fe248ddeaf79711accd911ad829ae70d
-plugin_file: plugins/lumen-drift/versions/0.5.0/plugin.py
-signature_file: plugins/lumen-drift/versions/0.5.0/plugin.py.sig
+updated_at: '2026-10-04'
+creator_signature_file: plugins/lumen-drift/versions/0.6.0/creator.sig
+creator_identity_file: plugins/lumen-drift/versions/0.6.0/creator.identity
+package_manifest_file: plugins/lumen-drift/versions/0.6.0/package.manifest.json
+creator_package_signature_file: plugins/lumen-drift/versions/0.6.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/lumen-drift/versions/0.6.0/package.manifest.maintainer.sig
+package_manifest_sha256: 612fe3daf8f5dedc5e7c81ee5b66aa870cfdb98951a4e62dd35c35e7099b9273
+plugin_file: plugins/lumen-drift/versions/0.6.0/plugin.py
+signature_file: plugins/lumen-drift/versions/0.6.0/plugin.py.sig
 permissions:
 - resources:read
 - surfaces:background
 - render:local
 - render:scripted
+- state:read
+- state:write
 plugin_types:
 - resource_provider
 - view

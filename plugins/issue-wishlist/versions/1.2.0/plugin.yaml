@@ -1,0 +1,21 @@
+id: issue-wishlist
+name: issue-wishlist
+publisher: starlife
+category: productivity
+plugin_file: plugin.py
+description_file: listing.md
+license: MIT
+execution_mode: subprocess
+version: 1.2.0
+plugin_types:
+- view
+permissions:
+- network:scoped
+- state:read
+- state:write
+compatible_core: '>=0.14.0'
+updated_at: '2026-10-04'
+required_capabilities:
+  network.fetch: '>=1'
+  view.richtext: '>=1'
+state_schema_version: 1
