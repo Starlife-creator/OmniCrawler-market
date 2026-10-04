@@ -1,11 +1,11 @@
 id: upstream-lantern
 name: upstream-lantern
-version: 0.2.0
+version: 0.3.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: source
 summary: 将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求
-description_file: plugins/upstream-lantern/versions/0.2.0/listing.md
+description_file: plugins/upstream-lantern/versions/0.3.0/listing.md
 signature_algorithm: ed25519
 compatible_core: '>=0.11.2'
 license: MIT
@@ -17,15 +17,15 @@ tags:
 - community
 - security-advisories
 - monitoring
-updated_at: '2026-10-03'
-creator_signature_file: plugins/upstream-lantern/versions/0.2.0/creator.sig
-creator_identity_file: plugins/upstream-lantern/versions/0.2.0/creator.identity
-package_manifest_file: plugins/upstream-lantern/versions/0.2.0/package.manifest.json
-creator_package_signature_file: plugins/upstream-lantern/versions/0.2.0/package.manifest.creator.sig
-maintainer_package_signature_file: plugins/upstream-lantern/versions/0.2.0/package.manifest.maintainer.sig
-package_manifest_sha256: fc87d0ee3905ba17c7ee6bd08ace0e28142c190506d12733cabc3aac5a78602b
-plugin_file: plugins/upstream-lantern/versions/0.2.0/plugin.py
-signature_file: plugins/upstream-lantern/versions/0.2.0/plugin.py.sig
+updated_at: '2026-10-04'
+creator_signature_file: plugins/upstream-lantern/versions/0.3.0/creator.sig
+creator_identity_file: plugins/upstream-lantern/versions/0.3.0/creator.identity
+package_manifest_file: plugins/upstream-lantern/versions/0.3.0/package.manifest.json
+creator_package_signature_file: plugins/upstream-lantern/versions/0.3.0/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/upstream-lantern/versions/0.3.0/package.manifest.maintainer.sig
+package_manifest_sha256: 6e4ccd4742a000a7784dd0fa3a4587ba4cdd4edc7d964df269ba44190cc4c9a6
+plugin_file: plugins/upstream-lantern/versions/0.3.0/plugin.py
+signature_file: plugins/upstream-lantern/versions/0.3.0/plugin.py.sig
 permissions:
 - state:read
 - state:write
