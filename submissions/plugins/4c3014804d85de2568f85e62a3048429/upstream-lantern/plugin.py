@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 PLUGIN_METADATA = {
     "name": "upstream-lantern",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "api_version": 1,
     "description": "将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求",
     "plugin_types": ["source", "extractor"],
@@ -72,6 +72,8 @@ _PARAM_FIELDS = frozenset(
         "advisory_packages",
         "adaptive_pagination",
         "track_changes",
+        "initial_policy",
+        "include_prereleases",
         "feeds",
         "max_requests",
         "pages",
@@ -615,15 +617,19 @@ def _seed(payload):
             errors,
         )
     )
-    for field in ("adaptive_pagination", "track_changes"):
+    for field in ("adaptive_pagination", "track_changes", "include_prereleases"):
         if field in params and not isinstance(params[field], bool):
             errors.append(f"source.params.{field} 必须是布尔值")
+    if not isinstance(params.get("initial_policy", "notify"), str) or params.get("initial_policy", "notify") not in {"notify", "baseline"}:
+        errors.append("source.params.initial_policy 必须为 notify 或 baseline")
     planned_requests = len(requests)
     if not errors:
         for request in requests:
             request["meta"].update({"track_changes": bool(params.get("track_changes", False)),
                 "adaptive_pagination": bool(params.get("adaptive_pagination", False)),
-                "page_limit": pages, "per_page": per_page})
+                "page_limit": pages, "per_page": per_page,
+                "initial_policy": params.get("initial_policy", "notify"),
+                "include_prereleases": params.get("include_prereleases", True)})
         if params.get("adaptive_pagination"):
             requests = [r for r in requests if r["meta"].get("page", 1) == 1]
     if planned_requests > max_requests:
@@ -676,27 +682,46 @@ def _extract(payload):
     for item in items[:100]:
         if not isinstance(item, dict):
             continue
+        if signal == "releases" and (item.get("draft") or (item.get("prerelease") and not meta.get("include_prereleases", True))):
+            continue
         identity = str(item.get("id") or item.get("ghsa_id") or item.get("sha") or item.get("tag_name") or item.get("name") or subject)
+        commit = item.get("commit") if isinstance(item.get("commit"), dict) else {}
         concise = {"signal": signal, "subject": subject, "id": identity,
-            "title": str(item.get("name") or item.get("title") or item.get("summary") or item.get("tag_name") or item.get("commit", {}).get("message", ""))[:500],
+            "title": str(item.get("name") or item.get("title") or item.get("summary") or item.get("tag_name") or commit.get("message", ""))[:500],
             "url": str(item.get("html_url") or "")[:1000]}
         for field in ("tag_name", "published_at", "prerelease", "draft", "status", "conclusion", "severity", "score", "default_branch", "archived"):
             if field in item:
                 concise[field] = item[field]
         digest = hashlib.sha256(json.dumps(concise, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         change = "untracked"
+        recovered = False
+        policy = {"initial_policy": meta.get("initial_policy", "notify"), "include_prereleases": bool(meta.get("include_prereleases", True))}
+        policy_id = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
+        entity = signal + ":" + subject.casefold() + ":" + identity
         if meta.get("track_changes"):
             try:
                 import omnicrawler_sdk
-                key = "lantern." + hashlib.sha256((signal + ":" + subject + ":" + identity).encode()).hexdigest()
+                key = "lantern.v3." + hashlib.sha256((entity + ":" + policy_id).encode()).hexdigest()
                 previous = omnicrawler_sdk.call("state.get", {"key": key})
                 old = previous.get("value") if previous.get("found") else None
-                change = "new" if not old else "unchanged" if old == digest else "changed"
-                omnicrawler_sdk.call("state.set", {"key": key, "value": digest})
+                if old is None and policy == {"initial_policy": "notify", "include_prereleases": True}:
+                    # Preserve existing default-policy observations on upgrade.
+                    legacy_key = "lantern." + hashlib.sha256((signal + ":" + subject + ":" + identity).encode()).hexdigest()
+                    legacy = omnicrawler_sdk.call("state.get", {"key": legacy_key})
+                    old = legacy.get("value") if legacy.get("found") else None
+                old_digest = old.get("sha256") if isinstance(old, dict) else old
+                change = "new" if not old_digest else "unchanged" if old_digest == digest else "changed"
+                recovered = bool(signal == "workflow_runs" and isinstance(old, dict) and
+                                 old.get("conclusion") in {"failure", "timed_out", "action_required"} and item.get("conclusion") == "success")
+                omnicrawler_sdk.call("state.set", {"key": key, "value": {"sha256": digest, "conclusion": item.get("conclusion")}})
             except Exception:
                 change = "tracking_unavailable"
         concise["change"] = change
-        concise["attention"] = change in {"new", "changed"} and (signal in {"releases", "advisories"} or signal == "workflow_runs" and item.get("conclusion") in {"failure", "timed_out", "action_required"})
+        concise["event_id"] = hashlib.sha256((entity + ":" + digest).encode()).hexdigest()
+        concise["policy_id"] = policy_id
+        concise["event_kind"] = "recovery" if recovered else "observation"
+        concise["initial_baseline"] = change == "new" and policy["initial_policy"] == "baseline"
+        concise["attention"] = not concise["initial_baseline"] and change in {"new", "changed"} and (signal in {"releases", "advisories"} or recovered or signal == "workflow_runs" and item.get("conclusion") in {"failure", "timed_out", "action_required"})
         records.append({"source_url": source_url, "record_type": "upstream_signal", "data": concise,
             "evidence": {"method": "upstream-lantern-v2", "sha256": digest}})
     requests = []

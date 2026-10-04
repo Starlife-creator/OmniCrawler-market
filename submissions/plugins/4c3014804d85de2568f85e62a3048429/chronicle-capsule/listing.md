@@ -1,15 +1,19 @@
-# Chronicle Capsule
+# Chronicle Capsule（chronicle-capsule）
 
-## 0.3.0 开发版（2026-10-03，待作者签名）
+版本：0.4.0 · 准确摘要与 WARC 内索引 · 2026-10-04。发行包使用现有作者身份签名；修改载荷后必须重新签名。
 
-privacy/metadata 对敏感字段名、URL 用户信息与敏感查询参数、Bearer 及常见密钥赋值模式脱敏。正文模式无法保证识别任意个人信息或自定义秘密，summary.redaction_scope 会说明范围；preservation 不脱敏。
+## 功能
 
-每条 WARC 独立 gzip 压缩；宿主只提供正文时使用 resource 记录，不伪造 HTTP 响应头。截断内容带 WARC-Truncated: length，并分别报告缺失、截断、完整载荷、容量、摘要和分页限制。导出超过 25 MiB 中止并撤销工件，不提交半份归档。每 25 项尝试上报进度，无面板时静默降级。
+分别统计 scanned_inputs、业务 records、missing_payloads、truncated_payloads。输出输入上限、是否仍有后续数据及终止原因；同一 WARC 增加 metadata 索引记录，关联 Record-ID、来源、载荷摘要和截断状态。
 
-独立读取器 QA 使用 warcio（仅测试依赖，插件运行零依赖）；格式参考 https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/ 。
+## 配置与状态
 
-以上为当前行为；下文旧版本内容保留为历史说明。
+mode: privacy / metadata / preservation；max_records 默认 1000，最多 5000。summary.records 为业务记录数，system_records=1 为索引记录。索引与正文合计受 25 MiB 未压缩限制，超限会 abort，不提交半套产物。
 
+## 权限与数据去向
 
-把一次采集封装为可复核的 WARC 1.1 归档。可选择结构化记录脱敏、响应元数据或原始正文保全，
-并通过宿主不透明工件流有界写入。原始正文模式需要单独的高风险权限确认。
+声明权限：records:read, responses:read, responses:payload, artifacts:write。privacy/metadata 索引随正文脱敏；preservation 明确保留响应正文，属于 body-only resource，不是完整 HTTP 响应或动态页面离线镜像。正文获取异常中止并 abort；缺失引用或无效 base64 计为 missing_payloads。
+
+## 兼容与许可
+
+最低核心版本：0.11.2；执行模式：subprocess；许可：MIT。

@@ -33,6 +33,7 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Iterator
+from download_evidence import normalize_doi, public_source_url, file_digest, build_evidence
 
 try:
     import yaml
@@ -125,7 +126,7 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
@@ -790,13 +791,13 @@ def _state_delete(key: str) -> None:
 # ---------------------------------------------------------------------------
 def _extract_doi(row: dict[str, str]) -> str | None:
     doi = (row.get("DOI") or "").strip()
-    if doi and "/" in doi: return doi
+    if normalize_doi(doi): return normalize_doi(doi)
     link = (row.get("DOI Link") or "").strip()
-    if "doi.org/" in link: return link.split("doi.org/", 1)[-1].strip()
+    if normalize_doi(link): return normalize_doi(link)
     for val in row.values():
         if isinstance(val, str) and "10." in val:
             m = re.search(r"(10\.\d{4,}/[^\s]+)", val)
-            if m: return m.group(1).rstrip(")")
+            if m: return normalize_doi(m.group(1).rstrip(")")) or None
     return None
 
 def _resolve_publisher(doi: str) -> str | None:
@@ -978,8 +979,10 @@ _INSPECT_CACHE_MAX = 256
 
 def _inspect_pdf(path: Path) -> tuple[bool, dict[str, Any]]:
     """一次打开完成「校验 + 元数据提取」。返回 (is_valid, meta)。"""
+    parser_available = False
     try:
         import pdfplumber
+        parser_available = True
         with pdfplumber.open(path) as pdf:
             if len(pdf.pages) == 0:
                 return False, {}
@@ -995,23 +998,27 @@ def _inspect_pdf(path: Path) -> tuple[bool, dict[str, Any]]:
             title_m = re.search(r"(?:Title|Article)[：\:]\s*(.+?)(?:\n|$)", text[:500])
             if title_m:
                 meta["extracted_title"] = title_m.group(1).strip()
+        meta["validation_level"] = "structure_parsed"
         return True, meta
     except Exception:
         pass
     try:
         from pypdf import PdfReader
+        parser_available = True
         reader = PdfReader(str(path))
         if len(reader.pages) == 0 or reader.is_encrypted:
             return False, {}
-        return True, {}
+        return True, {"validation_level": "structure_parsed"}
     except Exception:
         pass
     # 两个 PDF 解析库均不可用（或文件损坏）时退化为魔数校验，
     # 避免在最小环境里把已成功下载的 PDF 误判删除
     try:
-        if path.read_bytes()[:1024].lstrip().startswith(b"%PDF"):
-            return True, {}
-        return False, {}
+        with path.open("rb") as stream:
+            header_matches = stream.read(1024).lstrip().startswith(b"%PDF-")
+        if parser_available:
+            return False, {"validation_level": "structure_invalid"}
+        return header_matches, {"validation_level": "header_only" if header_matches else "invalid_format"}
     except Exception:
         return False, {}
 
@@ -1878,6 +1885,14 @@ def _download_with_retry(pdf_url: str, paper: dict, config: dict, cookies: dict,
 # PDF 下载保存（工作区内）
 # ---------------------------------------------------------------------------
 def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -> dict | None:
+    if isinstance(content, (str, os.PathLike)):
+        try:
+            if Path(content).stat().st_size > _MAX_PDF_BYTES:
+                return None
+        except OSError:
+            return None
+    elif len(content) > _MAX_PDF_BYTES:
+        return None
     papers_dir = workspace / "papers"
     _safe_mkdir(papers_dir)
 
@@ -1915,6 +1930,7 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
     out_path = _rename_with_metadata(paper, out_path)
 
     meta = _extract_pdf_meta(out_path)
+    validation_level = meta.get("validation_level", "unknown")
 
     # DOI 交叉核对（**强校验**，issue #22 §1）：
     #   - 请求了 DOI 却**提不出** DOI ⇒ 无法证明这就是目标论文（反爬挑战页/登录页/文章落地页
@@ -1922,7 +1938,7 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
     #     于是 Cloudflare 验证页被当成成功论文计入报告；
     #   - 提取到但与请求不一致 ⇒ 出版商发错文件，拒绝并清理。
     ext_doi = (meta.get("extracted_doi") or "").strip().lower().rstrip(".")
-    req_doi = (paper.get("doi") or "").strip().lower().rstrip(".")
+    req_doi = normalize_doi(paper.get("doi") or "").rstrip(".")
     verified = True
     if ext_doi and req_doi and ext_doi != req_doi:
         # v0.6.3 实机修正：mismatch 不再删文件——实机发现 MDPI 下载到的 PDF 很可能
@@ -1938,15 +1954,23 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
         verified = False
         _log("pdf_doi_unverified", doi=req_doi, path=str(out_path))
 
-    return {
-        "doi": paper.get("doi", ""), "title": title, "authors": paper.get("authors", ""),
+    if validation_level == "header_only":
+        verified = False
+        if not _get_download_config().get("allow_weak_pdf_validation", True):
+            out_path.unlink(missing_ok=True)
+            return None
+    record = {
+        "doi": paper.get("doi", ""), "canonical_doi": req_doi, "title": title, "authors": paper.get("authors", ""),
         "year": year, "journal": paper.get("journal", ""), "publisher": paper.get("publisher", ""),
         "pdf_url": "", "filename": out_path.name, "local_path": str(out_path.relative_to(workspace)),
         "download_source": source, "file_size": file_size, "pdf_meta": meta,
         # 是否已核验为"请求的那篇"（DOI 交叉核对通过）。未核验仍保留文件，但不计入成功。
         "verified": verified,
-        "verification": "doi_matched" if verified else "doi_not_found_in_pdf",
+        "verification": "header_only" if validation_level == "header_only" else "doi_mismatch" if ext_doi and req_doi and ext_doi != req_doi else "doi_not_found_in_pdf" if req_doi and not ext_doi else "doi_matched" if req_doi else "doi_not_requested",
+        "sha256": file_digest(out_path),
     }
+    record["download_evidence"] = build_evidence(record)
+    return record
 
 # 全局并发控制器（懒初始化）
 _concurrency_controller: _ConcurrencyController | None = None
@@ -2061,16 +2085,17 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
                     content, local_error = _download_with_retry(
                         result, paper, config, cookies, local_error, dest=str(tmp_dest))
                 elif isinstance(result, str) and os.path.exists(result):
-                    # 本地临时文件（浏览器导出）
-                    content = Path(result).read_bytes()
-                    try:
-                        Path(result).unlink()  # 清理临时 PDF，避免泄漏
-                    except Exception:
-                        pass
+                    # Keep browser exports on disk until _save_pdf moves them.
+                    if Path(result).stat().st_size > _MAX_PDF_BYTES:
+                        Path(result).unlink(missing_ok=True)
+                        raise _PdfTooLarge("browser PDF exceeds configured size limit")
+                    content = result
                 if content:
                     layer_used = name
                     _log("layer_success", doi=doi, layer=name, duration_ms=int((time.time() - t0) * 1000))
                     return True, "ok"
+        except _PdfTooLarge:
+            local_error = "pdf_too_large"
         except _HttpStatusError as e:
             local_error = _classify_error(e.status, None, publisher)
             _log("layer_error", doi=doi, layer=name, error=f"http_{e.status}")
@@ -2193,7 +2218,8 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
     if content:
         record = _save_pdf(paper, content, workspace, layer_used)
         if record:
-            record["pdf_url"] = pdf_url or ""
+            record["pdf_url"] = public_source_url(pdf_url or "")
+            record["download_evidence"] = build_evidence(record, pdf_url or "", duration_ms)
             _mark_done(config, doi, record)
             return {
                 "records": [record], "errors": [],
@@ -2315,6 +2341,7 @@ def _mark_failed(config: dict, doi: str, layer: str, error_class: str = "unknown
         _log("swallowed_exception", level=logging.DEBUG, where="failed_state_write", error=str(e))
 
 _FAILURE_REASON_MAP: dict[str, str] = {
+    "pdf_too_large": "PDF 超过配置大小上限，未计入成功",
     "auth_required": "需要订阅权限或登录态（当前网络无权限，或 Cookie 已失效）",
     "bot_blocked": "出版商反爬拦截（响应非 PDF 内容）",
     "pdf_invalid": "PDF 落盘校验失败（假成功防护拦截，文件未计入成功）",
@@ -3045,6 +3072,8 @@ def _deferred_headed_pass(config: dict, workspace: Path, results: list,
     cfg2 = {**config, "institution": {**config.get("institution", {}), "headless": False}}
 
     def runner(paper: dict) -> dict:
+        _set_download_config(cfg2)
+        started = time.monotonic()
         out = None
         try:
             out = _browser_download(paper["doi"], paper["publisher"], [], cfg2)
@@ -3052,14 +3081,12 @@ def _deferred_headed_pass(config: dict, workspace: Path, results: list,
             out = None
         record = None
         if out and os.path.exists(out):
-            content = Path(out).read_bytes()
-            try:
-                Path(out).unlink()
-            except Exception as e:
-                _log("swallowed_exception", level=logging.DEBUG, where="headed_tmp_cleanup", error=str(e))
-            record = _save_pdf(paper, content, workspace, "headed_deferred")
+            record = _save_pdf(paper, out, workspace, "headed_deferred")
+            if not record:
+                Path(out).unlink(missing_ok=True)
         if record:
             record["pdf_url"] = ""
+            record["download_evidence"] = build_evidence(record, duration_ms=int((time.monotonic() - started) * 1000))
             _mark_done(config, paper["doi"], record)
             return {"records": [record], "errors": []}
         ec = "captcha"
@@ -3295,6 +3322,8 @@ def _validate_config(config: dict) -> list[str]:
     if not isinstance(config, dict):
         return ["config 必须是对象"]
     errors = []
+    if "allow_weak_pdf_validation" in config and not isinstance(config["allow_weak_pdf_validation"], bool):
+        errors.append("allow_weak_pdf_validation 必须是布尔值")
     level = config.get("level", 1)
     if isinstance(level, bool) or not isinstance(level, int) or level not in (1, 2, 3):
         errors.append("level 必须是 1/2/3")

@@ -1,6 +1,6 @@
 id: tideprint-gate
 name: Tideprint Gate
-version: 0.3.0
+version: 0.4.0
 api_version: 1
 description: 以持久指纹建议条件重验证，并输出当前运行的可解释变化分类
 plugin_types:
@@ -26,4 +26,4 @@ license: MIT
 execution_mode: subprocess
 min_core_version: 0.11.2
 compatible_core: '>=0.11.2'
-updated_at: '2026-10-03'
+updated_at: '2026-10-04'

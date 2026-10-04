@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import base64
 import json
+import hashlib
 
 import omnicrawler_sdk
 
 PLUGIN_METADATA = {
-    "name": "lumen-drift", "version": "0.5.0", "api_version": 1,
+    "name": "lumen-drift", "version": "0.6.0", "api_version": 1,
     "description": "安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源",
     "plugin_types": ["resource_provider", "view"], "category": "appearance",
     "tags": ["wallpaper", "ambient", "video", "wallpaper-engine", "declarative-ui"],
-    "permissions": ["resources:read", "surfaces:background", "render:local", "render:scripted"],
+    "permissions": ["resources:read", "surfaces:background", "render:local", "render:scripted", "state:read", "state:write"],
+    "state_schema_version": 1,
     "required_capabilities": {
         "resources.enumerate": ">=1", "resources.read": ">=1",
         "surface.background.set": ">=2", "surface.background.configure": ">=2",
@@ -32,7 +34,72 @@ _state = {
     "scope": "workspace", "preset": "balanced", "paused": False,
     "html_mode": "snapshot", "filter": "all", "active": False, "now_playing": "",
     "query": "", "page": 0, "scan_limited": False,
+    "persistent_preferences": False, "source_identity": "default",
+    "preview_id": "",
+    "live_active": False,
 }
+_snapshot_cache: dict[tuple[str, str, int, int], str] = {}
+_preferences: dict[str, dict] = {}
+MAX_PREFERENCES = 256
+_preference_keys = ("opacity", "panel_opacity", "dim", "blur", "fit", "scope", "preset", "html_mode")
+
+
+def _preference_key(relative: str) -> str:
+    # An explicit user profile, never an ephemeral grant handle or machine path.
+    identity = _state["source_identity"] + ":" + relative
+    return "lumen.preferences.v1." + hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _load_preferences(relative: str) -> None:
+    try:
+        result = omnicrawler_sdk.call("state.get", {"key": "lumen.preferences.v1"})
+        _state["persistent_preferences"] = "found" in result
+        saved = result.get("value") if result.get("found") else None
+        if isinstance(saved, dict):
+            _preferences.clear()
+            _preferences.update({k: v for k, v in list(saved.items())[-MAX_PREFERENCES:] if isinstance(k, str) and len(k) <= 100 and isinstance(v, dict)})
+    except RuntimeError:
+        _state['persistent_preferences'] = False
+    value = _preferences.get(_preference_key(relative))
+    if not isinstance(value, dict):
+        return
+    bounds = {"opacity": (5, 100), "panel_opacity": (65, 100), "dim": (0, 85), "blur": (0, 20)}
+    choices = {"scope": {"application", "workspace", "canvas"}, "fit": {"cover", "contain", "stretch"},
+               "preset": {"clear", "balanced", "focus", "immersive", "solid"}, "html_mode": {"snapshot", "live"}}
+    for name, setting in value.items():
+        if name in bounds and isinstance(setting, int) and not isinstance(setting, bool) and bounds[name][0] <= setting <= bounds[name][1]:
+            _state[name] = setting
+        elif name in choices and isinstance(setting, str) and setting in choices[name]:
+            _state[name] = setting
+
+
+
+def _save_preferences() -> None:
+    relative = _state["selected_id"]
+    if not relative:
+        return
+    try:
+        key = _preference_key(relative)
+        _preferences.pop(key, None)
+        _preferences[key] = {k: _state[k] for k in _preference_keys}
+        while len(_preferences) > MAX_PREFERENCES:
+            del _preferences[next(iter(_preferences))]
+        result = omnicrawler_sdk.call("state.set", {"key": "lumen.preferences.v1", "value": _preferences})
+        _state["persistent_preferences"] = result.get("saved") is True or result.get("written") is True
+    except RuntimeError:
+        _state["persistent_preferences"] = False
+
+
+def _snapshot(relative: str, width: int, height: int) -> dict:
+    key = (_state["handle"], relative, width, height)
+    if key in _snapshot_cache:
+        return {"handle": _snapshot_cache[key]}
+    rendered = omnicrawler_sdk.call("render.html.snapshot", {"handle": _state["handle"], "relative": relative,
+                                      "width": width, "height": height, "scripted": False})
+    while len(_snapshot_cache) >= 8:
+        del _snapshot_cache[next(iter(_snapshot_cache))]
+    _snapshot_cache[key] = rendered["handle"]
+    return rendered
 
 
 def _suffix(path: str) -> str:
@@ -156,6 +223,11 @@ def _components() -> list[dict]:
          "items": items, "empty_text": "尚未选择目录，或当前分类没有资源", "action": "play-resource"},
         {"type": "button", "id": "previous", "label": "上一个背景", "action": "previous-resource"},
         {"type": "button", "id": "next", "label": "下一个背景", "action": "next-resource"},
+        {"type": "select", "id": "preview-html", "label": "HTML 静态缩略预览（显示到背景）", "value": _state["preview_id"],
+         "options": [{"label": "选择本页 HTML", "value": ""}] + [{"label": i["label"], "value": i["id"]} for i in visible[page * 50:(page + 1) * 50] if _suffix(i["id"]) in _HTML],
+         "action": "preview-resource"},
+        {"type": "label", "id": "preference-status", "text": "设置会按资源保存" if _state["persistent_preferences"] else "未启用持久设置；可使用当前会话设置"},
+        {"type": "text", "id": "preference-profile", "label": "设置分组（不同目录的同名资源可分组）", "value": _state["source_identity"], "maxlength": 64, "action": "configure-profile"},
         {"type": "button", "id": "pause", "label": "继续动态背景" if _state["paused"] else "暂停动态背景",
          "action": "toggle-pause"},
         {"type": "select", "id": "preset", "label": "视觉预设", "options": [
@@ -207,6 +279,7 @@ def _configure(name: str, value) -> dict:
         return {"message": "不支持的显示设置"}
     omnicrawler_sdk.call("surface.background.configure", {name: value})
     _state[name] = value
+    _save_preferences()
     return {"view": _view()}
 
 
@@ -223,36 +296,68 @@ def _apply_preset(preset: str) -> dict:
         "preset": preset, "opacity": opacity, "panel_opacity": panel,
         "dim": dim, "blur": blur,
     })
+    _save_preferences()
     return {"view": _view()}
 
 
-def _play(relative: str) -> dict:
+def _play(relative: str, *, preview: bool = False) -> dict:
     item = next((entry for entry in _state["items"] if entry["id"] == relative), None)
     if item is None or not item["supported"]:
         return {"message": "此 Wallpaper Engine 资源类型尚不能安全呈现"}
     background = {"handle": _state["handle"], "relative": relative}
     fallback = False
-    if _suffix(relative) in _HTML:
-        operation = "render.html.live.start" if _state["html_mode"] == "live" else "render.html.snapshot"
-        request = {"handle": _state["handle"], "relative": relative,
-            "width": 1280 if operation.endswith("live.start") else 1920,
-            "height": 720 if operation.endswith("live.start") else 1080, "scripted": False}
-        try:
-            rendered = omnicrawler_sdk.call(operation, request)
-        except RuntimeError:
-            if operation != "render.html.live.start":
-                raise
-            rendered = omnicrawler_sdk.call("render.html.snapshot", {**request, "scripted": False})
-            fallback = True
-        background = {"render_handle": rendered["handle"]}
-    # Configure before publishing the replacement; update UI only after both succeed.
-    omnicrawler_sdk.call("surface.background.configure", {
-        "opacity": _state["opacity"], "panel_opacity": _state["panel_opacity"],
-        "dim": _state["dim"], "blur": _state["blur"], "fit": _state["fit"],
-        "scope": _state["scope"], "paused": _state["paused"],
-    })
-    omnicrawler_sdk.call("surface.background.set", background)
-    _state.update({"selected_id": relative, "active": True, "now_playing": item["label"]})
+    old_preferences = {k: _state[k] for k in _preference_keys}
+    if not preview:
+        _load_preferences(relative)
+    # Validate/configure before starting a live session, which replaces the old one.
+    try:
+        omnicrawler_sdk.call("surface.background.configure", {
+            "opacity": _state["opacity"], "panel_opacity": _state["panel_opacity"],
+            "dim": _state["dim"], "blur": _state["blur"], "fit": _state["fit"],
+            "scope": _state["scope"], "paused": _state["paused"],
+        })
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError):
+        _state.update(old_preferences)
+        raise
+    live_attempted = False
+    stopped_old = False
+    try:
+        if _suffix(relative) in _HTML:
+            operation = "render.html.live.start" if _state["html_mode"] == "live" else "render.html.snapshot"
+            if preview:
+                operation = "render.html.snapshot"
+            request = {"handle": _state["handle"], "relative": relative,
+                "width": 1280 if operation.endswith("live.start") else 1920,
+                "height": 720 if operation.endswith("live.start") else 1080, "scripted": False}
+            try:
+                live_attempted = operation.endswith("live.start")
+                rendered = omnicrawler_sdk.call(operation, request) if live_attempted else _snapshot(relative, 320 if preview else 1920, 180 if preview else 1080)
+            except RuntimeError:
+                if operation != "render.html.live.start":
+                    raise
+                rendered = _snapshot(relative, 1920, 1080)
+                fallback = True
+            background = {"render_handle": rendered["handle"]}
+        new_live = live_attempted and not fallback
+        if _state["live_active"] and not new_live:
+            # Clear detaches the host timer and stops the old HTML worker.
+            omnicrawler_sdk.call("surface.background.clear", {})
+            stopped_old = True
+            _state.update(active=False, live_active=False, selected_id="", now_playing="", paused=False)
+        omnicrawler_sdk.call("surface.background.set", background)
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError):
+        _snapshot_cache.clear()
+        if live_attempted or stopped_old:
+            try:
+                omnicrawler_sdk.call("render.html.live.stop", {})
+            finally:
+                _state.update(active=False, live_active=False, selected_id="", now_playing="", paused=False)
+                omnicrawler_sdk.call("surface.background.clear", {})
+        raise
+    _state.update({"selected_id": relative, "active": True, "live_active": new_live, "now_playing": item["label"]})
+    if preview:
+        _state["preview_id"] = relative
+        return {"view": _view(), "message": "静态缩略图已显示到背景；点击资源可恢复完整播放。"}
     if fallback:
         return {"view": _view(), "message": "动态渲染不可用，已使用静态快照"}
     return {"view": _view(), "message": f"已呈现：{item['label']}"}
@@ -294,6 +399,7 @@ def _handle(operation: str, payload: dict) -> dict:
         if resource != _state["handle"] or not any(item["id"] == _state["selected_id"] for item in items):
             _state["selected_id"] = ""
         _state.update({"handle": resource, "items": items, "page": 0})
+        _snapshot_cache.clear()
         playable = sum(bool(item["supported"]) for item in items)
         return {"view": _view(), "message": f"发现 {len(items)} 个资源，其中 {playable} 个可尝试呈现"}
     if action == "filter-resources":
@@ -304,7 +410,13 @@ def _handle(operation: str, payload: dict) -> dict:
         _state["page"] = 0
         return {"view": _view()}
     if action == "play-resource":
-        return _play(str(value.get("item_id", "")))
+        relative = str(value.get("item_id", ""))
+        return _play(relative)
+    if action == "preview-resource":
+        relative = str(value.get("value", ""))
+        if _suffix(relative) not in _HTML:
+            return {"handled": False}
+        return _play(relative, preview=True)
     if action == "previous-resource":
         return _step_resource(-1)
     if action == "next-resource":
@@ -333,10 +445,16 @@ def _handle(operation: str, payload: dict) -> dict:
     if action == "configure-html-mode":
         mode = str(value.get("value", "snapshot"))
         _state["html_mode"] = mode if mode in {"snapshot", "live"} else "snapshot"
+        _save_preferences()
+        return {"view": _view()}
+    if action == "configure-profile":
+        _state["source_identity"] = str(value.get("value") or "default")[:64]
+        _state["persistent_preferences"] = False
         return {"view": _view()}
     if action == "clear-background":
         omnicrawler_sdk.call("surface.background.clear", {})
-        _state.update({"active": False, "now_playing": "", "selected_id": "", "paused": False})
+        _state.update({"active": False, "live_active": False, "now_playing": "", "selected_id": "", "paused": False})
+        _snapshot_cache.clear()
         return {"view": _view(), "message": "背景已停用；插件仍保持启用，可再次选择资源"}
     return {"handled": False}
 

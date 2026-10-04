@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
 
 PLUGIN_METADATA = {
     "name": "chronicle-capsule",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "api_version": 1,
     "description": "以隐私、元数据或原始保全模式生成有界 WARC 1.1 归档",
     "plugin_types": ["exporter"],
@@ -144,7 +144,7 @@ def build_archive(
     }
 
 
-def _pages(sdk: Any, operation: str, key: str, limit: int) -> Iterator[dict[str, Any]]:
+def _pages(sdk: Any, operation: str, key: str, limit: int, stats: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
     cursor = None
     remaining = limit
     seen_cursors = set()
@@ -157,8 +157,12 @@ def _pages(sdk: Any, operation: str, key: str, limit: int) -> Iterator[dict[str,
             request["cursor"] = cursor
         page = sdk.call(operation, request)
         items = list(page.get(key) or [])
+        if stats is not None:
+            stats["has_more_inputs"] = bool(page.get("next_cursor")) or len(items) > remaining
         for item in items[:remaining]:
             if isinstance(item, dict):
+                if stats is not None:
+                    stats["scanned_inputs"] += 1
                 yield item
                 remaining -= 1
         cursor = page.get("next_cursor")
@@ -183,10 +187,10 @@ def _iter_warc_records(
     stats: dict[str, int],
 ) -> Iterator[bytes]:
     if mode == "privacy":
-        for record in _pages(sdk, "records.page", "records", limit):
+        for record in _pages(sdk, "records.page", "records", limit, stats):
             yield _warc_record(record, timestamp)
         return
-    for response in _pages(sdk, "responses.page", "responses", limit):
+    for response in _pages(sdk, "responses.page", "responses", limit, stats):
         target = str(response.get("final_url") or response.get("url") or "")
         if mode == "metadata":
             target = redact_url(target)
@@ -256,7 +260,10 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         "uncompressed_bytes": 0,
         "missing_payloads": 0,
         "truncated_payloads": 0,
+        "scanned_inputs": 0,
+        "has_more_inputs": False,
     }
+    index_entries = []
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     try:
         for warc_record in _iter_warc_records(omnicrawler_sdk, mode, limit, timestamp, stats):
@@ -264,6 +271,13 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             if stats["uncompressed_bytes"] > MAX_ARCHIVE_BYTES:
                 raise ValueError("归档未压缩载荷超过 25 MiB 安全上限")
             stats["records"] += 1
+            header = warc_record.split(b"\r\n\r\n", 1)[0]
+            fields = dict(line.split(": ", 1) for line in header.decode("ascii").split("\r\n")[1:])
+            index_entries.append({
+                "record_id": fields["WARC-Record-ID"], "source_url": fields["WARC-Target-URI"][:2000],
+                "payload_digest": fields["WARC-Payload-Digest"], "mode": mode,
+                "payload_bytes": int(fields["Content-Length"]), "truncated": "WARC-Truncated" in fields,
+            })
             # One gzip member per WARC record supports independent seeking/readers.
             compressed = gzip.compress(warc_record, compresslevel=6, mtime=0)
             digest.update(compressed)
@@ -274,6 +288,17 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                     omnicrawler_sdk.call("view.progress", {"done": stats["records"], "total": limit})
                 except Exception:
                     pass
+        index_data = json.dumps({"schema_version": 1, "mode": mode, "summary": stats,
+                                 "entries": index_entries}, ensure_ascii=False, separators=(",", ":")).encode()
+        index_record = _warc_payload("urn:omnicrawler:chronicle:index", index_data, timestamp,
+                                    media_type="application/json; charset=utf-8", record_type="metadata")
+        stats["uncompressed_bytes"] += len(index_record)
+        if stats["uncompressed_bytes"] > MAX_ARCHIVE_BYTES:
+            raise ValueError("归档与索引合计超过 25 MiB 安全上限")
+        compressed = gzip.compress(index_record, compresslevel=6, mtime=0)
+        digest.update(compressed)
+        archive_bytes += len(compressed)
+        _write_chunk(omnicrawler_sdk, handle_id, compressed)
         artifact = omnicrawler_sdk.call("artifact.stream.commit", {"handle": handle_id})
     except Exception:
         try:
@@ -290,7 +315,12 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             "archive_bytes": archive_bytes,
             "sha256": digest.hexdigest(),
             "max_records": limit,
-            "record_limit_reached": stats["records"] == limit,
+            "record_limit_reached": stats["scanned_inputs"] == limit,
+            "input_truncated": stats["scanned_inputs"] == limit and stats["has_more_inputs"],
+            "termination": "input_limit" if stats["scanned_inputs"] == limit else "source_exhausted",
+            "system_records": 1,
+            "index_uri": "urn:omnicrawler:chronicle:index",
+            "completeness_scope": "original_response_body" if mode == "preservation" else "redacted_json_representation",
             "maximum_uncompressed_bytes": MAX_ARCHIVE_BYTES,
             "payload_representation": "body-only-resource" if mode == "preservation" else "redacted-json",
             "complete_payloads": stats["records"] - stats["truncated_payloads"],

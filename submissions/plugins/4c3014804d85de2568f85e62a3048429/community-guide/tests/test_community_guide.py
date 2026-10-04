@@ -28,7 +28,7 @@ def test_view_is_static_link_panel(plugin: dict) -> None:
     (component,) = view["components"]
     assert component["type"] == "rich_text"
     links = [s for s in component["segments"] if s["type"] == "link"]
-    assert len(links) == 6
+    assert len(links) == 9
     assert all(s["url"].startswith("https://github.com/Starlife-creator/") for s in links)
 
 

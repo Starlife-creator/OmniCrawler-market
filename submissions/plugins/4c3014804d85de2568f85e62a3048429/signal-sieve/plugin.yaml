@@ -1,6 +1,6 @@
 id: signal-sieve
 name: Signal Sieve
-version: 0.3.0
+version: 0.4.0
 api_version: 1
 description: 融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断
 plugin_types:
@@ -20,4 +20,4 @@ license: MIT
 execution_mode: subprocess
 min_core_version: 0.11.2
 compatible_core: '>=0.11.2'
-updated_at: '2026-10-03'
+updated_at: '2026-10-04'
