@@ -1,6 +1,6 @@
 id: lumen-drift
 name: Lumen Drift
-version: 0.5.0
+version: 0.6.0
 api_version: 1
 description: 安全发现、预览并呈现本地媒体与 Wallpaper Engine 创意工坊资源
 plugin_types:
@@ -18,11 +18,11 @@ permissions:
 - surfaces:background
 - render:local
 - render:scripted
+- state:read
+- state:write
 required_capabilities:
   resources.enumerate: '>=1'
   resources.read: '>=1'
-  render.html.snapshot: '>=1'
-  render.html.live.start: '>=1'
   surface.background.set: '>=2'
   surface.background.configure: '>=2'
   surface.background.capabilities: '>=1'
@@ -34,4 +34,5 @@ license: MIT
 execution_mode: subprocess
 min_core_version: 0.12.0
 compatible_core: '>=0.12.0'
-updated_at: '2026-10-03'
+updated_at: '2026-10-04'
+state_schema_version: 1

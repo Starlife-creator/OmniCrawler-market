@@ -12,7 +12,7 @@ from typing import Any
 
 PLUGIN_METADATA = {
     "name": "signal-sieve",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "api_version": 1,
     "description": "融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断",
     "plugin_types": ["extractor", "transformer"],
@@ -45,6 +45,7 @@ class _Extractor(HTMLParser):
         self.current_links = 0
         self.current_tag = ""
         self.current_penalty = 0
+        self.current_semantic = False
         self.blocks: list[dict[str, Any]] = []
         self.title_parts: list[str] = []
         self.in_title = False
@@ -149,6 +150,9 @@ class _Extractor(HTMLParser):
                 else 0
             )
             punctuation = min(24, sum(text.count(mark) for mark in ".!?。！？；;") * 3)
+            tokens = re.findall(r"[\w'-]+", text.casefold())
+            repetitive = (not getattr(self, "current_semantic", False) and self.current_tag not in {"p", "pre", "blockquote"}
+                          and len(tokens) >= 100 and len(set(tokens)) / len(tokens) < 0.03 and punctuation == 0)
             score = (
                 length
                 + semantic
@@ -162,13 +166,16 @@ class _Extractor(HTMLParser):
                     "text": text,
                     "score": score,
                     "link_ratio": round(link_ratio, 3),
-                    "noise": bool(self.current_penalty),
+                    "noise": bool(self.current_penalty) or repetitive,
+                    "repetitive": repetitive,
+                    "semantic": bool(getattr(self, "current_semantic", False)),
                 }
             )
         self.current = []
         self.current_links = 0
         self.current_tag = ""
         self.current_penalty = 0
+        self.current_semantic = False
 
     def _consume_jsonld(self, source: str) -> None:
         try:
@@ -233,7 +240,16 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
             fallback_used = True
     text = "\n\n".join(block["text"] for block in unique)
     title = parser.metadata.get("title") or SPACE.sub(" ", " ".join(parser.title_parts)).strip()
-    confidence = min(1.0, len(text) / 1200 + len(unique) / 20) if text else 0.0
+    # A quality heuristic, never a probability: length alone cannot imply quality.
+    length = max(1, sum(len(b["text"]) for b in unique))
+    structured = sum(len(b["text"]) for b in unique if b.get("semantic") or b["tag"] in {"p", "pre", "blockquote"}) / length
+    link_clean = 1 - sum(len(b["text"]) * b["link_ratio"] for b in unique) / length
+    punctuation = min(1.0, sum(text.count(c) for c in ".!?。！？；;") / max(1, len(text) / 100))
+    tokens = re.findall(r"[\w'-]+", text.casefold())
+    diversity = len(set(tokens)) / max(1, len(tokens))
+    confidence = (0.35 * structured + 0.25 * punctuation + 0.2 * link_clean + 0.2 * min(1, len(text) / 600)) if text else 0.0
+    if not structured or (len(tokens) > 30 and diversity < 0.08):
+        confidence = min(confidence, 0.45)
     if fallback_used:
         confidence = min(confidence, 0.45)
     cjk = sum("\u3400" <= char <= "\u9fff" for char in text)
@@ -253,12 +269,17 @@ def extract_html(source: str, *, mode: str = "balanced") -> dict[str, Any]:
         "word_count": word_count,
         "reading_time_minutes": round(word_count / 220, 1) if word_count else 0.0,
         "confidence": round(confidence, 3),
+        "quality": "high" if confidence >= 0.75 else "usable" if confidence >= 0.45 else "low",
         "diagnostics": {
             "mode": effective_mode,
             "candidate_blocks": len(parser.blocks),
             "accepted_blocks": len(unique),
             "rejected_blocks": len(parser.blocks) - len(unique),
             "fallback_used": fallback_used,
+            "score_kind": "heuristic_quality_not_probability",
+            "structured_ratio": round(structured, 3),
+            "link_clean_ratio": round(link_clean, 3),
+            "punctuation_density": round(punctuation, 3),
             "reason": "" if text else "no_block_met_density_threshold",
             "top_candidates": sorted(parser.blocks, key=lambda item: item["score"], reverse=True)[:5],
         },
@@ -299,14 +320,17 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "records": [
                 {
-                    "source_url": str(result.get("url") or ""),
+                    "source_url": str(result.get("final_url") or result.get("url") or (result.get("request") or {}).get("url") or ""),
                     "record_type": "clean_article",
                     "data": extracted,
                     "evidence": {"method": "signal-sieve-v1", "confidence": extracted["confidence"]},
                 }
             ]
             if extracted["ok"]
-            else [],
+            else ([{"source_url": str(result.get("final_url") or result.get("url") or (result.get("request") or {}).get("url") or ""),
+                    "record_type": "extraction_diagnostic", "data": extracted["diagnostics"],
+                    "evidence": {"method": "signal-sieve-v2", "confidence": 0.0}}]
+                  if options.get("emit_diagnostics") else []),
             "requests": [],
             "artifact_path": None,
         }

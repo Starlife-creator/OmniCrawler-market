@@ -54,14 +54,23 @@ def test_export_interoperable_members_and_truncation(optimized, monkeypatch, mod
     output = optimized.handle('exporter.export', {'options': {'mode': mode, 'max_records': 2}})
     archive = b''.join(chunks)
     count = 0
+    ids = []
+    index = None
     for record in ArchiveIterator(io.BytesIO(archive), check_digests=True):
         content = record.content_stream().read()
+        if record.rec_type == 'metadata':
+            import json
+            index = json.loads(content)
+            continue
         assert record.rec_type == 'resource'
+        ids.append(record.rec_headers.get_header('WARC-Record-ID'))
         assert content
         if mode == 'preservation' and count == 0:
             assert record.rec_headers.get_header('WARC-Truncated') == 'length'
         count += 1
     assert count == 2
+    assert index and [e['record_id'] for e in index['entries']] == ids
+    assert output['summary']['system_records'] == 1
     assert output['summary']['sha256'] == hashlib.sha256(archive).hexdigest()
     assert output['summary']['truncated_payloads'] == (1 if mode == 'preservation' else 0)
 

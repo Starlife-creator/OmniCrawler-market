@@ -6,9 +6,11 @@ plugin_file: plugin.py
 description_file: listing.md
 license: MIT
 execution_mode: subprocess
-version: 1.1.0
+version: 1.2.0
 plugin_types:
 - view
 permissions: []
 compatible_core: '>=0.14.0'
-updated_at: '2026-10-03'
+updated_at: '2026-10-04'
+required_capabilities:
+  view.richtext: '>=1'

@@ -53,6 +53,8 @@ def test_persistent_classification_and_summary_agree(optimized, monkeypatch):
     monkeypatch.setattr(sys.modules['omnicrawler_sdk'], 'call', call)
     result = {'request': {'url': 'https://example.test/old'}, 'final_url': 'https://example.test/new', 'status': 200, 'content_hash': 'a' * 64, 'body_b64': base64.b64encode(b'text').decode()}
     optimized.handle('hook.after_fetch', {'result': result})
+    first = optimized.handle('processor.process', {'result': result})
+    assert first['records'][0]['data']['status'] == 'new'
     optimized.handle('hook.after_fetch', {'result': result})
     output = optimized.handle('processor.process', {'result': result})
     assert output['records'][0]['data']['status'] == 'unchanged'

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
-  "package_manifest_sha256": "6f373c56c319dde05ff5321361752520fe12061ef86583b6295feb11d06b6079",
+  "package_manifest_sha256": "ce98a8bf8fcbe89baca4f9d8355e69ff73941003904286e56f018c29eb716cc1",
   "requested_username": "starlife",
   "status": "creator_signed"
 }

@@ -14,5 +14,6 @@ class TestContract(Contract2Suite):
     pytestmark = pytest.mark.plugin_contract
 
     @pytest.fixture(scope="class")
-    def contract_plugin_dir(self):
+    @classmethod
+    def contract_plugin_dir(cls):
         return Path(__file__).resolve().parents[1]
