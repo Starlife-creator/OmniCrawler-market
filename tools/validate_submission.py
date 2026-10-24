@@ -39,6 +39,24 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     "resources:read", "surfaces:background", "render:local", "render:scripted",
 }
 
+# P2-3：宿主能力名白名单副本（与 catalog_lib.common.ALLOWED_CAPABILITIES 同集合，
+# 由 check_plugin_schema_policy 类策略断言锁对齐；投稿器保持自包含不 import 市场库）。
+ALLOWED_CAPABILITIES = {
+    "system.info",
+    "records.read", "records.page", "records.write",
+    "responses.page", "responses.payload",
+    "state.get", "state.set", "state.delete", "state.migrate",
+    "artifacts.read",
+    "artifact.stream.open", "artifact.stream.write", "artifact.stream.commit",
+    "artifact.stream.abort",
+    "network.fetch", "temp.open", "files.read",
+    "resources.describe", "resources.enumerate", "resources.read",
+    "render.html.snapshot", "render.html.live.start", "render.html.live.stop",
+    "surface.background.set", "surface.background.configure",
+    "surface.background.clear", "surface.background.capabilities",
+    "secrets.get", "view.richtext", "view.progress",
+}
+
 
 def _plugin_metadata(tree: ast.AST) -> dict[str, Any]:
     for node in getattr(tree, "body", []):
@@ -82,6 +100,12 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
         for name, requirement in required_capabilities.items()
     ):
         raise ValueError(f"{root}: invalid required_capabilities")
+    # P2-3：能力名必须在宿主契约白名单内，避免未知能力名投稿 CI 绿、运行期才被拒。
+    unknown_caps = {
+        str(name).strip() for name in required_capabilities
+    } - ALLOWED_CAPABILITIES
+    if unknown_caps:
+        raise ValueError(f"{root}: unknown required_capabilities: {sorted(unknown_caps)}")
     state_schema_version = metadata.get("state_schema_version", 1)
     if not isinstance(state_schema_version, int) or state_schema_version < 1:
         raise ValueError(f"{root}: state_schema_version must be a positive integer")

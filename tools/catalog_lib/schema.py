@@ -98,11 +98,46 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
             raise ValueError(
                 f"插件 {entry['id']} 的 required_capabilities 必须是能力名到正整数/'>=正整数'的映射"
             )
+        # P2-3：能力名必须存在于宿主契约白名单（镜像主仓 CAPABILITY_VERSIONS 键集合），
+        # 避免未知能力名在市场 CI 绿、子进程启动前才被拒。
+        unknown_caps = {
+            str(name).strip() for name in required_capabilities
+        } - ALLOWED_CAPABILITIES
+        if unknown_caps:
+            raise ValueError(
+                f"插件 {entry['id']} 声明宿主不支持的能力: {sorted(unknown_caps)}"
+            )
     state_schema_version = entry.get("state_schema_version")
     if state_schema_version is not None and (
         not isinstance(state_schema_version, int) or state_schema_version < 1
     ):
         raise ValueError(f"插件 {entry['id']} 的 state_schema_version 必须是正整数")
+    # P0-2：条目级吊销/弃用状态结构校验（与目录顶层 tombstones 并列第二来源）。
+    revoked = entry.get("revoked")
+    if revoked is not None and not (
+        isinstance(revoked, str) and revoked.strip()
+        or isinstance(revoked, dict)
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 revoked 须为非空字符串或映射")
+    revoked_versions = entry.get("revoked_versions")
+    if revoked_versions is not None:
+        if not isinstance(revoked_versions, list) or not all(
+            isinstance(v, str) and v.strip() for v in revoked_versions
+        ):
+            raise ValueError(f"插件 {entry['id']} 的 revoked_versions 须为版本字符串列表")
+    deprecated = entry.get("deprecated")
+    if deprecated is not None and not (
+        isinstance(deprecated, str) and deprecated.strip()
+        or isinstance(deprecated, dict)
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 deprecated 须为非空字符串或映射")
+    # P2-2：source_base 仅允许 http/https 同源基址（egress 策略由安装侧二次约束）。
+    source_base = entry.get("source_base")
+    if source_base is not None:
+        base_str = str(source_base).strip()
+        if not re.fullmatch(r"https?://[^\s/]+(?:/[^\s]*)?", base_str):
+            raise ValueError(f"插件 {entry['id']} 的 source_base 须为 http(s) URL: {source_base!r}")
+        entry["source_base"] = base_str.rstrip("/")
     return entry
 
 def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:

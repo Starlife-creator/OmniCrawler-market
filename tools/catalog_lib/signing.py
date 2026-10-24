@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,7 @@ def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
         raise ValueError("未找到市场信任根公钥，拒绝生成正式发布文件")
     trusted_public = _load_public_key(trust_source).public_bytes_raw()
     derived_public = private_key.public_key().public_bytes_raw()
-    if derived_public != trusted_public:
+    if not hmac.compare_digest(derived_public, trusted_public):
         raise ValueError("维护者私钥与市场信任根不匹配，拒绝生成正式发布文件")
 
 
@@ -111,7 +112,7 @@ def _verify_package_manifest_entry(
         raise ValueError(f"包 {entry.get('id')} 的 manifest 不是规范 JSON")
     expected_digest = str(entry.get("package_manifest_sha256", ""))
     actual_digest = hashlib.sha256(data).hexdigest()
-    if expected_digest and expected_digest != actual_digest:
+    if expected_digest and not hmac.compare_digest(expected_digest, actual_digest):
         raise ValueError(f"包 {entry.get('id')} 的 manifest sha256 不一致")
     identity_path = _require_contained(
         registry, registry, str(entry.get("creator_identity_file", "")), "creator identity"
@@ -135,7 +136,7 @@ def _verify_package_manifest_entry(
         if not candidate.is_file():
             raise ValueError(f"包 {entry.get('id')} 缺少 manifest 文件 {file_rel}")
         digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        if expected != f"sha256:{digest}":
+        if not hmac.compare_digest(expected, f"sha256:{digest}"):
             raise ValueError(f"包 {entry.get('id')} 文件哈希不一致: {file_rel}")
     if require_maintainer and (maintainer_sig_path is None or not maintainer_sig_path.is_file()):
         raise ValueError(f"包 {entry.get('id')} 缺少维护者整包签名")

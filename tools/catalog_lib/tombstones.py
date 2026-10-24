@@ -41,11 +41,26 @@ def _load_tombstones(registry: Path) -> list[dict[str, Any]]:
         tid = str(item["id"])
         if tid in existing_plugin_ids or tid in existing_template_ids:
             raise ValueError(f"tombstone {tid!r} 与现存插件/模板目录冲突（下架条目不得在线）")
-        tombstones.append({
+        tomb: dict[str, Any] = {
             "id": tid,
             "removed_at": str(item["removed_at"]),
             "reason": str(item["reason"]),
-        })
+        }
+        # 版本级墓碑（P0-2 配套，对齐主仓 check_revocation 版本匹配）：仅吊销命中版本；
+        # 未声明 version/versions 表示整条目下架。
+        t_version = item.get("version")
+        t_versions = item.get("versions")
+        if t_version is not None:
+            if not isinstance(t_version, str) or not t_version.strip():
+                raise ValueError(f"tombstone {tid!r} 的 version 须为非空字符串")
+            tomb["version"] = t_version.strip()
+        elif t_versions is not None:
+            if not isinstance(t_versions, list) or not all(
+                isinstance(v, str) and v.strip() for v in t_versions
+            ):
+                raise ValueError(f"tombstone {tid!r} 的 versions 须为版本字符串列表")
+            tomb["versions"] = [v.strip() for v in t_versions]
+        tombstones.append(tomb)
     return tombstones
 
 

@@ -59,7 +59,10 @@ jobs:
       - run: python -m pip install --upgrade pip
       # P3-6：与主仓同规格——PyYAML 对齐主仓 quality.txt 精确 pin；
       # cryptography 对齐 pyproject security extra 上限，防验签行为随大版本漂移
-      - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51"
+      # P1-4：工具链补 pytest 回归层（tools/tests），pytest 仅测试运行器，不进入运行时依赖。
+      - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51" "pytest==8.3.3"
+      - name: 工具链 pytest 回归（schema/路径/墓碑负样例）
+        run: python -m pytest tools/tests -q
       - name: Plugin schema policy
         run: python tools/check_plugin_schema_policy.py
       - name: Catalog 一致性 + 签名校验
