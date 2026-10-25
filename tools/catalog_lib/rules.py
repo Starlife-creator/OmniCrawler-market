@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import *
+from .contract import security_field_expansion
 
 
 def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
@@ -113,11 +114,15 @@ def _check_version_rules(
         old_mode = str(prev.get("execution_mode") or "subprocess")
         if new_mode != old_mode:
             changed.append("execution_mode")
+        # P2-10：门 4 扩权检测——permissions/domains/input_files/dependencies/
+        # required_capabilities 集合变化（含扩权、收窄、替换）必须伴随版本递增，
+        # 重新走发布门禁与签名，防止未升版的权限扩大静默上线。
+        changed.extend(security_field_expansion(prev, entry))
         if changed and _parse_version(new_version) <= _parse_version(old_version):
             raise ValueError(
                 f"插件 {pid} 字段 {changed} 变更但版本未递增"
                 f"（{old_version} → {new_version}）：门 4 要求 license/execution_mode "
-                f"变更必须升版并重新走发布门禁与签名（A5）"
+                f"与权限/域名/输入文件/依赖/能力集合变更必须升版并重新走发布门禁与签名（A5/P2-10）"
             )
     return warnings
 

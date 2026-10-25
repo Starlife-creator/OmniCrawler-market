@@ -378,6 +378,36 @@ def safe_rel(value: str) -> PurePosixPath:
     return path
 
 
+# P3-10：运行必需文件分类（与 catalog_lib.contract 同一规则的自包含镜像；
+# 策略/测试锁双侧一致）。tests/docs/examples 与 README/LICENSE/CHANGELOG 等辅助
+# 材料归为非运行时；主仓下载清单过滤属跨仓配套。
+_NON_RUNTIME_DIR_PARTS = {"tests", "test", "docs", "examples", "example"}
+_NON_RUNTIME_NAME_RE = re.compile(
+    r"^(readme|license|licence|changelog|notice|contributing|security|"
+    r"authors?|manifest|notes?|changes?)(\..*)?$",
+    re.IGNORECASE,
+)
+
+
+def is_runtime_file(rel: str) -> bool:
+    parts = [part for part in str(rel).split("/") if part]
+    if not parts:
+        return False
+    if any(part in _NON_RUNTIME_DIR_PARTS for part in parts[:-1]):
+        return False
+    name = parts[-1]
+    if _NON_RUNTIME_NAME_RE.match(name):
+        return False
+    if name.endswith((".md", ".rst", ".txt")) and name != "listing.md":
+        return False
+    return True
+
+
+def non_runtime_files(declared: dict[str, Any]) -> list[str]:
+    """P3-10：manifest 中归为非运行时的文件相对路径列表（仅提示，不阻断）。"""
+    return [str(rel) for rel in declared if not is_runtime_file(str(rel))]
+
+
 def payload_files(root: Path) -> dict[str, Path]:
     result: dict[str, Path] = {}
     for path in sorted(root.rglob("*")):
@@ -497,12 +527,27 @@ def main(argv: list[str] | None = None) -> int:
         print("OK submissions: 暂无投稿")
         return 0
     roots = sorted(path.parent for path in submissions.rglob("submission.json"))
+    validated: list[tuple[str, str]] = []
+    warnings: list[str] = []
     try:
-        validated = [validate_one(root, submissions) for root in roots]
+        for root in roots:
+            validated.append(validate_one(root, submissions))
+            manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
+            declared = manifest.get("files", {})
+            for rel in non_runtime_files(declared if isinstance(declared, dict) else {}):
+                warnings.append(
+                    f"{root.relative_to(submissions)}: 非运行时文件随包声明 "
+                    f"（主仓下载清单过滤待配套）: {rel}"
+                )
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"FAIL submission: {exc}")
         return 1
-    print(f"OK submissions: {len(validated)} 个创作者签名包静态验证通过（未执行投稿代码）")
+    for warning in warnings:
+        print(f"  ! {warning}")
+    print(
+        f"OK submissions: {len(validated)} 个创作者签名包静态验证通过"
+        f"（未执行投稿代码；{len(warnings)} 条非运行时文件提示）"
+    )
     return 0
 
 

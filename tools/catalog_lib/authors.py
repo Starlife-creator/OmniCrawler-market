@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,9 @@ from .signing import *
 
 
 _HANDLE_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
+# P2-4：作者密钥生命周期状态与代际字段口径。
+_AUTHOR_STATUSES = {"active", "revoked"}
+_REVOKED_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def normalize_requested_handle(value: str) -> str:
@@ -81,6 +85,32 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
             record["_pubkey_path"] = pem
         elif fingerprint:
             record["_fingerprint"] = str(fingerprint)
+        # P2-4：作者密钥生命周期字段校验（status/revoked_at/key_generation/key_id）。
+        status = str(record.get("status") or "active")
+        if status not in _AUTHOR_STATUSES:
+            raise ValueError(
+                f"作者 {handle} 的 status 非法: {status!r}（{sorted(_AUTHOR_STATUSES)}）"
+            )
+        record["status"] = status
+        revoked_at = record.get("revoked_at")
+        if status == "revoked":
+            if not revoked_at or not _REVOKED_DATE_RE.match(str(revoked_at)):
+                raise ValueError(
+                    f"作者 {handle} 状态为 revoked 但缺少合法 revoked_at（YYYY-MM-DD）"
+                )
+            try:
+                date.fromisoformat(str(revoked_at))
+            except ValueError as exc:
+                raise ValueError(f"作者 {handle} 的 revoked_at 日期非法: {revoked_at}") from exc
+        elif revoked_at:
+            raise ValueError(f"作者 {handle} 为 active 却声明 revoked_at")
+        key_generation = record.get("key_generation")
+        if key_generation is not None and (
+            not isinstance(key_generation, int) or key_generation < 0
+        ):
+            raise ValueError(f"作者 {handle} 的 key_generation 须为非负整数")
+        if record.get("key_id") is not None and not str(record["key_id"]).strip():
+            raise ValueError(f"作者 {handle} 的 key_id 不得为空串")
         authors[handle] = record
     # 同公钥多 username 检查（B02-012）：指纹是绝对唯一标识
     by_fingerprint: dict[str, str] = {}
@@ -95,6 +125,15 @@ def load_authors(registry: Path) -> dict[str, dict[str, Any]]:
             )
         by_fingerprint[fp] = handle
     return authors
+
+def _ensure_active(record: dict[str, Any], entry_id: str) -> None:
+    """P2-4：已吊销作者密钥记录禁止背书新条目（fail-closed）。"""
+    if record.get("status") == "revoked":
+        raise ValueError(
+            f"插件 {entry_id} 的作者 {record.get('market_handle')} 密钥已吊销"
+            f"（revoked_at={record.get('revoked_at')}），拒绝通过"
+        )
+
 
 def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) -> None:
     fingerprint = str(manifest.get("author_fingerprint", ""))
@@ -119,12 +158,14 @@ def _check_author(manifest: dict[str, Any], authors: dict[str, dict[str, Any]]) 
                 f"插件 {manifest.get('id')} 的 publisher '{publisher}' 与作者 "
                 f"'{found.get('market_handle')}' 不一致（author_fingerprint 属于后者）"
             )
+        _ensure_active(found, str(manifest.get("id", "?")))
         return
     if record.get("_fingerprint") != fingerprint:
         raise ValueError(
             f"插件 {manifest.get('id')} 的 author_fingerprint {fingerprint} "
             f"与作者 {record.get('market_handle')} 实际指纹不一致"
         )
+    _ensure_active(record, str(manifest.get("id", "?")))
 
 def _check_creator_rail(
     registry: Path,

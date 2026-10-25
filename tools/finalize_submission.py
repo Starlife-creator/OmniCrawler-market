@@ -29,9 +29,15 @@ if str(REGISTRY / "tools") not in sys.path:
 from catalog_lib.authors import assign_market_handle, load_authors
 from catalog_lib.build import generate
 from catalog_lib.cli import publish_check
+from catalog_lib.contract import compare_overlay_payload
 from catalog_lib.identity import CreatorIdentity
 from catalog_lib.signing import sign_bytes, validate_maintainer_private_key
-from catalog_lib.transparency import canonicalize_entry
+from catalog_lib.transparency import (
+    REVIEW_DECISIONS,
+    build_v2_entry,
+    canonicalize_entry,
+    last_v2_entry,
+)
 from validate_submission import validate_one
 
 SEMVER_RE = re.compile(
@@ -92,7 +98,14 @@ def _copy_creator_package(source: Path, destination: Path, manifest: dict[str, A
             shutil.copyfile(src, destination / name)
 
 
-def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]) -> dict[str, Any]:
+def _metadata(
+    source: Path, manifest: dict[str, Any], submission: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """返回 (市场 overlay 元数据, 创作者签名载荷可比对声明)。
+
+    P2-10：payload_decl 保留载荷原始声明，供 overlay↔载荷漂移双向比对；
+    安装期调用同一比对函数属主仓配套（跨仓待落地）。
+    """
     kind = str(manifest["package_type"])
     market = submission.get("market_metadata") or {}
     if not isinstance(market, dict):
@@ -103,15 +116,8 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
             if (source / "plugin.yaml").is_file() else {}
         if not isinstance(yaml_meta, dict):
             yaml_meta = {}
-        return {
-            "name": str(market.get("name") or plugin_meta.get("name") or manifest["package_id"]),
-            "category": str(market.get("category") or (plugin_meta.get("plugin_types") or ["source"])[0]),
-            "plugin_types": list(plugin_meta.get("plugin_types") or yaml_meta.get("plugin_types") or ["source"]),
-            "summary": str(market.get("summary") or plugin_meta.get("description") or ""),
+        payload_decl: dict[str, Any] = {
             "permissions": list(plugin_meta.get("permissions") or yaml_meta.get("permissions") or []),
-            "compatible_core": str(yaml_meta.get("compatible_core") or f">={plugin_meta.get('min_core_version') or '0.11.1'}"),
-            "license": str(plugin_meta.get("license") or yaml_meta.get("license") or ""),
-            "execution_mode": str(plugin_meta.get("execution_mode") or yaml_meta.get("execution_mode") or "subprocess"),
             "domains": list(plugin_meta.get("domains") or yaml_meta.get("domains") or []),
             "input_files": list(plugin_meta.get("input_files") or yaml_meta.get("input_files") or []),
             "dependencies": list(plugin_meta.get("dependencies") or yaml_meta.get("dependencies") or []),
@@ -120,6 +126,22 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
                 or yaml_meta.get("required_capabilities")
                 or {}
             ),
+        }
+        metadata: dict[str, Any] = {
+            "name": str(market.get("name") or plugin_meta.get("name") or manifest["package_id"]),
+            # P2-10：category 是展示分类，不再回退取 plugin_types[0]（扩展点 ≠ 分类）；
+            # 未声明时固定归 utility，避免类型名被误读为市场分类。
+            "category": str(market.get("category") or "utility"),
+            "plugin_types": list(plugin_meta.get("plugin_types") or yaml_meta.get("plugin_types") or ["source"]),
+            "summary": str(market.get("summary") or plugin_meta.get("description") or ""),
+            "permissions": payload_decl["permissions"],
+            "compatible_core": str(yaml_meta.get("compatible_core") or f">={plugin_meta.get('min_core_version') or '0.11.1'}"),
+            "license": str(plugin_meta.get("license") or yaml_meta.get("license") or ""),
+            "execution_mode": str(plugin_meta.get("execution_mode") or yaml_meta.get("execution_mode") or "subprocess"),
+            "domains": payload_decl["domains"],
+            "input_files": payload_decl["input_files"],
+            "dependencies": payload_decl["dependencies"],
+            "required_capabilities": payload_decl["required_capabilities"],
             "state_schema_version": int(
                 plugin_meta.get("state_schema_version")
                 or yaml_meta.get("state_schema_version")
@@ -127,11 +149,12 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
             ),
             "tags": list(plugin_meta.get("tags") or yaml_meta.get("tags") or []),
         }
+        return metadata, payload_decl
     template = yaml.safe_load((source / "template.yaml").read_text(encoding="utf-8")) or {}
     block = template.get("template", {}) if isinstance(template, dict) else {}
     if not isinstance(block, dict):
         block = {}
-    return {
+    metadata = {
         "name": str(market.get("name") or block.get("name") or manifest["package_id"]),
         "category": str(market.get("category") or block.get("category") or "general"),
         "summary": str(market.get("summary") or block.get("description") or ""),
@@ -139,6 +162,7 @@ def _metadata(source: Path, manifest: dict[str, Any], submission: dict[str, Any]
         "license": str(block.get("license") or ""),
         "tags": list(block.get("tags") or []),
     }
+    return metadata, {}
 
 
 def finalize(args: argparse.Namespace) -> int:
@@ -191,7 +215,7 @@ def finalize(args: argparse.Namespace) -> int:
     else:
         overlay_path = destination / "market.yaml"
         package_destination = destination
-    metadata = _metadata(source, manifest, submission)
+    metadata, payload_decl = _metadata(source, manifest, submission)
     if not metadata["summary"] or not metadata["license"]:
         raise ValueError("正式发布需要非空 summary 与 license")
     private_pem = Path(args.maintainer_key).expanduser().read_bytes()
@@ -270,6 +294,14 @@ def finalize(args: argparse.Namespace) -> int:
                 "signature_file": f"{base}/template.yaml.sig",
             }
         )
+    if kind == "plugin":
+        # P2-10：overlay 展示声明必须与创作者签名载荷一致；漂移即拒发（安装期
+        # 二次双向比对由主仓安装链路配套落地）。
+        drift = compare_overlay_payload(overlay, payload_decl)
+        if drift:
+            raise ValueError(
+                "overlay 与创作者签名载荷声明漂移（P2-10）: " + "; ".join(drift)
+            )
     overlay_path.write_text(
         yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
@@ -278,17 +310,23 @@ def finalize(args: argparse.Namespace) -> int:
     generate(REGISTRY)
     catalog = REGISTRY / "catalog.json"
     (REGISTRY / "catalog.json.sig").write_bytes(sign_bytes(catalog.read_bytes(), private_pem))
-    log_entry = {
-        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
-        "operation": "update-package" if is_update else "finalize-package",
-        "package_type": kind,
-        "package_id": market_id,
-        "version": manifest["version"],
-        "creator_fingerprint": identity.key_fingerprint,
-        "market_handle": handle,
-        "package_manifest_file": f"{base}/package.manifest.json",
-        "package_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-    }
+    # P2-5 v2 哈希链 + P2-11 审核留痕：链接上一条 v2 条目，固化 manifest 证据哈希、
+    # 审核人/结论/备注；公网 Rekor 类公开账本锚定属外部配套。
+    prev = last_v2_entry(REGISTRY / "signing_transparency.jsonl")
+    log_entry = build_v2_entry(
+        prev,
+        operation="update-package" if is_update else "finalize-package",
+        package_type=kind,
+        package_id=market_id,
+        version=manifest["version"],
+        creator_fingerprint=identity.key_fingerprint,
+        evidence_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        package_manifest_file=f"{base}/package.manifest.json",
+        reviewer=args.reviewer,
+        decision=args.review_decision,
+        review_comment=args.review_comment,
+        extra={"market_handle": handle},
+    )
     with (REGISTRY / "signing_transparency.jsonl").open(
         "a", encoding="utf-8", newline="\n"
     ) as stream:
@@ -308,6 +346,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewed-manifest-sha256", required=True)
     parser.add_argument("--maintainer-key", required=True)
     parser.add_argument("--market-id", default=None)
+    # P2-11：人工审核留痕（审核人标识/结论/备注写入透明日志 v2 条目）。
+    parser.add_argument("--reviewer", default=None, help="审核人标识（公钥指纹或 handle）")
+    parser.add_argument("--review-comment", default=None, help="审核备注")
+    parser.add_argument(
+        "--review-decision",
+        default="approved",
+        choices=sorted(REVIEW_DECISIONS),
+        help="人工审核结论",
+    )
     args = parser.parse_args(argv)
     try:
         result = finalize(args)

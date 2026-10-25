@@ -18,10 +18,13 @@ from .tombstones import *
 
 
 def _existing_catalog_sequence(registry: Path) -> int | None:
-    """P3-2：读取磁盘 catalog.json 持久序列号；缺失/非法返回 None。"""
+    """P3-2：读取磁盘 catalog.json 持久序列号；缺失/损坏/非法返回 None。"""
     existing_path = registry / "catalog.json"
     if existing_path.is_file():
-        existing_catalog = json.loads(existing_path.read_text(encoding="utf-8"))
+        try:
+            existing_catalog = json.loads(existing_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
         value = existing_catalog.get("sequence")
         if isinstance(value, int) and value > 0:
             return value

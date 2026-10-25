@@ -60,6 +60,44 @@ def _resolve_trust(registry: Path, trust_source: str | None) -> str:
     return str(candidate) if candidate.is_file() else ""
 
 
+def _resolve_all_trust_roots(registry: Path) -> list[str]:
+    """P2-4：全部信任根（代际过渡双根）。
+
+    先列名内主根；``keys/plugin_trust.g2.pub.pem`` 存在即纳入第二根，用于密钥
+    轮换过渡期新旧双根并行验签。冷密钥仪式/轮换流程属流程配套，不在本仓代码内。
+    """
+    roots: list[str] = []
+    for rel in _KEYS_FALLBACK:
+        candidate = registry / rel
+        if candidate.is_file():
+            roots.append(str(candidate))
+    extra = registry / "keys" / "plugin_trust.g2.pub.pem"
+    if extra.is_file() and str(extra) not in roots:
+        roots.append(str(extra))
+    return roots
+
+
+def verify_against_roots(
+    registry: Path,
+    data: bytes,
+    signature: bytes,
+    *,
+    trust_source: str | None = None,
+) -> tuple[bool, str]:
+    """验签：显式 ``trust_source`` 只对该根校验（fail-closed，不回退目录根）；
+    未显式提供时遍历目录全部信任根（P2-4 密钥代际过渡双根并行验签）。
+    返回 ``(ok, accepted_root)``。
+    """
+    roots = [trust_source] if trust_source else _resolve_all_trust_roots(registry)
+    if not roots:
+        return False, "未配置市场信任根公钥"
+    for root in roots:
+        if _verify_signature(data, signature, root):
+            return True, root
+    return False, "签名不被任何信任根接受"
+
+
+
 def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
     """Fail before publication writes unless the private key matches the trust root."""
     from cryptography.hazmat.primitives import serialization
@@ -277,7 +315,9 @@ def _verify_package_manifest(
         raise ValueError(f"包 {entry_id} 缺少维护者整包签名")
     if maintainer_sig_path is not None and (
         not maintainer_sig_path.is_file()
-        or not _verify_signature(data, maintainer_sig_path.read_bytes(), trust)
+        or not verify_against_roots(
+            registry, data, maintainer_sig_path.read_bytes(), trust_source=trust
+        )[0]
     ):
         raise ValueError(f"包 {entry_id} 维护者整包签名无效")
 
@@ -369,7 +409,9 @@ def _verify_signatures(
         # creator.identity 公钥。声明哪条就验哪条；两者可同时存在（创作者
         # 签名 + 维护者背书），if/elif 互斥是错误语义。
         if has_maintainer_sig:
-            ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
+            ok, _ = verify_against_roots(
+                registry, plugin_path.read_bytes(), sig_path.read_bytes()
+            )
             if not ok:
                 raise ValueError(f"插件 {entry['id']} 维护者签名校验失败（fail-closed）")
         if entry.get("creator_signature_file") and entry.get("creator_identity_file"):
@@ -407,7 +449,9 @@ def _verify_signatures(
         )
         template_path = registry / str(entry["template_file"])
         sig_path = registry / str(entry["signature_file"])
-        ok = _verify_signature(template_path.read_bytes(), sig_path.read_bytes(), trust)
+        ok, _ = verify_against_roots(
+            registry, template_path.read_bytes(), sig_path.read_bytes()
+        )
         if not ok:
             raise ValueError(f"模板 {entry['id']} 签名校验失败（fail-closed）")
         # B02-002：模板创作者轨独立验签——creator.sig 对 creator.identity 公钥
@@ -475,7 +519,13 @@ def _verify_catalog_signature(registry: Path, trust_source: str | None) -> None:
     trust = _resolve_trust(registry, trust_source)
     if not trust:
         raise ValueError("正式发布无法找到 catalog 信任根公钥")
-    if not _verify_signature(catalog.read_bytes(), signature.read_bytes(), trust):
+    ok, _ = verify_against_roots(
+        registry,
+        catalog.read_bytes(),
+        signature.read_bytes(),
+        trust_source=trust,
+    )
+    if not ok:
         raise ValueError("catalog.json.sig 未覆盖当前 catalog.json（正式发布拒绝）")
 
 

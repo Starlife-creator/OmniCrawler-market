@@ -151,6 +151,42 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
         if not re.fullmatch(r"https?://[^\s/]+(?:/[^\s]*)?", base_str):
             raise ValueError(f"插件 {entry['id']} 的 source_base 须为 http(s) URL: {source_base!r}")
         entry["source_base"] = base_str.rstrip("/")
+    # P3-9：目录层可选静态契约字段格式校验（config_schema / resource_limits 属
+    # 运行时载荷读取，故意不进白名单，避免目录层误导安装期预校验）。
+    plugin_id = str(entry["id"])
+    api_version = entry.get("api_version")
+    if api_version is not None:
+        SemVer.parse(str(api_version))
+    min_core = entry.get("min_core_version")
+    max_core = entry.get("max_core_version")
+    for bound, value in (("min_core_version", min_core), ("max_core_version", max_core)):
+        if value is not None:
+            SemVer.parse(str(value))
+    if min_core and max_core and SemVer.parse(str(min_core)) > SemVer.parse(str(max_core)):
+        raise ValueError(
+            f"插件 {plugin_id} 的 min_core_version 大于 max_core_version: {min_core} > {max_core}"
+        )
+    source_url = entry.get("source_url")
+    if source_url is not None:
+        url_str = str(source_url).strip()
+        if not re.fullmatch(r"https?://[^\s/]+(?:/[^\s]*)?", url_str):
+            raise ValueError(f"插件 {plugin_id} 的 source_url 须为 http(s) URL: {source_url!r}")
+        entry["source_url"] = url_str
+    optional_deps = entry.get("optional_dependencies")
+    if optional_deps is not None:
+        if not isinstance(optional_deps, list):
+            raise ValueError(f"插件 {plugin_id} 的 optional_dependencies 必须是列表")
+        for dep in optional_deps:
+            if not isinstance(dep, dict) or not dep.get("name"):
+                raise ValueError(
+                    f"插件 {plugin_id} 的 optional_dependencies 条目非法: {dep!r}"
+                )
+    fallback = entry.get("fallback")
+    if fallback is not None and not isinstance(fallback, str):
+        raise ValueError(f"插件 {plugin_id} 的 fallback 必须是字符串")
+    contract_shape = entry.get("contract_shape")
+    if contract_shape is not None and not isinstance(contract_shape, str):
+        raise ValueError(f"插件 {plugin_id} 的 contract_shape 必须是字符串")
     return entry
 
 def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
