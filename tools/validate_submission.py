@@ -26,7 +26,10 @@ GENERATED = {MANIFEST, CREATOR_SIG, "package.manifest.maintainer.sig", "creator.
 IGNORED = {".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__"}
 USERNAME_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
 PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
-TEMPLATE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*(?:/[a-z0-9_-]+)*$")
+TEMPLATE_ID_RE = re.compile(
+    r"^[a-z](?:[a-z0-9]|_[a-z0-9]|-[a-z0-9])*"
+    r"(?:/[a-z](?:[a-z0-9]|_[a-z0-9]|-[a-z0-9])*)*$"
+)
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
@@ -359,8 +362,18 @@ def canonical(value: dict[str, Any]) -> bytes:
 
 
 def safe_rel(value: str) -> PurePosixPath:
-    path = PurePosixPath(value)
-    if not value or "\\" in value or path.is_absolute() or ".." in path.parts or "." in path.parts:
+    # P2-7：与 catalog_lib.paths.safe_relative_path 同一规则（自包含镜像副本，
+    # 策略脚本锁正则/行为对齐）。段检查基于原始字符串切分，避免归一化吞掉 ./ 。
+    raw = str(value)
+    if not raw or "\\" in raw:
+        raise ValueError(f"非法相对路径: {value!r}")
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
+        raise ValueError(f"非法相对路径（绝对路径/盘符）: {value!r}")
+    parts = raw.split("/")
+    if ".." in parts or "." in parts:
+        raise ValueError(f"非法相对路径（含上级/当前目录段）: {value!r}")
+    path = PurePosixPath(raw)
+    if path.is_absolute():
         raise ValueError(f"非法相对路径: {value!r}")
     return path
 

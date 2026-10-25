@@ -65,10 +65,10 @@ _ENTRY_KEYS = [
     "input_files",
     "required_capabilities",
     "state_schema_version",
-    "release_channel",
+    # P2-1：release_channel / review_depth / gates_evidence 为生产者-消费者两侧均未
+    # 落地的死字段，从 schema 白名单移除（最小破坏路径：移除未消费字段并清引用；
+    # 已签名历史包内残留字节属哈希锚定载荷，按字节不可变红线不回改）。
     "dependencies",
-    "review_depth",
-    "gates_evidence",
     # 完整包协议：创作者与维护者签署同一 package manifest。
     "package_manifest_file",
     "creator_package_signature_file",

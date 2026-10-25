@@ -17,7 +17,26 @@ from .signing import *
 from .tombstones import *
 
 
-def build_catalog(registry: Path, *, publisher_override: str | None = None) -> dict[str, Any]:
+def _existing_sequence(registry: Path) -> int:
+    """读取持久化 catalog.json 的单调序列号；缺失/损坏/非法时回落 0（P3-2）。"""
+    path = registry / "catalog.json"
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            value = existing.get("sequence")
+            if isinstance(value, int) and value > 0:
+                return value
+        except json.JSONDecodeError:
+            pass
+    return 0
+
+
+def build_catalog(
+    registry: Path,
+    *,
+    publisher_override: str | None = None,
+    sequence: int | None = None,
+) -> dict[str, Any]:
     plugins_dir = registry / _PLUGIN_DIR
     if not plugins_dir.is_dir():
         raise ValueError(f"registry 缺少 {_PLUGIN_DIR}/ 目录: {plugins_dir}")
@@ -156,13 +175,16 @@ def build_catalog(registry: Path, *, publisher_override: str | None = None) -> d
     template_entries.sort(key=lambda item: str(item["id"]))
     publisher = publisher_override or (publishers[0] if publishers else "unknown")
     generated_at = datetime.now(timezone.utc)
+    # P3-2：sequence 为持久单调计数器（落盘自增），不再由时间戳推导——同秒连续
+    # 发布序号仍递增不相等；--check 模式显式传入磁盘既有序号以保持一致性比对。
+    sequence_value = sequence if sequence is not None else _existing_sequence(registry) + 1
     catalog = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at.isoformat(timespec="seconds"),
         # G3（catalog 防重放）：单调序列号 + 发布时间戳（均被签名覆盖）。
         # 客户端拒绝序列号/时间旧于本地缓存的 catalog（decision:
         # catalog_stale_rejected）——吊销不可被旧版 catalog 重放隐藏。
-        "sequence": int(generated_at.timestamp()),
+        "sequence": sequence_value,
         "publisher": publisher,
         "trust_model": TRUST_MODEL,
         "official_publishers": list(OFFICIAL_PUBLISHERS),

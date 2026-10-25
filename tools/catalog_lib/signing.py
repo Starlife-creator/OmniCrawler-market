@@ -77,6 +77,50 @@ def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
         raise ValueError("维护者私钥与市场信任根不匹配，拒绝生成正式发布文件")
 
 
+# --- P2-8：市场仓自包含签名原语（替代对主仓 omnicrawler.plugins.signing 的 sys.path 依赖） ---
+def load_public_key(trust_source: str) -> Any:
+    """公开 API：从 PEM 路径或内联 PEM 文本加载 ed25519 公钥。"""
+    return _load_public_key(trust_source)
+
+
+def sign_bytes(data: bytes, private_pem: bytes) -> bytes:
+    """用 ed25519 私钥 PEM 对 ``data`` 产出原始 detached 签名（与主仓 sign_bytes 同源）。"""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise TypeError("签名私钥必须是 ed25519 私钥")
+    return private_key.sign(data)
+
+
+def sign_file(path: str | Path, private_pem: bytes) -> Path:
+    """在 ``path`` 旁写入 detached ``<file>.sig`` 并返回其路径（与主仓 sign_file 同源）。"""
+    signature = sign_bytes(Path(path).read_bytes(), private_pem)
+    sig_path = Path(path).with_suffix(Path(path).suffix + ".sig")
+    sig_path.write_bytes(signature)
+    return sig_path
+
+
+def verify_plugin(path: str | Path, trust_source: str) -> tuple[bool, str]:
+    """验签 ``path`` 旁的 detached 签名；返回 ``(ok, reason)``，fail-closed。"""
+    from cryptography.exceptions import InvalidSignature
+
+    try:
+        public_key = _load_public_key(trust_source)
+    except ValueError:
+        return False, "未配置插件信任根公钥"
+    sig_path = Path(path).with_suffix(Path(path).suffix + ".sig")
+    if not sig_path.is_file():
+        return False, "未找到插件签名文件 (.sig)"
+    signature = sig_path.read_bytes()
+    try:
+        public_key.verify(signature, Path(path).read_bytes())
+    except (InvalidSignature, ValueError, TypeError):
+        return False, "签名校验失败（文件可能被篡改）"
+    return True, "verified"
+
+
 def _canonical_manifest(manifest: dict[str, Any]) -> bytes:
     return (
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"

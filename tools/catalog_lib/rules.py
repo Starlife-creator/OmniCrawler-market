@@ -16,10 +16,11 @@ def _check_consistency(registry: Path, catalog: dict[str, Any]) -> None:
     if not existing_path.is_file():
         raise ValueError(f"catalog.json 缺失（先运行生成器）: {existing_path}")
     existing = json.loads(existing_path.read_text(encoding="utf-8"))
-    # generated_at 是时间戳；sequence 由 generated_at 推导（G3 防重放，--check
-    # 重新生成必然不同）；publisher 是生成参数（--publisher 覆盖时顶层不同，
-    # 与源无关，排除以免 --check 误失败，P3-4）
-    parametric = {"generated_at", "sequence", "publisher"}
+    # generated_at 是时间戳；publisher 是生成参数（--publisher 覆盖时顶层不同，
+    # 与源无关，排除以免 --check 误失败，P3-4）。
+    # P3-2：sequence 纳入一致性比对——持久单调计数器，--check 复用磁盘既有序号，
+    # 版本回退/旧 catalog 重放会在序列号漂移处被拒。
+    parametric = {"generated_at", "publisher"}
     expected = {key: value for key, value in catalog.items() if key not in parametric}
     actual = {key: value for key, value in existing.items() if key not in parametric}
     if expected != actual:

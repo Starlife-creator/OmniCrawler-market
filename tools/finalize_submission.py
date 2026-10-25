@@ -23,18 +23,15 @@ from typing import Any
 import yaml
 
 REGISTRY = Path(__file__).resolve().parents[1]
-MAIN_SRC = REGISTRY.parent / "OmniCrawler" / "src"
-if str(MAIN_SRC) not in sys.path:
-    sys.path.insert(0, str(MAIN_SRC))
 if str(REGISTRY / "tools") not in sys.path:
     sys.path.insert(0, str(REGISTRY / "tools"))
 
 from catalog_lib.authors import assign_market_handle, load_authors
 from catalog_lib.build import generate
 from catalog_lib.cli import publish_check
-from catalog_lib.signing import validate_maintainer_private_key
-from omnicrawler.plugins.identity import CreatorIdentity
-from omnicrawler.plugins.signing import sign_bytes
+from catalog_lib.identity import CreatorIdentity
+from catalog_lib.signing import sign_bytes, validate_maintainer_private_key
+from catalog_lib.transparency import canonicalize_entry
 from validate_submission import validate_one
 
 SEMVER_RE = re.compile(
@@ -289,12 +286,19 @@ def finalize(args: argparse.Namespace) -> int:
         "version": manifest["version"],
         "creator_fingerprint": identity.key_fingerprint,
         "market_handle": handle,
+        "package_manifest_file": f"{base}/package.manifest.json",
         "package_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
     }
     with (REGISTRY / "signing_transparency.jsonl").open(
         "a", encoding="utf-8", newline="\n"
     ) as stream:
-        stream.write(json.dumps(log_entry, ensure_ascii=False, sort_keys=True) + "\n")
+        # P3-11：路径字段 POSIX 归一后落盘，杜绝新条目再引入反斜杠路径。
+        stream.write(
+            json.dumps(
+                canonicalize_entry(log_entry), ensure_ascii=False, sort_keys=True
+            )
+            + "\n"
+        )
     return publish_check(REGISTRY)
 
 

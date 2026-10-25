@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import *
+from .paths import PLUGIN_ID_RE, TEMPLATE_ID_RE, template_dir_name_to_id
 
 
 def _load_tombstones(registry: Path) -> list[dict[str, Any]]:
@@ -29,8 +30,15 @@ def _load_tombstones(registry: Path) -> list[dict[str, Any]]:
         raise ValueError(f"tombstones.json 非法 JSON: {exc}") from exc
     if not isinstance(data, list):
         raise ValueError("tombstones.json 顶层必须是数组")
-    existing_plugin_ids = {p.name for p in (registry / _PLUGIN_DIR).glob("*") if p.is_dir()} if (registry / _PLUGIN_DIR).is_dir() else set()
-    existing_template_ids = {t.name for t in (registry / _TEMPLATES_DIR).glob("*") if t.is_dir()} if (registry / _TEMPLATES_DIR).is_dir() else set()
+    # P3-6：冲突判定规范化到 catalog ID——模板目录名用 ``--`` 分隔层级，
+    # catalog ID 用 ``/``；不做归一会让层级模板墓碑绕过冲突检查（误标在线为下架）。
+    existing_plugin_ids = {
+        p.name for p in (registry / _PLUGIN_DIR).glob("*") if p.is_dir()
+    } if (registry / _PLUGIN_DIR).is_dir() else set()
+    existing_template_ids = {
+        template_dir_name_to_id(t.name)
+        for t in (registry / _TEMPLATES_DIR).glob("*") if t.is_dir()
+    } if (registry / _TEMPLATES_DIR).is_dir() else set()
     tombstones: list[dict[str, Any]] = []
     for item in data:
         if not isinstance(item, dict):
@@ -39,8 +47,12 @@ def _load_tombstones(registry: Path) -> list[dict[str, Any]]:
             if not str(item.get(key) or "").strip():
                 raise ValueError(f"tombstone 缺少必填字段 {key}: {item!r}")
         tid = str(item["id"])
+        if not (PLUGIN_ID_RE.fullmatch(tid) or TEMPLATE_ID_RE.fullmatch(tid)):
+            raise ValueError(
+                f"tombstone {tid!r} 非法 ID（须匹配插件或模板 catalog ID 形态）"
+            )
         if tid in existing_plugin_ids or tid in existing_template_ids:
-            raise ValueError(f"tombstone {tid!r} 与现存插件/模板目录冲突（下架条目不得在线）")
+            raise ValueError(f"tombstone {tid!r} 与现存插件/模板冲突（下架条目不得在线）")
         tomb: dict[str, Any] = {
             "id": tid,
             "removed_at": str(item["removed_at"]),
