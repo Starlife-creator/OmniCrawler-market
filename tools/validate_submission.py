@@ -32,6 +32,35 @@ DOMAIN_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
     re.IGNORECASE,
 )
+
+# P1-1 门 2（载荷/依赖许可）：SPDX 白名单副本，与 catalog_lib.common.LICENSE_ALLOWLIST 同集合，
+# 由 check_plugin_schema_policy 类策略断言锁对齐；投稿器保持自包含不 import 市场库。
+LICENSE_ALLOWLIST = {
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unlicense",
+}
+
+# P2-6 门 3：依赖版本约束格式（semver 区间），兼容 >=x.y[.z],<x.y[.z] / ==x.y.z / ^x.y.z /
+# ~x.y.z / 裸版本号；minor-only（x.y）与 major.minor.patch 均接受。
+_SEMVER_PART = (
+    r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:\.(?:0|[1-9]\d*))?(?:-[0-9A-Za-z.-]+)?"
+)
+_DEP_CONSTRAINT_RE = re.compile(
+    rf"^(?:>=|<=|==|~=|~|\^|>|<)?{_SEMVER_PART}"
+    rf"(?:\s*,\s*(?:>=|<=|==|~=|~|\^|>|<)?{_SEMVER_PART})*$"
+)
+
+# P1-1 门 1：subprocess 隔离边界——宿主核心前缀与被禁权限前缀（镜像主仓 plugin_audit）。
+_HOST_CORE_PREFIXES = ("omnicrawler.",)
+_SUBPROCESS_FORBIDDEN_PERMISSION_PREFIXES = ("ui:", "hook")
 ALLOWED_PLUGIN_PERMISSIONS = {
     "records:read", "records:write", "artifacts:read", "artifacts:write",
     "responses:read", "responses:payload", "network:scoped", "temp:write",
@@ -74,9 +103,148 @@ def _plugin_metadata(tree: ast.AST) -> dict[str, Any]:
     raise ValueError("plugin.py is missing static PLUGIN_METADATA")
 
 
-def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
+def _extract_imports(source: str) -> set[str]:
+    """AST 提取顶层模块名集合（import x / from x.y import z → 'x'），镜像主仓门 1/门 3。"""
+    names: set[str] = set()
     try:
-        tree = ast.parse((root / "plugin.py").read_text(encoding="utf-8"))
+        tree = ast.parse(source)
+    except SyntaxError:
+        return names
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def gate1_declaration_consistency(root: Path, metadata: dict[str, Any], source: str) -> None:
+    """门 1（P1-1 下沉投稿 CI）：权限⇒域名/输入文件配对、subprocess 隔离边界、载荷许可。
+
+    - network:scoped 必须声明非空 domains（小写主机名形态校验）；
+    - files:read 必须声明非空 input_files 路径白名单（POSIX 安全相对路径）；
+    - subprocess 禁止 import 宿主核心（omnicrawler / omnicrawler.*，omnicrawler_sdk 除外）；
+    - subprocess 禁止声明 ui:* / 旧式 hook 权限；
+    - PLUGIN_METADATA.license 若声明，必须在 SPDX 白名单内。
+    规则与主仓 plugin_audit.gate_declaration_consistency 同源；违规即 error 阻断。
+    """
+    permissions = {str(p).casefold() for p in metadata.get("permissions", [])}
+    execution_mode = str(metadata.get("execution_mode", "subprocess") or "subprocess")
+
+    domains = metadata.get("domains", [])
+    if "network:scoped" in permissions:
+        if not isinstance(domains, list) or not domains:
+            raise ValueError(f"{root}: network:scoped 权限必须声明非空 domains 白名单（门 1）")
+        for domain in domains:
+            if (
+                not isinstance(domain, str)
+                or not DOMAIN_RE.fullmatch(domain)
+                or domain != domain.lower()
+            ):
+                raise ValueError(f"{root}: domains 含非法小写主机名: {domain!r}（门 1）")
+
+    input_files = metadata.get("input_files", [])
+    if "files:read" in permissions:
+        if not isinstance(input_files, list) or not input_files:
+            raise ValueError(f"{root}: files:read 权限必须声明非空 input_files 白名单（门 1）")
+        for rel in input_files:
+            if not isinstance(rel, str) or not rel.strip():
+                raise ValueError(f"{root}: input_files 条目必须为非空字符串（门 1）")
+            safe_rel(rel)
+
+    if execution_mode == "subprocess":
+        imports = _extract_imports(source)
+        host_imports = {
+            name for name in imports
+            if name == "omnicrawler" or name.startswith(_HOST_CORE_PREFIXES)
+        }
+        if host_imports:
+            raise ValueError(
+                f"{root}: subprocess 插件禁止 import 宿主核心: {sorted(host_imports)}"
+                "（门 1；隔离边界，请改用 omnicrawler_sdk 能力代理）"
+            )
+        forbidden = {
+            p for p in permissions
+            if any(p.startswith(prefix) for prefix in _SUBPROCESS_FORBIDDEN_PERMISSION_PREFIXES)
+        }
+        if forbidden:
+            raise ValueError(
+                f"{root}: subprocess 插件不得声明 ui:/hook 权限: {sorted(forbidden)}"
+                "（门 1；hook 应声明为 plugin_types，ui 需 in_process）"
+            )
+
+    license_id = metadata.get("license")
+    if license_id is not None:
+        license_id = str(license_id).strip()
+        if license_id not in LICENSE_ALLOWLIST:
+            raise ValueError(
+                f"{root}: 载荷 license {license_id!r} 不在 SPDX 白名单内（门 2）: "
+                f"{sorted(LICENSE_ALLOWLIST)}"
+            )
+
+
+def gate3_dependencies_consistency(root: Path, metadata: dict[str, Any], source: str) -> None:
+    """门 3（P1-1 下沉投稿 CI）：dependencies 声明↔实测导入图双向一致 + 依赖许可/版本区间。
+
+    - dependencies 必填（零依赖显式 []）；每条 {name, version, license}；
+    - 依赖 license 须在 SPDX 白名单；版本约束须为合法 semver 区间格式；
+    - 实测第三方导入（非标准库、非宿主、非 SDK、非同包本地模块）必须全部声明，
+      声明的依赖必须全部出现在实测导入图中。
+    规则与主仓 plugin_audit.gate_dependencies_consistency 同源；违规即 error 阻断。
+    """
+    declared = metadata.get("dependencies")
+    if declared is None:
+        raise ValueError(f"{root}: PLUGIN_METADATA.dependencies 未声明（零依赖请显式填 []）（门 3）")
+    if not isinstance(declared, list):
+        raise ValueError(f"{root}: dependencies 必须是列表 [{name, version, license}]（门 3）")
+
+    declared_names: dict[str, dict[str, Any]] = {}
+    for dep in declared:
+        if not isinstance(dep, dict):
+            raise ValueError(f"{root}: dependencies 条目非法: {dep!r}（门 3）")
+        name = str(dep.get("name", "")).strip()
+        if not name:
+            raise ValueError(f"{root}: 依赖缺 name（门 3）")
+        license_id = str(dep.get("license", "")).strip()
+        if not license_id:
+            raise ValueError(f"{root}: 依赖 {name} 缺 license（门 3）")
+        if license_id not in LICENSE_ALLOWLIST:
+            raise ValueError(
+                f"{root}: 依赖 {name} 许可 {license_id!r} 不在 SPDX 白名单（门 3）"
+            )
+        version = str(dep.get("version", "")).strip()
+        if not version or not _DEP_CONSTRAINT_RE.fullmatch(version):
+            raise ValueError(
+                f"{root}: 依赖 {name} 版本约束格式非法: {version!r}（门 3；semver 区间）"
+            )
+        declared_names[name] = dep
+
+    stdlib = set(getattr(sys, "stdlib_module_names", set()))
+    local_modules = {path.stem for path in root.glob("*.py")}
+    third_party = {
+        name for name in _extract_imports(source)
+        if name not in stdlib
+        and name != "omnicrawler"
+        and not name.startswith("omnicrawler_sdk")
+        and name not in local_modules
+    }
+    for name in sorted(declared_names):
+        if name not in third_party:
+            raise ValueError(
+                f"{root}: 声明的依赖 {name} 未在实测导入图中出现（门 3 声明↔实现互证失败）"
+            )
+    for name in sorted(third_party):
+        if name not in declared_names:
+            raise ValueError(
+                f"{root}: 实测导入 {name} 未在 dependencies 声明（门 3；未声明即拒）"
+            )
+
+
+def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
+    source = (root / "plugin.py").read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source)
     except (SyntaxError, UnicodeError) as exc:
         raise ValueError(f"{root}: plugin.py cannot be parsed statically: {exc}") from exc
     metadata = _plugin_metadata(tree)
@@ -128,6 +296,11 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
         raise ValueError(f"{root}: unknown plugin_types: {sorted(unknown_types)}")
     if any(item.strip().casefold() == "ui" for item in plugin_types):
         raise ValueError(f"{root}: native ui plugins are local-only and cannot enter the market")
+
+    # P1-1：门 1（权限配对 / subprocess 隔离 / 载荷许可）与门 3（依赖↔导入图双向）
+    # 在投稿 CI 即 fail-closed 阻断，不等安装/加载关口。
+    gate1_declaration_consistency(root, metadata, source)
+    gate3_dependencies_consistency(root, metadata, source)
 
 
 def _validate_template_payload(root: Path, package_id: str, version: str) -> None:
