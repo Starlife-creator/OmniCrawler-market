@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from .common import *
+from .core_version import SemVer, parse_compatible_core
+
+
+def _validate_compatible_core(entry_id: str, declared: Any, source: Path) -> None:
+    """P1-5：compatible_core semver 区间格式校验（schema/投稿/发现页共用同一解析器）。"""
+    try:
+        parse_compatible_core(str(declared))
+    except ValueError as exc:
+        raise ValueError(
+            f"插件/模板 {entry_id} 的 compatible_core 非法: {exc}: {source}"
+        ) from exc
 
 
 def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
@@ -112,6 +123,8 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
         not isinstance(state_schema_version, int) or state_schema_version < 1
     ):
         raise ValueError(f"插件 {entry['id']} 的 state_schema_version 必须是正整数")
+    # P1-5：compatible_core semver 区间格式统一由 core_version 解析器校验。
+    _validate_compatible_core(entry["id"], entry.get("compatible_core"), source)
     # P0-2：条目级吊销/弃用状态结构校验（与目录顶层 tombstones 并列第二来源）。
     revoked = entry.get("revoked")
     if revoked is not None and not (
@@ -172,6 +185,11 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
         raise ValueError(
             f"模板 {template_id} 缺少 license 声明（必填；数据/服务条款自由文本）: {path}"
         )
+    # P1-5：min_core_version 单段版本号与派生 compatible_core 区间格式校验。
+    if block.get("min_core_version"):
+        SemVer.parse(str(block["min_core_version"]))
+    compatible_core = f">={block.get('min_core_version') or '1.0.0'}"
+    _validate_compatible_core(template_id, compatible_core, path)
     entry: dict[str, Any] = {
         "id": template_id,
         "name": str(block["name"]),
@@ -182,7 +200,7 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
         "template_file": f"{_TEMPLATES_DIR}/{template_dir.name}/template.yaml",
         "signature_file": f"{_TEMPLATES_DIR}/{template_dir.name}/template.yaml.sig",
         "signature_algorithm": "ed25519",
-        "compatible_core": f">={block.get('min_core_version') or '1.0.0'}",
+        "compatible_core": compatible_core,
         "license": template_license,
         "tags": list(block.get("tags") or []),
         "updated_at": str(block.get("verified_at") or ""),
@@ -221,6 +239,8 @@ def _entry_from_template_market(path: Path) -> tuple[dict[str, Any], dict[str, A
     template_id = str(raw["id"])
     if not re.match(_TEMPLATE_ID_RE_PREFIX, template_id):
         raise ValueError(f"非法模板 ID: {template_id}")
+    # P1-5：compatible_core semver 区间格式校验。
+    _validate_compatible_core(template_id, raw.get("compatible_core"), path)
     entry = {key: raw[key] for key in _TEMPLATE_ENTRY_KEYS if key in raw}
     return entry, {
         "id": template_id,

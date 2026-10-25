@@ -61,6 +61,14 @@ _DEP_CONSTRAINT_RE = re.compile(
 # P1-1 门 1：subprocess 隔离边界——宿主核心前缀与被禁权限前缀（镜像主仓 plugin_audit）。
 _HOST_CORE_PREFIXES = ("omnicrawler.",)
 _SUBPROCESS_FORBIDDEN_PERMISSION_PREFIXES = ("ui:", "hook")
+
+# P1-5：compatible_core semver 区间格式（与 catalog_lib.core_version.parse_compatible_core
+# 同一口径；投稿器保持自包含不 import 市场库，格式正则在此镜像，语义判定由共享模块提供）。
+_SEMVER_VERSION = r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?"
+_COMPATIBLE_CORE_RE = re.compile(
+    rf"^(>=|<=|==|~=|~|\^|>|<)?{_SEMVER_VERSION}"
+    rf"(?:\s*,\s*(>=|<=|==|~=|~|\^|>|<)?{_SEMVER_VERSION})*$"
+)
 ALLOWED_PLUGIN_PERMISSIONS = {
     "records:read", "records:write", "artifacts:read", "artifacts:write",
     "responses:read", "responses:payload", "network:scoped", "temp:write",
@@ -279,6 +287,15 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
         raise ValueError(f"{root}: state_schema_version must be a positive integer")
     if metadata.get("execution_mode", "subprocess") not in ("subprocess", "in_process"):
         raise ValueError(f"{root}: invalid execution_mode")
+    # P1-5：compatible_core semver 区间格式校验（口径与 catalog_lib.core_version 对齐）。
+    compatible_core = metadata.get("compatible_core")
+    if compatible_core is not None:
+        if not isinstance(compatible_core, str) or not _COMPATIBLE_CORE_RE.fullmatch(
+            compatible_core.strip()
+        ):
+            raise ValueError(
+                f"{root}: compatible_core 非法 semver 区间: {compatible_core!r}"
+            )
     # 旧契约 2 投稿未声明 plugin_types 时按历史 source 语义迁移；一旦显式
     # 声明，就必须是合法非空列表，不能用空列表绕过类型门禁。
     plugin_types = metadata.get("plugin_types", ["source"])

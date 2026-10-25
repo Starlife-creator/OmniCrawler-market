@@ -66,6 +66,8 @@ def publish_check(
             trust_source,
             require_maintainer=True,
         )
+        # P1-3：versions/** 历史版本独立签名包全量复核，不只覆盖 catalog 当前条目。
+        verify_historical_versions(registry, trust_source, require_maintainer=True)
         _verify_catalog_signature(registry, trust_source)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"FAIL publish: {exc}")
