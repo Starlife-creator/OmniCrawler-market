@@ -29,19 +29,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: 取用主仓站点资产（§10.12.3 #4：不搬家、不落仓）
+      - name: 取用主仓站点资产（§10.12.3 #4：不搬家、不落仓；P2-12 钉固定 SHA，禁止分支漂移）
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Starlife-creator/OmniCrawler
-          ref: main
+          # P2-12：跨仓资产检出钉固定 commit SHA（2026-10-25 主仓 d42fed5）；
+          # 主仓 branding/web 资产变更后须手动 bump 本 SHA 再用 workflow_dispatch 重跑。
+          ref: d42fed58342417af310b179cfb12bf3d49570966
           path: main-repo
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      # 与 validate.yml 同规格：PyYAML 精确 pin（signing.py 依赖）、cryptography 对齐上限
-      - run: python -m pip install "PyYAML==6.0.2" "cryptography>=44,<51"
+      # 与 validate.yml 同规格：PyYAML 与 cryptography 精确钉版（P3-5），禁止区间漂移
+      - run: python -m pip install "PyYAML==6.0.2" "cryptography==50.0.1"
       # 资产缺失 ⇒ 生成器退出码 2（拒绝为半配置站点出页），不会静默部署一个没有图标的站点
       - name: Fail-closed 验签并生成发现页
         run: python tools/generate_discovery_page.py --output _pages --web-assets main-repo/assets/branding/web
