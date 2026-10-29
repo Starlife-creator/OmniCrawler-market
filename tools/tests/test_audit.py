@@ -81,19 +81,17 @@ def test_event_appended_to_jsonl(tmp_path: Path) -> None:
 
 
 def test_write_failure_raises_audit_write_error(tmp_path: Path) -> None:
-    # 只读目录下打开追加流应抛 AuditWriteError，而非静默吞错。
-    readonly = tmp_path / "readonly"
-    readonly.mkdir()
-    readonly.chmod(0o444)
-    try:
-        with pytest.raises(AuditWriteError):
-            append_audit_event(
-                readonly / "events.jsonl",
-                new_event(
-                    "failure", plugin_id="p", creator_fingerprint="f" * 32,
-                    version="1.0.0", manifest_sha256="a" * 64,
-                    decision="failed", source="cli",
-                ),
-            )
-    finally:
-        readonly.chmod(0o755)
+    # 写入失败要抛 AuditWriteError，而非静默吞错。
+    # 用「日志路径指向一个目录」构造打开失败：跨平台确定——原先的 chmod(0o444) 在
+    # Windows 上只是建议性权限，属主仍写得动，用例既不会转红也不会证明任何事。
+    blocked = tmp_path / "events.jsonl"
+    blocked.mkdir()
+    with pytest.raises(AuditWriteError):
+        append_audit_event(
+            blocked,
+            new_event(
+                "failure", plugin_id="p", creator_fingerprint="f" * 32,
+                version="1.0.0", manifest_sha256="a" * 64,
+                decision="failed", source="cli",
+            ),
+        )

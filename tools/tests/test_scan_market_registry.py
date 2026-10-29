@@ -40,7 +40,7 @@ def test_clean_legacy_package_scans_without_errors(tmp_path: Path) -> None:
     assert scan_market(registry) == 0
 
 
-def test_symlink_registry_path_rejected(tmp_path: Path) -> None:
+def test_symlink_registry_path_rejected(tmp_path: Path, require_symlink: None) -> None:
     registry = _registry(tmp_path)
     target = registry / "plugins" / "real"
     target.mkdir()

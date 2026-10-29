@@ -148,7 +148,7 @@ def test_missing_declared_file_rejected(tmp_path: Path) -> None:
         _verify(spec)
 
 
-def test_symlink_rejected(tmp_path: Path) -> None:
+def test_symlink_rejected(tmp_path: Path, require_symlink: None) -> None:
     spec = _make_package(tmp_path, symlink=("shadow.py", "plugin.py"))
     with pytest.raises(ValueError, match="符号链接"):
         _verify(spec)
