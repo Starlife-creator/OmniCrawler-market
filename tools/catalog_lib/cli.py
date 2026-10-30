@@ -17,6 +17,20 @@ from .signing import *
 from .tombstones import *
 
 
+def _existing_catalog_sequence(registry: Path) -> int | None:
+    """P3-2：读取磁盘 catalog.json 持久序列号；缺失/损坏/非法返回 None。"""
+    existing_path = registry / "catalog.json"
+    if existing_path.is_file():
+        try:
+            existing_catalog = json.loads(existing_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        value = existing_catalog.get("sequence")
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
 def check(
     registry: Path,
     *,
@@ -30,7 +44,8 @@ def check(
     --prev-catalog 或 git 历史中的上一版 catalog.json。
     """
     try:
-        catalog = build_catalog(registry)
+        # P3-2：--check 复用磁盘既有序列号，使一致性比对纳入 sequence 而不误报。
+        catalog = build_catalog(registry, sequence=_existing_catalog_sequence(registry))
         _check_consistency(registry, catalog)
         gate4_warnings = _check_version_rules(
             registry, catalog, _load_prev_catalog(registry, prev_catalog)
@@ -57,7 +72,8 @@ def publish_check(
 ) -> int:
     """Strict main-branch invariant: every visible item is distributable."""
     try:
-        catalog = build_catalog(registry)
+        # P3-2：发布门禁只读校验，复用磁盘既有序列号，避免一致性比对误报漂移。
+        catalog = build_catalog(registry, sequence=_existing_catalog_sequence(registry))
         _check_consistency(registry, catalog)
         _check_version_rules(registry, catalog, _load_prev_catalog(registry, prev_catalog))
         _verify_signatures(
@@ -66,6 +82,8 @@ def publish_check(
             trust_source,
             require_maintainer=True,
         )
+        # P1-3：versions/** 历史版本独立签名包全量复核，不只覆盖 catalog 当前条目。
+        verify_historical_versions(registry, trust_source, require_maintainer=True)
         _verify_catalog_signature(registry, trust_source)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"FAIL publish: {exc}")

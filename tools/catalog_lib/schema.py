@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from .common import *
+from .core_version import SemVer, parse_compatible_core
+
+
+def _validate_compatible_core(entry_id: str, declared: Any, source: Path) -> None:
+    """P1-5：compatible_core semver 区间格式校验（schema/投稿/发现页共用同一解析器）。"""
+    try:
+        parse_compatible_core(str(declared))
+    except ValueError as exc:
+        raise ValueError(
+            f"插件/模板 {entry_id} 的 compatible_core 非法: {exc}: {source}"
+        ) from exc
 
 
 def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
@@ -98,11 +109,84 @@ def _entry_from_yaml(manifest: dict[str, Any], source: Path) -> dict[str, Any]:
             raise ValueError(
                 f"插件 {entry['id']} 的 required_capabilities 必须是能力名到正整数/'>=正整数'的映射"
             )
+        # P2-3：能力名必须存在于宿主契约白名单（镜像主仓 CAPABILITY_VERSIONS 键集合），
+        # 避免未知能力名在市场 CI 绿、子进程启动前才被拒。
+        unknown_caps = {
+            str(name).strip() for name in required_capabilities
+        } - ALLOWED_CAPABILITIES
+        if unknown_caps:
+            raise ValueError(
+                f"插件 {entry['id']} 声明宿主不支持的能力: {sorted(unknown_caps)}"
+            )
     state_schema_version = entry.get("state_schema_version")
     if state_schema_version is not None and (
         not isinstance(state_schema_version, int) or state_schema_version < 1
     ):
         raise ValueError(f"插件 {entry['id']} 的 state_schema_version 必须是正整数")
+    # P1-5：compatible_core semver 区间格式统一由 core_version 解析器校验。
+    _validate_compatible_core(entry["id"], entry.get("compatible_core"), source)
+    # P0-2：条目级吊销/弃用状态结构校验（与目录顶层 tombstones 并列第二来源）。
+    revoked = entry.get("revoked")
+    if revoked is not None and not (
+        isinstance(revoked, str) and revoked.strip()
+        or isinstance(revoked, dict)
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 revoked 须为非空字符串或映射")
+    revoked_versions = entry.get("revoked_versions")
+    if revoked_versions is not None:
+        if not isinstance(revoked_versions, list) or not all(
+            isinstance(v, str) and v.strip() for v in revoked_versions
+        ):
+            raise ValueError(f"插件 {entry['id']} 的 revoked_versions 须为版本字符串列表")
+    deprecated = entry.get("deprecated")
+    if deprecated is not None and not (
+        isinstance(deprecated, str) and deprecated.strip()
+        or isinstance(deprecated, dict)
+    ):
+        raise ValueError(f"插件 {entry['id']} 的 deprecated 须为非空字符串或映射")
+    # P2-2：source_base 仅允许 http/https 同源基址（egress 策略由安装侧二次约束）。
+    source_base = entry.get("source_base")
+    if source_base is not None:
+        base_str = str(source_base).strip()
+        if not re.fullmatch(r"https?://[^\s/]+(?:/[^\s]*)?", base_str):
+            raise ValueError(f"插件 {entry['id']} 的 source_base 须为 http(s) URL: {source_base!r}")
+        entry["source_base"] = base_str.rstrip("/")
+    # P3-9：目录层可选静态契约字段格式校验（config_schema / resource_limits 属
+    # 运行时载荷读取，故意不进白名单，避免目录层误导安装期预校验）。
+    plugin_id = str(entry["id"])
+    api_version = entry.get("api_version")
+    if api_version is not None:
+        SemVer.parse(str(api_version))
+    min_core = entry.get("min_core_version")
+    max_core = entry.get("max_core_version")
+    for bound, value in (("min_core_version", min_core), ("max_core_version", max_core)):
+        if value is not None:
+            SemVer.parse(str(value))
+    if min_core and max_core and SemVer.parse(str(min_core)) > SemVer.parse(str(max_core)):
+        raise ValueError(
+            f"插件 {plugin_id} 的 min_core_version 大于 max_core_version: {min_core} > {max_core}"
+        )
+    source_url = entry.get("source_url")
+    if source_url is not None:
+        url_str = str(source_url).strip()
+        if not re.fullmatch(r"https?://[^\s/]+(?:/[^\s]*)?", url_str):
+            raise ValueError(f"插件 {plugin_id} 的 source_url 须为 http(s) URL: {source_url!r}")
+        entry["source_url"] = url_str
+    optional_deps = entry.get("optional_dependencies")
+    if optional_deps is not None:
+        if not isinstance(optional_deps, list):
+            raise ValueError(f"插件 {plugin_id} 的 optional_dependencies 必须是列表")
+        for dep in optional_deps:
+            if not isinstance(dep, dict) or not dep.get("name"):
+                raise ValueError(
+                    f"插件 {plugin_id} 的 optional_dependencies 条目非法: {dep!r}"
+                )
+    fallback = entry.get("fallback")
+    if fallback is not None and not isinstance(fallback, str):
+        raise ValueError(f"插件 {plugin_id} 的 fallback 必须是字符串")
+    contract_shape = entry.get("contract_shape")
+    if contract_shape is not None and not isinstance(contract_shape, str):
+        raise ValueError(f"插件 {plugin_id} 的 contract_shape 必须是字符串")
     return entry
 
 def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -137,6 +221,11 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
         raise ValueError(
             f"模板 {template_id} 缺少 license 声明（必填；数据/服务条款自由文本）: {path}"
         )
+    # P1-5：min_core_version 单段版本号与派生 compatible_core 区间格式校验。
+    if block.get("min_core_version"):
+        SemVer.parse(str(block["min_core_version"]))
+    compatible_core = f">={block.get('min_core_version') or '1.0.0'}"
+    _validate_compatible_core(template_id, compatible_core, path)
     entry: dict[str, Any] = {
         "id": template_id,
         "name": str(block["name"]),
@@ -147,7 +236,7 @@ def _entry_from_template_yaml(path: Path) -> tuple[dict[str, Any], dict[str, Any
         "template_file": f"{_TEMPLATES_DIR}/{template_dir.name}/template.yaml",
         "signature_file": f"{_TEMPLATES_DIR}/{template_dir.name}/template.yaml.sig",
         "signature_algorithm": "ed25519",
-        "compatible_core": f">={block.get('min_core_version') or '1.0.0'}",
+        "compatible_core": compatible_core,
         "license": template_license,
         "tags": list(block.get("tags") or []),
         "updated_at": str(block.get("verified_at") or ""),
@@ -186,6 +275,8 @@ def _entry_from_template_market(path: Path) -> tuple[dict[str, Any], dict[str, A
     template_id = str(raw["id"])
     if not re.match(_TEMPLATE_ID_RE_PREFIX, template_id):
         raise ValueError(f"非法模板 ID: {template_id}")
+    # P1-5：compatible_core semver 区间格式校验。
+    _validate_compatible_core(template_id, raw.get("compatible_core"), path)
     entry = {key: raw[key] for key in _TEMPLATE_ENTRY_KEYS if key in raw}
     return entry, {
         "id": template_id,

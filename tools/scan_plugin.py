@@ -12,13 +12,15 @@
   2. 高熵字符串检测：文本文件中 Shannon 熵 > 阈值的连续 16+ 字符；
   3. API Token 模式匹配：AWS / GitHub / Slack / OpenAI / 私钥头；
   4. 私钥/凭据字段检测：YAML/JSON 中 private_key / secret_key / api_key 等键；
-  5. 允许列表（可选 --manifest）：清单声明 files 之外存在文件 → 报错。
+  5. P2-13 静态恶意模式规则集：动态求值/命令执行/动态导入/原始套接字硬拒；
+     子进程创建、base64 解码、文件删除归人工审核警告队列（不计失败但必须复核）；
+  6. 允许列表（可选 --manifest）：清单声明 files 之外存在文件 → 报错。
 
-**边界（审查报告 S48）**：本工具只做凭据泄漏检查，**不分析恶意代码**——
-危险调用（os.system / subprocess / eval 等）由客户端加载期的 AST 预检
-（主仓 _preflight_forbidden_patterns）承担，两套规则互不替代。
+**边界（审查报告 S48 / P2-13）**：本工具只做静态凭据泄漏 + 固定模式匹配，
+**不替代动态隔离审查**；隐蔽恶意逻辑、条件化网络与运行期变形仍须人工隔离复核
+（SECURITY.md 已披露该残余风险）。主仓加载期 AST 预检与本规则集互为纵深，互不替代。
 
-退出码：0 干净；1 发现问题。
+退出码：0 干净（警告不计失败）；1 发现错误级问题。
 """
 
 from __future__ import annotations
@@ -99,6 +101,32 @@ _SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --- P2-13 静态恶意模式规则集 -------------------------------------------------
+# 硬拒（error）：宿主无法沙箱化的动态求值 / shell 命令执行 / 动态导入 / 原始套接字。
+# 规则只匹配运行时 .py 源码；tests/ 为开发态代码，不参与恶意模式判定（仍过凭据扫描）。
+_MALICIOUS_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("动态求值 eval()", re.compile(r"\beval\s*\(")),
+    ("动态求值 exec()", re.compile(r"\bexec\s*\(")),
+    ("shell 命令执行 os.system()", re.compile(r"\bos\.system\s*\(")),
+    ("shell 命令执行 os.popen()", re.compile(r"\bos\.popen\s*\(")),
+    ("动态导入 __import__()", re.compile(r"\b__import__\s*\(")),
+    ("动态导入 importlib.import_module()", re.compile(r"importlib\.import_module\s*\(")),
+    ("原始套接字 socket.socket()", re.compile(r"\bsocket\.socket\s*\(")),
+    ("原始套接字 socket.create_connection()", re.compile(r"socket\.create_connection\s*\(")),
+]
+# 警告（warning，人工审核队列，不计退出码失败）：合规业务可能需要（如浏览器进程托管、
+# base64 数据解码、临时文件清理），但必须在 listing/审核记录中显式说明用途与边界。
+_MALICIOUS_WARNING_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("子进程创建 subprocess.*", re.compile(
+        r"\bsubprocess\.(Popen|run|call|check_call|check_output)\s*\(")),
+    ("base64 解码（须人工确认非执行载体）", re.compile(r"\bbase64\.b64decode\s*\(")),
+    ("文件删除 os.remove/unlink/rmtree", re.compile(
+        r"\bos\.(remove|unlink|rmdir|rmtree)\s*\(")),
+    ("环境变量读取（须确认未泄露凭据）", re.compile(r"\bos\.environ\b")),
+]
+# 开发态/非运行时目录：跳过恶意模式规则（P3-10 分类口径与清单卫生一致）。
+_NON_RUNTIME_DIR_PARTS = {"tests", "test", "docs", "examples", "examples/tests"}
+
 
 def _iter_files(plugin_dir: Path, *, skip_suffixes: tuple[str, ...]) -> list[Path]:
     files: list[Path] = []
@@ -151,6 +179,28 @@ def scan_text_content(text: str, threshold: float) -> list[str]:
         if _SECRET_FIELD_RE.match(line):
             problems.append(f"疑似私钥/凭据字段（第 {line_no} 行）: {line.strip()[:64]}")
     return problems
+
+
+def scan_code_patterns(rel: Path, text: str) -> tuple[list[str], list[str]]:
+    """P2-13：对运行时 Python 源码跑恶意模式规则集。
+
+    返回 (硬拒错误, 人工审核警告)。tests/docs/examples 等非运行时目录跳过；
+    非 .py 文件不做代码模式判定。
+    """
+    if rel.suffix != ".py":
+        return [], []
+    if any(part in _NON_RUNTIME_DIR_PARTS for part in rel.parts):
+        return [], []
+    errors: list[str] = []
+    warnings: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for label, pattern in _MALICIOUS_BLOCK_PATTERNS:
+            if pattern.search(line):
+                errors.append(f"硬拒恶意模式「{label}」（第 {line_no} 行）: {line.strip()[:72]}")
+        for label, pattern in _MALICIOUS_WARNING_PATTERNS:
+            if pattern.search(line):
+                warnings.append(f"高危调用「{label}」（第 {line_no} 行）: {line.strip()[:72]}")
+    return errors, warnings
 
 
 def _scan_file(path: Path, *, threshold: float) -> list[str]:
@@ -246,8 +296,15 @@ def scan_plugin_dir(
         if name.startswith("id_rsa"):
             errors.append(f"敏感文件（id_rsa 系列）: {path.relative_to(plugin_dir)}")
             continue
+        rel = path.relative_to(plugin_dir)
         for issue in _scan_file(path, threshold=entropy_threshold):
-            errors.append(f"{path.relative_to(plugin_dir)}: {issue}")
+            errors.append(f"{rel}: {issue}")
+        if path.suffix == ".py":
+            code_errors, code_warnings = scan_code_patterns(
+                rel, path.read_text(encoding="utf-8", errors="ignore")
+            )
+            errors.extend(f"{rel}: {issue}" for issue in code_errors)
+            warnings.extend(f"{rel}: {issue}" for issue in code_warnings)
     allow_warnings, allow_errors = _scan_allowlist(plugin_dir, manifest)
     warnings += allow_warnings
     errors += allow_errors

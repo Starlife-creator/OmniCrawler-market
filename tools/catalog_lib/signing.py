@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,44 @@ def _resolve_trust(registry: Path, trust_source: str | None) -> str:
     return str(candidate) if candidate.is_file() else ""
 
 
+def _resolve_all_trust_roots(registry: Path) -> list[str]:
+    """P2-4：全部信任根（代际过渡双根）。
+
+    先列名内主根；``keys/plugin_trust.g2.pub.pem`` 存在即纳入第二根，用于密钥
+    轮换过渡期新旧双根并行验签。冷密钥仪式/轮换流程属流程配套，不在本仓代码内。
+    """
+    roots: list[str] = []
+    for rel in _KEYS_FALLBACK:
+        candidate = registry / rel
+        if candidate.is_file():
+            roots.append(str(candidate))
+    extra = registry / "keys" / "plugin_trust.g2.pub.pem"
+    if extra.is_file() and str(extra) not in roots:
+        roots.append(str(extra))
+    return roots
+
+
+def verify_against_roots(
+    registry: Path,
+    data: bytes,
+    signature: bytes,
+    *,
+    trust_source: str | None = None,
+) -> tuple[bool, str]:
+    """验签：显式 ``trust_source`` 只对该根校验（fail-closed，不回退目录根）；
+    未显式提供时遍历目录全部信任根（P2-4 密钥代际过渡双根并行验签）。
+    返回 ``(ok, accepted_root)``。
+    """
+    roots = [trust_source] if trust_source else _resolve_all_trust_roots(registry)
+    if not roots:
+        return False, "未配置市场信任根公钥"
+    for root in roots:
+        if _verify_signature(data, signature, root):
+            return True, root
+    return False, "签名不被任何信任根接受"
+
+
+
 def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
     """Fail before publication writes unless the private key matches the trust root."""
     from cryptography.hazmat.primitives import serialization
@@ -72,14 +111,215 @@ def validate_maintainer_private_key(registry: Path, private_pem: bytes) -> None:
         raise ValueError("未找到市场信任根公钥，拒绝生成正式发布文件")
     trusted_public = _load_public_key(trust_source).public_bytes_raw()
     derived_public = private_key.public_key().public_bytes_raw()
-    if derived_public != trusted_public:
+    if not hmac.compare_digest(derived_public, trusted_public):
         raise ValueError("维护者私钥与市场信任根不匹配，拒绝生成正式发布文件")
+
+
+# --- P2-8：市场仓自包含签名原语（替代对主仓 omnicrawler.plugins.signing 的 sys.path 依赖） ---
+def load_public_key(trust_source: str) -> Any:
+    """公开 API：从 PEM 路径或内联 PEM 文本加载 ed25519 公钥。"""
+    return _load_public_key(trust_source)
+
+
+def sign_bytes(data: bytes, private_pem: bytes) -> bytes:
+    """用 ed25519 私钥 PEM 对 ``data`` 产出原始 detached 签名（与主仓 sign_bytes 同源）。"""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise TypeError("签名私钥必须是 ed25519 私钥")
+    return private_key.sign(data)
+
+
+def sign_file(path: str | Path, private_pem: bytes) -> Path:
+    """在 ``path`` 旁写入 detached ``<file>.sig`` 并返回其路径（与主仓 sign_file 同源）。"""
+    signature = sign_bytes(Path(path).read_bytes(), private_pem)
+    sig_path = Path(path).with_suffix(Path(path).suffix + ".sig")
+    sig_path.write_bytes(signature)
+    return sig_path
+
+
+def verify_plugin(path: str | Path, trust_source: str) -> tuple[bool, str]:
+    """验签 ``path`` 旁的 detached 签名；返回 ``(ok, reason)``，fail-closed。"""
+    from cryptography.exceptions import InvalidSignature
+
+    try:
+        public_key = _load_public_key(trust_source)
+    except ValueError:
+        return False, "未配置插件信任根公钥"
+    sig_path = Path(path).with_suffix(Path(path).suffix + ".sig")
+    if not sig_path.is_file():
+        return False, "未找到插件签名文件 (.sig)"
+    signature = sig_path.read_bytes()
+    try:
+        public_key.verify(signature, Path(path).read_bytes())
+    except (InvalidSignature, ValueError, TypeError):
+        return False, "签名校验失败（文件可能被篡改）"
+    return True, "verified"
 
 
 def _canonical_manifest(manifest: dict[str, Any]) -> bytes:
     return (
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
+
+
+# P1-3：与主仓 package_manifest.verify_package 对齐的构建态规则常量。
+PACKAGE_SCHEMA_VERSION = 1
+_MANIFEST_GENERATED_NAMES = {
+    "package.manifest.json",
+    "package.manifest.creator.sig",
+    "package.manifest.maintainer.sig",
+    "creator.sig",
+    "plugin.py.sig",
+    "template.yaml.sig",
+}
+_IGNORED_PARTS = {".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__"}
+# 市场自有 overlay 不属于创作者签名载荷（与 scan_plugin 允许列表豁免一致）。
+_EXEMPT_PAYLOAD_REL = {"market.yaml"}
+_FORBIDDEN_NAMES = {
+    ".env", "id_rsa", "id_ed25519", "credentials.json", "secrets.yaml",
+    "key_store.yaml", "key_store.json", "config.ini", ".npmrc", ".pypirc", ".netrc",
+}
+_FORBIDDEN_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".ppk", ".secret", ".gpg")
+
+
+def _payload_files(package_dir: Path) -> dict[str, Path]:
+    """枚举创作者载荷文件；拒绝符号链接与私钥/凭据文件名/后缀（对齐主仓 _payload_files）。
+
+    ``versions/`` 子目录是独立签名的历史版本包，不属于当前 manifest 的作用域；
+    ``market.yaml`` 是市场自有 overlay，同样豁免。
+    """
+    files: dict[str, Path] = {}
+    for path in sorted(package_dir.rglob("*")):
+        rel = path.relative_to(package_dir).as_posix()
+        if rel in _EXEMPT_PAYLOAD_REL or rel.startswith("versions/"):
+            continue
+        if any(part in _IGNORED_PARTS for part in path.parts):
+            continue
+        if path.is_dir():
+            continue
+        if path.name in _MANIFEST_GENERATED_NAMES:
+            continue
+        if path.is_symlink():
+            raise ValueError(f"插件包不允许符号链接: {rel}")
+        if path.name in _FORBIDDEN_NAMES or path.suffix.lower() in _FORBIDDEN_SUFFIXES:
+            raise ValueError(f"插件包疑似包含私钥或凭据文件: {rel}")
+        files[rel] = path
+    return files
+
+
+def _check_manifest_identity(
+    manifest: dict[str, Any],
+    identity: dict[str, Any],
+    *,
+    entry_id: str,
+    expected_fingerprint: str | None,
+) -> str:
+    """manifest 创作者指纹 / requested_username 与 creator.identity 公钥交叉核对（P1-3）。
+
+    返回由 identity 公钥现场推导的指纹；自称指纹只用于比对，绝不采信为信任依据。
+    """
+    raw = base64.b64decode(str(identity["public_key"]), validate=True)
+    derived = hashlib.sha256(raw).hexdigest()[:32]
+    declared_fp = str(manifest.get("creator_fingerprint") or "")
+    if declared_fp and not hmac.compare_digest(declared_fp, derived):
+        raise ValueError(
+            f"包 {entry_id} manifest 创作者指纹 {declared_fp} 与 creator.identity "
+            f"公钥实际指纹 {derived} 不一致"
+        )
+    if "requested_username" in manifest:
+        if str(manifest["requested_username"]) != str(identity.get("username", "")):
+            raise ValueError(
+                f"包 {entry_id} requested_username 与 creator.identity 不一致"
+            )
+    if expected_fingerprint and not hmac.compare_digest(str(expected_fingerprint), derived):
+        raise ValueError(
+            f"包 {entry_id} 条目指纹 {expected_fingerprint} 与 creator.identity "
+            f"公钥实际指纹 {derived} 不一致"
+        )
+    return derived
+
+
+def _verify_package_manifest(
+    registry: Path,
+    package_dir: Path,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    identity_path: Path,
+    creator_sig_path: Path,
+    maintainer_sig_path: Path | None,
+    trust: str,
+    *,
+    entry_id: str,
+    expected_fingerprint: str | None,
+    require_maintainer: bool,
+) -> None:
+    """整包 manifest 构建态校验（对齐主仓 verify_package 规则集）。
+
+    - schema_version 区间校验；规范 JSON 字节；manifest sha256 与条目固化值一致；
+    - manifest 指纹/用户名 ↔ creator.identity 公钥交叉核对；
+    - 精确文件集合相等；拒绝符号链接、私钥文件名/后缀；文件哈希 sha256 比对；
+    - 创作者整包签名验签；维护者复签按需强制。
+    """
+    if manifest.get("schema_version") != PACKAGE_SCHEMA_VERSION:
+        raise ValueError(
+            f"包 {entry_id} manifest schema_version 不受支持: {manifest.get('schema_version')}"
+        )
+    data = _canonical_manifest(manifest)
+    if manifest_path.read_bytes() != data:
+        raise ValueError(f"包 {entry_id} 的 manifest 不是规范 JSON")
+    expected_digest = str(manifest.get("package_manifest_sha256", ""))
+    actual_digest = hashlib.sha256(data).hexdigest()
+    if expected_digest and not hmac.compare_digest(expected_digest, actual_digest):
+        raise ValueError(f"包 {entry_id} 的 manifest sha256 不一致")
+    if not identity_path.is_file():
+        raise ValueError(f"包 {entry_id} 缺少 creator.identity")
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    _check_manifest_identity(
+        manifest, identity,
+        entry_id=entry_id, expected_fingerprint=expected_fingerprint,
+    )
+    raw = base64.b64decode(str(identity["public_key"]), validate=True)
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    if not creator_sig_path.is_file():
+        raise ValueError(f"包 {entry_id} 缺少创作者整包签名")
+    try:
+        Ed25519PublicKey.from_public_bytes(raw).verify(creator_sig_path.read_bytes(), data)
+    except Exception as exc:
+        raise ValueError(f"包 {entry_id} 创作者整包签名无效") from exc
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError(f"包 {entry_id} manifest files 非法")
+    actual_files = _payload_files(package_dir)
+    if set(files) != set(actual_files):
+        missing = sorted(set(files) - set(actual_files))
+        extra = sorted(set(actual_files) - set(files))
+        raise ValueError(
+            f"包 {entry_id} 文件集合不一致：缺少={missing}，未声明={extra}"
+        )
+    for file_rel, expected in files.items():
+        candidate = _require_contained(
+            registry, package_dir, str(file_rel), f"包 {entry_id} 文件"
+        )
+        if not candidate.is_file():
+            raise ValueError(f"包 {entry_id} 缺少 manifest 文件 {file_rel}")
+        if not isinstance(expected, str) or not expected.startswith("sha256:"):
+            raise ValueError(f"包 {entry_id} 文件哈希格式非法: {file_rel}")
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        if not hmac.compare_digest(expected, f"sha256:{digest}"):
+            raise ValueError(f"包 {entry_id} 文件哈希不一致: {file_rel}")
+    if require_maintainer and (maintainer_sig_path is None or not maintainer_sig_path.is_file()):
+        raise ValueError(f"包 {entry_id} 缺少维护者整包签名")
+    if maintainer_sig_path is not None and (
+        not maintainer_sig_path.is_file()
+        or not verify_against_roots(
+            registry, data, maintainer_sig_path.read_bytes(), trust_source=trust
+        )[0]
+    ):
+        raise ValueError(f"包 {entry_id} 维护者整包签名无效")
 
 
 def _verify_package_manifest_entry(
@@ -106,44 +346,22 @@ def _verify_package_manifest_entry(
     if not manifest_path.is_file() or not creator_sig_path.is_file():
         raise ValueError(f"包 {entry.get('id')} 缺少 manifest 或创作者整包签名")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    data = _canonical_manifest(manifest)
-    if manifest_path.read_bytes() != data:
-        raise ValueError(f"包 {entry.get('id')} 的 manifest 不是规范 JSON")
-    expected_digest = str(entry.get("package_manifest_sha256", ""))
-    actual_digest = hashlib.sha256(data).hexdigest()
-    if expected_digest and expected_digest != actual_digest:
-        raise ValueError(f"包 {entry.get('id')} 的 manifest sha256 不一致")
     identity_path = _require_contained(
         registry, registry, str(entry.get("creator_identity_file", "")), "creator identity"
     )
-    identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    raw = base64.b64decode(str(identity["public_key"]), validate=True)
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    try:
-        Ed25519PublicKey.from_public_bytes(raw).verify(creator_sig_path.read_bytes(), data)
-    except Exception as exc:
-        raise ValueError(f"包 {entry.get('id')} 创作者整包签名无效") from exc
-    package_dir = manifest_path.parent
-    files = manifest.get("files")
-    if not isinstance(files, dict) or not files:
-        raise ValueError(f"包 {entry.get('id')} manifest files 非法")
-    for file_rel, expected in files.items():
-        candidate = _require_contained(
-            registry, package_dir, str(file_rel), f"包 {entry.get('id')} 文件"
-        )
-        if not candidate.is_file():
-            raise ValueError(f"包 {entry.get('id')} 缺少 manifest 文件 {file_rel}")
-        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        if expected != f"sha256:{digest}":
-            raise ValueError(f"包 {entry.get('id')} 文件哈希不一致: {file_rel}")
-    if require_maintainer and (maintainer_sig_path is None or not maintainer_sig_path.is_file()):
-        raise ValueError(f"包 {entry.get('id')} 缺少维护者整包签名")
-    if maintainer_sig_path is not None and (
-        not maintainer_sig_path.is_file()
-        or not _verify_signature(data, maintainer_sig_path.read_bytes(), trust)
-    ):
-        raise ValueError(f"包 {entry.get('id')} 维护者整包签名无效")
+    _verify_package_manifest(
+        registry,
+        manifest_path.parent,
+        manifest,
+        manifest_path,
+        identity_path,
+        creator_sig_path,
+        maintainer_sig_path,
+        trust,
+        entry_id=str(entry.get("id")),
+        expected_fingerprint=entry.get("creator_fingerprint"),
+        require_maintainer=require_maintainer,
+    )
 
 def _verify_signatures(
     registry: Path,
@@ -191,7 +409,9 @@ def _verify_signatures(
         # creator.identity 公钥。声明哪条就验哪条；两者可同时存在（创作者
         # 签名 + 维护者背书），if/elif 互斥是错误语义。
         if has_maintainer_sig:
-            ok = _verify_signature(plugin_path.read_bytes(), sig_path.read_bytes(), trust)
+            ok, _ = verify_against_roots(
+                registry, plugin_path.read_bytes(), sig_path.read_bytes()
+            )
             if not ok:
                 raise ValueError(f"插件 {entry['id']} 维护者签名校验失败（fail-closed）")
         if entry.get("creator_signature_file") and entry.get("creator_identity_file"):
@@ -229,7 +449,9 @@ def _verify_signatures(
         )
         template_path = registry / str(entry["template_file"])
         sig_path = registry / str(entry["signature_file"])
-        ok = _verify_signature(template_path.read_bytes(), sig_path.read_bytes(), trust)
+        ok, _ = verify_against_roots(
+            registry, template_path.read_bytes(), sig_path.read_bytes()
+        )
         if not ok:
             raise ValueError(f"模板 {entry['id']} 签名校验失败（fail-closed）")
         # B02-002：模板创作者轨独立验签——creator.sig 对 creator.identity 公钥
@@ -254,6 +476,40 @@ def _verify_signatures(
     return warnings
 
 
+def verify_historical_versions(
+    registry: Path, trust: str, *, require_maintainer: bool
+) -> None:
+    """publish_check 对 ``versions/**`` 历史版本包全量复核（P1-3）。
+
+    当前条目由 ``_verify_signatures`` 复核；本函数补齐历史版本目录中每个独立签名包，
+    确保旧版本同样满足文件集合相等、身份交叉、哈希与签名规则集。
+    """
+    trust = _resolve_trust(registry, trust)
+    for kind in ("plugins", "templates"):
+        container = registry / kind
+        if not container.is_dir():
+            continue
+        for manifest_path in sorted(container.rglob("versions/*/package.manifest.json")):
+            package_dir = manifest_path.parent
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            creator_sig = package_dir / "package.manifest.creator.sig"
+            maintainer_sig = package_dir / "package.manifest.maintainer.sig"
+            identity = package_dir / "creator.identity"
+            _verify_package_manifest(
+                registry,
+                package_dir,
+                manifest,
+                manifest_path,
+                identity,
+                creator_sig,
+                maintainer_sig if maintainer_sig.is_file() else None,
+                trust,
+                entry_id=str(manifest.get("package_id", manifest_path.parent.name)),
+                expected_fingerprint=manifest.get("creator_fingerprint"),
+                require_maintainer=require_maintainer,
+            )
+
+
 def _verify_catalog_signature(registry: Path, trust_source: str | None) -> None:
     """Require catalog.json.sig to cover the exact catalog bytes on disk."""
     catalog = registry / "catalog.json"
@@ -263,7 +519,13 @@ def _verify_catalog_signature(registry: Path, trust_source: str | None) -> None:
     trust = _resolve_trust(registry, trust_source)
     if not trust:
         raise ValueError("正式发布无法找到 catalog 信任根公钥")
-    if not _verify_signature(catalog.read_bytes(), signature.read_bytes(), trust):
+    ok, _ = verify_against_roots(
+        registry,
+        catalog.read_bytes(),
+        signature.read_bytes(),
+        trust_source=trust,
+    )
+    if not ok:
         raise ValueError("catalog.json.sig 未覆盖当前 catalog.json（正式发布拒绝）")
 
 

@@ -21,6 +21,11 @@ import sys
 from pathlib import Path
 
 _REGISTRY = Path(__file__).resolve().parents[1]
+if str(_REGISTRY / "tools") not in sys.path:
+    sys.path.insert(0, str(_REGISTRY / "tools"))
+
+# P2-8：自包含签名原语来自市场仓 catalog_lib，不再注入主仓 sys.path。
+from catalog_lib.signing import sign_file, verify_plugin
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,12 +42,6 @@ def main(argv: list[str] | None = None) -> int:
     if not catalog.is_file():
         print("[FAIL] catalog.json 不存在（先运行 generate_catalog.py）")
         return 2
-
-    # 自引导：复用主仓 signing 模块（Ed25519）
-    main_src = _REGISTRY.parent / "OmniCrawler" / "src"
-    if main_src.is_dir() and str(main_src) not in sys.path:
-        sys.path.insert(0, str(main_src))
-    from omnicrawler.plugins.signing import sign_file, verify_plugin
 
     sig_path = sign_file(catalog, private_path.read_bytes())
     print(f"[签名] 已写入 {sig_path.name}")

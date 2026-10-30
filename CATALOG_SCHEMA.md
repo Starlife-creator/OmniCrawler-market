@@ -4,9 +4,10 @@
 可安装插件，并据此下载、验签、安装。
 
 > ⚠️ **不要手改 `catalog.json`**。它是 `tools/generate_catalog.py` 从
-> `plugins/<id>/plugin.yaml`（每个插件一个，唯一元数据源）与
-> `templates/<id>/template.yaml`（每个模板一个）聚合生成的。修改元数据
-> 请编辑对应的 YAML 后运行 `python tools/generate_catalog.py`。
+> 现代 overlay `plugins/<id>/market.yaml`（每个插件一个，正式条目元数据源）与
+> `templates/<id>/template.yaml`（每个模板一个）聚合生成的。旧版单文件轨遗留的
+> `plugin.yaml` 仅作历史兼容，不再是现代条目数据源。修改元数据
+> 请编辑对应的 overlay YAML 后运行 `python tools/generate_catalog.py`。
 > CI（`.github/workflows/validate.yml`）会用 `--check` 校验生成物一致性。
 
 ## 顶层字段
@@ -47,10 +48,7 @@
 | `input_files` | array[string] | | `files:read` 权限的路径白名单；不得使用旧字段名 `files` |
 | `required_capabilities` | object | | 契约 2 宿主能力最低协议版本，例如 `{"records.page": ">=1"}`；不满足时客户端在执行插件代码前拒载 |
 | `state_schema_version` | integer | | 插件私有状态 schema，正整数；升级时必须显式迁移，插件版本升级本身不切断状态 |
-| `release_channel` | string | | `stable` \| `beta`；beta 强制 subprocess + 界面标注"测试版" |
 | `dependencies` | array[object] | | `[{name, version, license}]`；空数组合法。门 3 校验声明↔实测导入图双向一致 + 许可白名单 |
-| `review_depth` | string | | `reviewed` \| `signed_only`——质量信号（非安全门禁），GUI 展示，T3 申请时参考 |
-| `gates_evidence` | object | | 门禁证据摘要，包括检查状态、时间戳和 tag 哈希；随 catalog 签名覆盖，供离线审批验证 |
 | `creator_signature_file` / `creator_identity_file` | string | | 旧版单文件创作者签名与公钥身份字段；现代包使用下方整包签名字段 |
 | `creator_fingerprint` | string (hex32) | | **创作者公钥指纹**（由清单的 `author_fingerprint` 生成）。多源聚合的**去重键**是 `(id, creator_fingerprint)`：同一 `id` 从不同指纹出现 ⇒ 双方标冲突交用户判断；缺该字段会退化为 `(id, "")`，把不同创作者的同名插件静默并成一条 |
 | `package_manifest_file` | string | 现代包必填 | 创作者签名的规范整包 manifest 路径 |
@@ -86,17 +84,20 @@
 | `package_manifest_file` / `creator_package_signature_file` / `maintainer_package_signature_file` / `package_manifest_sha256` | string | 与插件相同的现代整包双签字段；模板不再使用较弱的旁路信任模型 |
 | `creator_fingerprint` | string (hex32) | 与插件条目**同一语义、同一取值来源**（`author_fingerprint`）；客户端对 `templates` 用同一套 `(id, creator_fingerprint)` 去重键 |
 
-## 清单源（`plugins/<id>/plugin.yaml`）
+## 清单源（`plugins/<id>/market.yaml` overlay）
 
-每个插件一个 YAML 文件，是 `catalog.json` 条目的唯一数据源。字段与上表完全一致，
-另外多两个字段（**不**进入 `catalog.json` 条目）：
+现代正式条目每个插件一个 `market.yaml` overlay，是 `catalog.json` 条目的市场侧数据源；
+创作者签名载荷（`package.manifest.json` + `plugin.py` 内 `PLUGIN_METADATA`）保持原字节，
+overlay 只承载市场展示与审核状态字段。字段与上表一致，另外两个键**不**进入
+`catalog.json` 条目：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `author_fingerprint` | string | ✓ | 发布者公钥指纹（SHA-256 前 16 字节 hex），必须与 `authors/` 中该发布者的记录一致 |
-| `permissions` | array[string] | ✓ | 同 catalog 条目 |
+| `files` | array[string] | | 扫描期允许列表元数据，不进入条目 |
 
-生成器会拒绝清单中的未知字段（防止拼写错误静默丢弃）。
+旧版单文件轨遗留的 `plugin.yaml` 仅作历史兼容；生成器会拒绝 overlay 中的未知字段
+（防止拼写错误静默丢弃）。
 
 ### 作者记录（`authors/<market_handle>.yaml`）
 

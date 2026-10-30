@@ -65,15 +65,32 @@ _ENTRY_KEYS = [
     "input_files",
     "required_capabilities",
     "state_schema_version",
-    "release_channel",
+    # P2-1：release_channel / review_depth / gates_evidence 为生产者-消费者两侧均未
+    # 落地的死字段，从 schema 白名单移除（最小破坏路径：移除未消费字段并清引用；
+    # 已签名历史包内残留字节属哈希锚定载荷，按字节不可变红线不回改）。
     "dependencies",
-    "review_depth",
-    "gates_evidence",
     # 完整包协议：创作者与维护者签署同一 package manifest。
     "package_manifest_file",
     "creator_package_signature_file",
     "maintainer_package_signature_file",
     "package_manifest_sha256",
+    # P0-2：条目级吊销/弃用状态（与目录顶层 tombstones 并列的第二来源，安装端
+    # check_revocation 同时消费两类来源）；revoked_versions 为版本级吊销列表。
+    "revoked",
+    "revoked_versions",
+    "deprecated",
+    # P2-2：条目自有仓库基址（主仓 market_client 已支持 source_base，市场 schema
+    # 此前误拒；索引只背书不搬运时，清单与包从该基址取）。
+    "source_base",
+    # P3-9：目录层可静态预展示/预校验的可选契约字段。config_schema /
+    # resource_limits 属运行时载荷读取，不进目录条目（见 CATALOG_SCHEMA.md 说明）。
+    "api_version",
+    "min_core_version",
+    "max_core_version",
+    "source_url",
+    "fallback",
+    "optional_dependencies",
+    "contract_shape",
 ]
 
 _REQUIRED_KEYS = [
@@ -115,13 +132,19 @@ _TEMPLATE_ENTRY_KEYS = [
     "creator_package_signature_file",
     "maintainer_package_signature_file",
     "package_manifest_sha256",
+    "revoked",
+    "revoked_versions",
+    "deprecated",
 ]
 
 _ID_RE_PREFIX = "^[a-z][a-z0-9_-]{1,63}$"
 # 模板 ID 允许层级命名（如 generic/single-page），与内置模板目录一致
 
-_TEMPLATE_ID_RE_PREFIX = "^[a-z][a-z0-9_-]*(/[a-z0-9_-]+)*$"
-# 允许出现在 plugin.yaml 但**不进入 catalog.json 条目**的键：
+_TEMPLATE_ID_RE_PREFIX = (
+    "^[a-z](?:[a-z0-9]|_[a-z0-9]|-[a-z0-9])*"
+    "(?:/[a-z](?:[a-z0-9]|_[a-z0-9]|-[a-z0-9])*)*$"
+)
+# 允许出现在 market.yaml overlay 但**不进入 catalog.json 条目**的键：
 # author_fingerprint（跨轨校验用）、files（scan_plugin 允许列表，纯扫描期元数据）。
 # 注：B1 的 files:read 路径白名单字段落地时更名为 input_files（第 82 轮消歧），
 # 避免与本键冲突。
@@ -134,8 +157,8 @@ _TOP_LEVEL_EXTRA = {"author_fingerprint", "files"}
 # （任一侧漂移即红，不再有「单侧放宽」的空间）。
 # ★ 2026-09-22 维护者拍板（方向 B「收紧」）：剔除 AGPL-3.0-* / GPL-3.0-*，
 # 补 ISC / MPL-2.0 / 0BSD ⇒ 与主仓 `plugin_audit.LICENSE_ALLOWLIST` **同集合**。
-# 理由：主仓 `quality` 的 check_market_content 会校验本仓 catalog 的 license 字段，
-# 两侧口径不一致会让「本地绿 = CI 绿」失效。
+# 理由：**主仓** quality 工作流的 `check_market_content.py`（跨仓工具，本仓不存在
+# 同名脚本）会校验本仓 catalog 的 license 字段，两侧口径不一致会让「本地绿 = CI 绿」失效。
 # 仍拒绝（命中即 CI 红）：AGPL-3.0-* / GPL-3.0-* / GPL-2.0-only / GPL-2.0-or-later /
 # CC-BY-NC-* / LicenseRef-* / 自定义标识——强 copyleft 会引入与本项目 Apache-2.0
 # 冲突的分发义务；NC 条款与开源生态冲突；非 SPDX 标识不可机器校验。
@@ -166,6 +189,25 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     "resources:read", "surfaces:background", "render:local", "render:scripted",
 }
 
+# P2-3：宿主能力名白名单（镜像主仓 plugin_broker_contracts.CAPABILITY_VERSIONS 的键
+# 集合；市场侧只校验「能力名存在于宿主契约」，版本上下限由主仓运行期裁决）。两侧由
+# 跨仓断言锁名集合，任一漂移即红。
+ALLOWED_CAPABILITIES = {
+    "system.info",
+    "records.read", "records.page", "records.write",
+    "responses.page", "responses.payload",
+    "state.get", "state.set", "state.delete", "state.migrate",
+    "artifacts.read",
+    "artifact.stream.open", "artifact.stream.write", "artifact.stream.commit",
+    "artifact.stream.abort",
+    "network.fetch", "temp.open", "files.read",
+    "resources.describe", "resources.enumerate", "resources.read",
+    "render.html.snapshot", "render.html.live.start", "render.html.live.stop",
+    "surface.background.set", "surface.background.configure",
+    "surface.background.clear", "surface.background.capabilities",
+    "secrets.get", "view.richtext", "view.progress",
+}
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
@@ -174,12 +216,21 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 def _require_contained(registry: Path, base: Path, rel: str, label: str) -> Path:
-    """B02-014：文件引用解析后必须仍在 registry 内（允许 ``..`` 但不越界）。
+    """B02-014：文件引用解析后必须仍在 registry 内。
 
-    现有生产数据依赖 ``authors/../keys/x.pem`` 这种跨目录写法，所以不做
-    字面禁止 ``..``，只做最终落点的包含性判定。
+    P3-4 收紧：先拒绝绝对路径、反斜杠分隔与当前目录 ``.`` 段（与主仓
+    ``_safe_relative_path`` 对齐宽度）；历史生产数据依赖 ``authors/../keys/x.pem``
+    跨目录写法，``..`` 段暂保留但仍做最终落点包含性断言（存量迁移列入后续）。
     """
-    resolved = (base / rel).resolve()
+    rel_str = str(rel)
+    if "\\" in rel_str:
+        raise ValueError(f"{label} 使用反斜杠路径分隔符（须为 POSIX 相对路径）: {rel_str}")
+    parts = rel_str.split("/")
+    if Path(rel_str).is_absolute() or parts and parts[0] in ("", "/"):
+        raise ValueError(f"{label} 不允许绝对路径: {rel_str}")
+    if "." in parts:
+        raise ValueError(f"{label} 包含当前目录段 '.': {rel_str}")
+    resolved = (base / rel_str).resolve()
     if not resolved.is_relative_to(registry.resolve()):
         raise ValueError(f"{label} 解析后逃出 registry 根: {resolved}")
     return resolved
