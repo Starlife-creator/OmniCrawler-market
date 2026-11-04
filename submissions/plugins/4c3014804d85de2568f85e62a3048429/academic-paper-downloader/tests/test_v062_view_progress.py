@@ -31,6 +31,10 @@ class TestViewProgressEmission:
         monkeypatch.setattr(plugin_module, "_download_with_retry",
                             lambda *a, **k: (b"%PDF-1.4\nfake", "ok"))
         monkeypatch.setattr(plugin_module, "_validate_pdf", lambda p: True)
+        # v0.9.0：PDF 经宿主 artifact.stream 交付（_host_save_pdf），本地不留文件
+        monkeypatch.setattr(plugin_module, "_host_save_pdf",
+                            lambda name, data, maximum_bytes: {"artifact_id": "art-1", "sha256": "a" * 64})
+        monkeypatch.setattr(plugin_module, "_extract_pdf_meta", lambda p: {"validation_level": "full"})
         monkeypatch.setattr(plugin_module, "_mark_done", lambda *a, **k: None)
         monkeypatch.setattr(plugin_module, "_mark_failed", lambda *a, **k: None)
 

@@ -1,5 +1,9 @@
 # 变更记录
 
+## 0.3.1 — 2026-11-02
+
+修复变化追踪未确认宿主保存的问题：`state.set` 未返回 `saved: true` 时标记 tracking_unavailable，不再把未持久化观察报告为可跨运行追踪。
+
 ## 0.3.0 — 2026-10-04
 
 输出稳定 event_id、policy_id、initial_baseline、event_kind。相同实体从失败变为成功产生 recovery 事件；重复观察不重复 attention。

@@ -1,13 +1,13 @@
-"""回归测试：OpenAlex 预检修复 / 配置热重载 / .xls 兜底 / 流式落盘 / 大小上限 / 注入转义 / state 分键。
+"""回归测试：OpenAlex 预检修复 / 配置热重载 / .xls 兜底 / 下载大小上限 / 注入转义 / state 分键。
 
-对应 v0.3.0 优化项，全部离线（mock 网络与 SDK）。
+v0.9.0 更新：全部网络经宿主 EgressBroker（_host_fetch），测试改打宿主适配层，
+不再 mock httpx/流式客户端。
 """
 
 import json
 import sys
 from pathlib import Path
 
-import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -56,13 +56,13 @@ class TestOpenAlexPrecheck:
 
     def test_fetch_oa_status_parses_real_style_response(self, monkeypatch):
         """真实响应形态：results[].doi 是 https://doi.org/... 前缀，需剥去再做键。"""
-        def fake_get(url, **kw):
-            return _FakeResp200({"results": [
+        def fake_host_fetch(url, headers=None):
+            return (json.dumps({"results": [
                 {"id": "https://openalex.org/W4312078660",
                  "doi": "https://doi.org/10.3390/ma16010001",
                  "open_access": {"oa_status": "gold"}},
-            ]})
-        monkeypatch.setattr(httpx, "get", fake_get)
+            ]}).encode("utf-8"), 200, url)
+        monkeypatch.setattr(plugin_module, "_host_fetch", fake_host_fetch)
         assert plugin_module._fetch_oa_status("10.3390/ma16010001") == ("10.3390/ma16010001", True)
 
     def test_seed_precheck_skips_free_oa(self, tmp_path, monkeypatch):
@@ -138,90 +138,109 @@ class TestXlsGraceful:
         assert res["errors"][0]["reason"] == "empty_or_unreadable"
 
 
-class _FakeResp200:
-    def __init__(self, data):
-        self._data = data
-        self.status_code = 200
-
-    def json(self):
-        return self._data
-
-
 class _FakeStreamResp:
+    """宿主持久响应的替身：一次性返回全部正文（宿主无流式接口）。"""
+
     def __init__(self, chunks, status=200, content_type="application/pdf"):
-        self._chunks = chunks
+        self._body = b"".join(chunks)
         self.status_code = status
         self.headers = {"content-type": content_type}
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, *a):
-        return False
-
-    def iter_bytes(self, chunk_size=8192):
-        for c in self._chunks:
-            yield c
-
-
-def _mock_http_client(monkeypatch, response):
-    """把共享 HTTP 客户端替换为返回指定响应的 mock。"""
-    mock_client = type("MockClient", (), {
-        "stream": lambda *a, **k: response,
-        "is_closed": False,
-    })()
-    monkeypatch.setattr(plugin_module, "_HTTP_CLIENT", mock_client)
+def _mock_host_fetch(monkeypatch, response):
+    """把 _host_fetch 替换为返回指定响应的实现。"""
+    def fake_fetch(url, headers=None):
+        return (response._body, response.status_code, url)
+    monkeypatch.setattr(plugin_module, "_host_fetch", fake_fetch)
 
 
 class TestStreamDownloadAndCaps:
     def test_fetch_pdf_raises_on_size_limit(self, monkeypatch):
         monkeypatch.setattr(plugin_module, "_MAX_PDF_BYTES", 1024)
-        _mock_http_client(monkeypatch, _FakeStreamResp([b"x" * 600, b"y" * 600]))
+        _mock_host_fetch(monkeypatch, _FakeStreamResp([b"x" * 600, b"y" * 600]))
         with pytest.raises(plugin_module._PdfTooLarge):
             plugin_module._fetch_pdf("https://x.test/a.pdf", {}, {}, timeout=10)
 
-    def test_stream_pdf_cleans_partial_on_limit(self, monkeypatch, tmp_path):
+    def test_fetch_pdf_returns_body_on_success(self, monkeypatch):
+        _mock_host_fetch(monkeypatch, _FakeStreamResp([b"%PDF-1.4\n"]))
+        body, status = plugin_module._fetch_pdf("https://x.test/a.pdf", {}, {}, timeout=10)
+        assert status == 200 and body == b"%PDF-1.4\n"
+
+    def test_fetch_pdf_rejects_non_pdf_body(self, monkeypatch):
+        """200 但正文不是 PDF（反爬落地页/登录页）⇒ None，不进入保存链路。"""
+        _mock_host_fetch(monkeypatch, _FakeStreamResp(
+            [b"<html>Cloudflare challenge</html>"], content_type="text/html"))
+        body, status = plugin_module._fetch_pdf("https://x.test/a.pdf", {}, {}, timeout=10)
+        assert body is None
+
+    def test_download_with_retry_returns_too_large(self, monkeypatch):
+        """超限不重试到底：第一次即归类 too_large 并返回 None。"""
         monkeypatch.setattr(plugin_module, "_MAX_PDF_BYTES", 1024)
-        _mock_http_client(monkeypatch, _FakeStreamResp([b"x" * 600, b"y" * 600]))
-        dest = tmp_path / "a.part"
-        out, status = plugin_module._stream_pdf("https://x.test/a.pdf", {}, {}, 10, dest)
-        assert out is None
-        assert not dest.exists()  # 超限部分文件已清理
+        _mock_host_fetch(monkeypatch, _FakeStreamResp([b"x" * 600, b"y" * 600]))
+        content, error_class = plugin_module._download_with_retry(
+            "https://x.test/a.pdf", {"doi": "10.1/x", "publisher": "mdpi"}, {"retry_count": 3})
+        assert content is None
+        assert error_class == "too_large"
 
-    def test_stream_pdf_returns_dest_on_success(self, monkeypatch, tmp_path):
-        _mock_http_client(monkeypatch, _FakeStreamResp([b"%PDF-1.4\n"]))
-        dest = tmp_path / "a.part"
-        out, status = plugin_module._stream_pdf("https://x.test/a.pdf", {}, {}, 10, dest)
-        assert out is not None and out.exists()
-        assert dest.read_bytes() == b"%PDF-1.4\n"
+    def test_download_with_retry_sdk_unavailable_returns_none(self, monkeypatch):
+        """宿主 SDK 不可用 ⇒ 不重试直连，直接失败分类。"""
+        def unavailable(url, headers=None):
+            raise plugin_module._SdkUnavailable("no sdk")
+        monkeypatch.setattr(plugin_module, "_host_fetch", unavailable)
+        content, error_class = plugin_module._download_with_retry(
+            "https://x.test/a.pdf", {"doi": "10.1/x", "publisher": "mdpi"}, {"retry_count": 0})
+        assert content is None
+        assert error_class == "unknown"
 
-    def test_process_download_streams_to_tmp_then_moves(self, tmp_path, monkeypatch):
-        """HTTP 下载走临时文件路径，成功后由 _save_pdf 移入 papers/。"""
-        seen_dest = []
-
-        def fake_stream(pdf_url, headers, cookies, timeout, dest):
-            seen_dest.append(dest)
-            Path(dest).write_bytes(b"%PDF-1.4\n%%EOF\nx")
-            return Path(dest), 200
+    def test_process_download_delivers_artifact(self, tmp_path, monkeypatch):
+        """v0.9.0：下载 → 校验 → 宿主 artifact.stream 交付，本地不留 PDF。"""
+        paper = {"doi": "10.3390/x", "title": "T", "first_author": "A",
+                 "year": "2025", "publisher": "mdpi", "is_oa": True}
 
         monkeypatch.setattr(plugin_module, "_try_oa_direct",
                             lambda doi, pub, is_oa: "https://x.test/paper.pdf")
         monkeypatch.setattr(plugin_module, "_try_api_probe", lambda *a, **k: None)
-        monkeypatch.setattr(plugin_module, "_stream_pdf", fake_stream)
+        monkeypatch.setattr(plugin_module, "_host_fetch",
+                            lambda url, headers=None: (b"%PDF-1.4\n%%EOF\nx", 200, url))
         monkeypatch.setattr(plugin_module, "_validate_pdf", lambda p: True)
-        monkeypatch.setattr(plugin_module, "_rename_with_metadata", lambda paper, p: p)
         monkeypatch.setattr(plugin_module, "_extract_pdf_meta", lambda p: {})
         monkeypatch.setattr(plugin_module, "_mark_done", lambda *a, **k: None)
         monkeypatch.setattr(plugin_module, "_mark_failed", lambda *a, **k: None)
+        delivered = []
+        monkeypatch.setattr(plugin_module, "_host_save_pdf",
+                            lambda name, data, maximum_bytes: delivered.append(name)
+                            or {"artifact_id": "art-1", "sha256": "0" * 64})
 
+        res = plugin_module._process_download(paper, {"level": 1}, Path(tmp_path),
+                                              {"done": 0, "total": 1})
+        assert res["records"] and res["records"][0]["download_source"] == "oa_direct"
+        assert res["records"][0]["artifact_id"] == "art-1"
+        assert res["records"][0]["local_path"] == ""
+        assert delivered == ["A_2025_T.pdf"]
+        # 本地 papers/ 不留 PDF 副本
+        assert not list((Path(tmp_path) / "papers").glob("*.pdf"))
+
+    def test_process_download_reports_failure_when_artifact_unavailable(self, tmp_path, monkeypatch):
+        """宿主 artifact 不可用 ⇒ 明确失败，不谎报成功。"""
         paper = {"doi": "10.3390/x", "title": "T", "first_author": "A",
                  "year": "2025", "publisher": "mdpi", "is_oa": True}
-        res = plugin_module._process_download(paper, {"level": 1}, Path(tmp_path), {"done": 0, "total": 1})
-        assert res["records"] and res["records"][0]["download_source"] == "oa_direct"
-        assert len(seen_dest) == 1
-        saved = Path(tmp_path) / res["records"][0]["local_path"]
-        assert saved.is_file()
-        assert not Path(seen_dest[0]).exists()  # 临时文件已移走
+        monkeypatch.setattr(plugin_module, "_try_oa_direct",
+                            lambda doi, pub, is_oa: "https://x.test/paper.pdf")
+        monkeypatch.setattr(plugin_module, "_try_api_probe", lambda *a, **k: None)
+        monkeypatch.setattr(plugin_module, "_host_fetch",
+                            lambda url, headers=None: (b"%PDF-1.4\n%%EOF\nx", 200, url))
+        monkeypatch.setattr(plugin_module, "_validate_pdf", lambda p: True)
+        monkeypatch.setattr(plugin_module, "_extract_pdf_meta", lambda p: {})
+        monkeypatch.setattr(plugin_module, "_host_save_pdf", lambda *a, **k: None)
+        failures = []
+        monkeypatch.setattr(plugin_module, "_mark_failed",
+                            lambda *a, **k: failures.append(a))
+        monkeypatch.setattr(plugin_module, "_mark_done", lambda *a, **k: None)
+
+        res = plugin_module._process_download(paper, {"level": 1}, Path(tmp_path),
+                                              {"done": 0, "total": 1})
+        assert not res["records"]
+        assert failures, "artifact 交付失败必须记 failed，不能静默跳过"
 
 
 class TestEscaping:

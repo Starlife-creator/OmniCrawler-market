@@ -49,6 +49,13 @@ def test_declared_charset_and_cjk_count(optimized):
     assert data['word_count'] == 6 * 30
 
 
+def test_attribute_markup_is_not_reported_as_text(optimized):
+    source = '<p title="&lt;tag&gt;">' + 'Readable sentence. ' * 8 + '</p>'
+    result = optimized.extract_html(source)
+    assert '<tag>' not in result['text']
+    assert 'Readable sentence.' in result['text']
+
+
 def test_list_code_markdown_and_void_ancestry(optimized):
     result = optimized.extract_html('<meta name="author" content="Ada"><article><li>' + 'A meaningful list item. ' * 5 + '</li><pre>' + 'example code line\n' * 8 + '</pre></article>')
     assert '- A meaningful' in result['markdown']

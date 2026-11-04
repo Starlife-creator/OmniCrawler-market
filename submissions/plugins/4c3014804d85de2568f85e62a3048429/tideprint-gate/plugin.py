@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 PLUGIN_METADATA = {
     "name": "tideprint-gate",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "api_version": 1,
     "description": "以持久指纹建议条件重验证，并输出当前运行的可解释变化分类",
     "plugin_types": ["processor", "hook"],
@@ -169,6 +169,8 @@ def _semantic_change(url: str, body: bytes, content_type: str, options: dict[str
             previous = stored["value"]
     except RuntimeError:
         pass
+    if not isinstance(previous, dict):
+        previous = None
     old_digest = previous.get("sha256") if previous else None
     status = "new" if not old_digest else "unchanged" if old_digest == digest else "changed"
     value = {"sha256": digest, "size": len(body)}
@@ -246,18 +248,22 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             str(previous_value.get("sha256") or "") if isinstance(previous_value, dict) else ""
         )
         status = "new" if not previous_digest else "unchanged" if previous_digest == digest else "changed"
-        omnicrawler_sdk.call(
-            "state.set",
-            {
-                "key": key,
-                "value": {
-                    "sha256": digest,
-                    "normalized_url": normalize_url(url),
-                    "status": int(result.get("status") or 0),
+        try:
+            saved = omnicrawler_sdk.call(
+                "state.set",
+                {
+                    "key": key,
+                    "value": {
+                        "sha256": digest,
+                        "normalized_url": normalize_url(url),
+                        "status": int(result.get("status") or 0),
+                    },
                 },
-            },
-        )
-        change = {"status": status, "previous_sha256": previous_digest or None, "sha256": digest, "scope": "persistent_host_state", "comparison": "raw_bytes"}
+            )
+        except RuntimeError:
+            saved = {}
+        persisted = saved.get("saved") is True
+        change = {"status": status, "previous_sha256": previous_digest or None, "sha256": digest, "scope": "persistent_host_state" if persisted else "current_run_only", "comparison": "raw_bytes", "persisted": persisted}
         if len(_persistent_seen) >= MAX_ENTRIES and normalize_url(url) not in _persistent_seen:
             del _persistent_seen[next(iter(_persistent_seen))]
         _persistent_seen[normalize_url(url)] = change
@@ -265,7 +271,11 @@ def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         # Remember both ends of redirects so the original seed can revalidate next run.
         original = str((result.get("request") or {}).get("url") or result.get("url") or "")
         if original and _state_key(original) != key:
-            omnicrawler_sdk.call("state.set", {"key": _state_key(original), "value": {"sha256": digest, "normalized_url": normalize_url(url), "status": status_code}})
+            try:
+                redirect_saved = omnicrawler_sdk.call("state.set", {"key": _state_key(original), "value": {"sha256": digest, "normalized_url": normalize_url(url), "status": status_code}})
+                change["redirect_persisted"] = redirect_saved.get("saved") is True
+            except RuntimeError:
+                change["redirect_persisted"] = False
         return {"persistent_change": change}
     if operation.startswith("hook."):
         return {}

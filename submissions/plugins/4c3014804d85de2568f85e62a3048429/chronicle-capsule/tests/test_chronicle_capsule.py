@@ -31,6 +31,16 @@ def test_invalid_operation_is_noop() -> None:
     assert plugin.handle("source.seed", {}) == {}
 
 
+def test_max_records_rejects_fractional_and_nan_values() -> None:
+    for value in (1.5, float("nan")):
+        try:
+            plugin.handle("exporter.export", {"options": {"max_records": value}})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"max_records={value!r} 应被拒绝")
+
+
 def test_target_uri_is_header_safe_and_unicode_encoded() -> None:
     archive, _summary = plugin.build_archive(
         [{"source_url": "https://example.test/中文\r\nInjected: yes", "data": {}}],

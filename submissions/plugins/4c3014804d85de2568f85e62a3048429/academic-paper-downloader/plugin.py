@@ -18,8 +18,6 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -43,18 +41,86 @@ except ImportError:
     _HAS_YAML = False
 
 try:
-    import httpx
-    _HAS_HTTPX = True
-except ImportError:
-    httpx = None  # type: ignore[assignment]
-    _HAS_HTTPX = False
-
-try:
     import xlrd
     _HAS_XLRD = True
 except ImportError:
     xlrd = None
     _HAS_XLRD = False
+
+# ---------------------------------------------------------------------------
+# 宿主 SDK 适配（v0.9.0）：所有网络经 EgressBroker，PDF 经 artifact.stream 交付
+# ---------------------------------------------------------------------------
+import base64 as _base64
+
+
+def _sdk_call(operation: str, payload: dict) -> dict | None:
+    """调用宿主 SDK；SDK 缺席（独立运行）或失败 → None。"""
+    try:
+        import omnicrawler_sdk
+        result = omnicrawler_sdk.call(operation, payload)
+        return result if isinstance(result, dict) else None
+    except Exception:
+        return None
+
+
+class _SdkUnavailable(Exception):
+    """宿主 SDK 不可用（独立运行/未授予能力）：调用方按降级处理，不直连网络。"""
+
+
+class _HostNetworkError(Exception):
+    """宿主 network.fetch 返回错误或调用失败。"""
+
+    def __init__(self, status: int | None, message: str = "") -> None:
+        self.status = status
+        super().__init__(message or f"http_{status}")
+
+
+def _host_fetch(url: str, headers: dict | None = None) -> tuple[bytes, int, str]:
+    """经宿主 EgressBroker 抓取 URL，返回 (body, status, final_url)。
+
+    遵守 ScopePolicy / robots / 配额；插件进程不经手凭据。
+    失败或 SDK 缺席抛异常——调用方负责分类，绝不回退到直连。
+    """
+    result = _sdk_call("network.fetch", {"url": url, "method": "GET", "headers": headers or {}})
+    if result is None:
+        raise _SdkUnavailable("宿主 SDK 不可用，network.fetch 未执行（拒绝直连降级）")
+    status = int(result.get("status", 0))
+    body = _base64.b64decode(result.get("body_b64", ""))
+    return body, status, str(result.get("url", url))
+
+
+def _host_save_pdf(filename: str, data: bytes, maximum_bytes: int) -> dict | None:
+    """经宿主 artifact.stream 保存 PDF；成功返回宿主工件信息，失败返回 None。
+
+    超过宿主上限会被服务端以 E_QUOTA 拒绝并删除未提交内容，此处先行自检避免无效分块。
+    """
+    if len(data) > maximum_bytes:
+        return None
+    opened = _sdk_call("artifact.stream.open", {"name": filename, "media_type": "application/pdf"})
+    if not opened or not opened.get("handle"):
+        return None
+    handle = opened["handle"]
+    host_max = int(opened.get("maximum_bytes", maximum_bytes))
+    if len(data) > host_max:
+        _sdk_call("artifact.stream.abort", {"handle": handle})
+        return None
+    try:
+        offset = 0
+        chunk_size = 1024 * 1024  # 宿主单块上限 1 MiB
+        while offset < len(data):
+            chunk = data[offset:offset + chunk_size]
+            written = _sdk_call("artifact.stream.write",
+                                {"handle": handle, "content_b64": _base64.b64encode(chunk).decode("ascii")})
+            if written is None:
+                _sdk_call("artifact.stream.abort", {"handle": handle})
+                return None
+            offset += len(chunk)
+        committed = _sdk_call("artifact.stream.commit", {"handle": handle})
+        return committed
+    except Exception:
+        _sdk_call("artifact.stream.abort", {"handle": handle})
+        return None
+
 
 # 类型别名
 JsonDict = Dict[str, Any]
@@ -126,11 +192,11 @@ _OA_PRECHECK_CONCURRENCY = _DEFAULT_CONFIG["oa_precheck_concurrency"]
 
 PLUGIN_METADATA = {
     "name": "academic-paper-downloader",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "api_version": 1,
     "description": "从 Web of Science 导出文件批量下载论文 PDF，全优化版",
     "plugin_types": ["source", "processor", "hook"],
-    "permissions": ["network:scoped", "records:read", "state:read", "state:write", "secrets:read", "files:read"],
+    "permissions": ["network:scoped", "records:read", "state:read", "state:write", "secrets:read", "files:read", "artifacts:write"],
     "domains": [
         "api.crossref.org", "api.unpaywall.org", "api.openalex.org",
         "www.sciencedirect.com", "link.springer.com", "pubs.acs.org",
@@ -140,7 +206,6 @@ PLUGIN_METADATA = {
     ],
     "input_files": ["*.xlsx", "*.xls", "*.tsv", "*.ris", "*.bib", "*.csv", "*.json"],
     "dependencies": [
-        {"name": "httpx", "version": ">=0.27,<1.0", "license": "BSD-3-Clause"},
         {"name": "yaml", "version": ">=5.4,<7.0", "license": "MIT"},
         {"name": "openpyxl", "version": ">=3.0,<4.0", "license": "MIT"},
         # 旧版 .xls 导出走 xlrd（导入处有 try/except，缺库时静默降级）。
@@ -149,7 +214,6 @@ PLUGIN_METADATA = {
         {"name": "xlrd", "version": ">=2.0,<3.0", "license": "BSD-3-Clause"},
         {"name": "pdfplumber", "version": ">=0.10,<1.0", "license": "MIT"},
         {"name": "pypdf", "version": ">=3.0,<4.0", "license": "BSD-3-Clause"},
-        {"name": "playwright", "version": ">=1.30,<2.0", "license": "Apache-2.0"},
     ],
     "license": "MIT",
     "execution_mode": "subprocess",
@@ -282,38 +346,14 @@ class _ProxyHealthChecker:
         self._circuit_breaker: dict[str, bool] = {}  # proxy -> open
 
     def check(self, proxy: str, config: ConfigDict | None = None) -> bool:
-        """探测代理是否可用。"""
+        """v0.9.0：宿主 network.fetch 不暴露代理参数，代理级健康探测已不可用。
+
+        保留熔断数据结构以维持状态/日志形状；探测一律返回 False（视为不可用），
+        调用方按降级处理，绝不回退到直连探测。
+        """
         if config is None:
             config = {}
         now = time.time()
-        check_interval = int(_get_config_value(config, "proxy_check_interval_sec", 60))
-        last = self._health.get(proxy, {}).get("last_check", 0)
-        if now - last < check_interval:
-            return not self._circuit_breaker.get(proxy, False)
-
-        try:
-            import httpx
-            start = time.time()
-            if proxy:
-                client = httpx.Client(proxy=proxy, timeout=10)
-                try:
-                    resp = client.get("https://api.openalex.org/")
-                finally:
-                    client.close()
-            else:
-                resp = httpx.get("https://api.openalex.org/", timeout=10)
-            latency_ms = int((time.time() - start) * 1000)
-            if resp.status_code == 200:
-                latencies = self._health.get(proxy, {}).get("latencies", [])
-                latencies.append(latency_ms)
-                if len(latencies) > 100:
-                    latencies = latencies[-100:]
-                self._health[proxy] = {"score": 100, "failures": 0, "last_check": now, "latencies": latencies}
-                self._circuit_breaker[proxy] = False
-                return True
-        except Exception:
-            pass
-
         failures = self._health.get(proxy, {}).get("failures", 0) + 1
         circuit_threshold = int(_get_config_value(config, "proxy_circuit_breaker_threshold", 3))
         self._health[proxy] = {"score": max(0, 100 - failures * 20), "failures": failures, "last_check": now}
@@ -1068,19 +1108,16 @@ def _rename_with_metadata(paper: dict, path: Path) -> Path:
 # OpenAlex 批量预检
 # ---------------------------------------------------------------------------
 def _fetch_oa_status(doi: str) -> tuple[str, bool]:
-    """单个 DOI 查询 OpenAlex OA 状态，返回 (doi, is_oa)。"""
-    if not _HAS_HTTPX:
-        return doi, False
+    """单个 DOI 查询 OpenAlex OA 状态（经宿主 EgressBroker），返回 (doi, is_oa)。"""
     try:
-        resp = httpx.get(
-            "https://api.openalex.org/works",
-            params={"filter": f"doi:{doi}", "select": "id,doi,open_access", "per-page": "1"},
-            timeout=30,
-            headers={"User-Agent": "academic-paper-downloader/0.6.4 (mailto:plugin-owner@example.com)"},
-        )
-        if resp.status_code != 200:
+        from urllib.parse import quote
+        url = ("https://api.openalex.org/works"
+               f"?filter=doi:{quote(str(doi), safe='')}&select=id,doi,open_access&per-page=1")
+        body, status, _final = _host_fetch(
+            url, headers={"User-Agent": "academic-paper-downloader/0.9.0"})
+        if status != 200:
             return doi, False
-        for item in resp.json().get("results", []):
+        for item in json.loads(body.decode("utf-8", errors="replace")).get("results", []):
             item_doi = (item.get("doi") or "").replace("https://doi.org/", "").lower()
             if item_doi == str(doi).lower():
                 oa = item.get("open_access", {}).get("oa_status")
@@ -1502,12 +1539,11 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
     """并发探测 Crossref / Unpaywall / OpenAlex，取最先返回的 OA 链接。"""
 
     def _crossref() -> str | None:
-        if not _HAS_HTTPX:
-            return None
         try:
-            resp = httpx.get(f"https://api.crossref.org/works/{doi}", timeout=_API_PROBE_TIMEOUT)
-            if resp.status_code == 200:
-                for link in resp.json().get("message", {}).get("link", []):
+            from urllib.parse import quote
+            body, status, _final = _host_fetch(f"https://api.crossref.org/works/{quote(str(doi), safe='')}")
+            if status == 200:
+                for link in json.loads(body.decode("utf-8", errors="replace")).get("message", {}).get("link", []):
                     if link.get("content-type") == "application/pdf":
                         return link.get("URL")
         except Exception:
@@ -1516,13 +1552,15 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
 
     def _unpaywall() -> str | None:
         email = config.get("unpaywall_email", "")
-        if not email or not _HAS_HTTPX:
+        if not email:
             return None
         try:
-            resp = httpx.get(f"https://api.unpaywall.org/v2/{doi}", params={"email": email}, timeout=_API_PROBE_TIMEOUT)
-            if resp.status_code == 200:
-                data = resp.json()
-                # v0.4.0 镜像优先：仓储副本（arXiv/PMC/机构库等）零反爬、httpx 直连必过，
+            from urllib.parse import quote
+            body, status, _final = _host_fetch(
+                f"https://api.unpaywall.org/v2/{quote(str(doi), safe='')}?email={quote(str(email), safe='')}")
+            if status == 200:
+                data = json.loads(body.decode("utf-8", errors="replace"))
+                # v0.4.0 镜像优先：仓储副本（arXiv/PMC/机构库等）零反爬，
                 # 显著优于出版商 endpoint（常见 bot_blocked）。出版商链接仅作后备。
                 locs = [loc for loc in (data.get("oa_locations") or []) if isinstance(loc, dict)]
                 for loc in locs:
@@ -1535,12 +1573,11 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
         return None
 
     def _openalex() -> str | None:
-        if not _HAS_HTTPX:
-            return None
         try:
-            resp = httpx.get(f"https://api.openalex.org/works/doi:{doi}", timeout=_API_PROBE_TIMEOUT)
-            if resp.status_code == 200:
-                data = resp.json()
+            from urllib.parse import quote
+            body, status, _final = _host_fetch(f"https://api.openalex.org/works/doi:{quote(str(doi), safe='')}")
+            if status == 200:
+                data = json.loads(body.decode("utf-8", errors="replace"))
                 # v0.6.3 镜像优先（与 Unpaywall 同策略）：best_oa_location.host_type ==
                 # repository 的副本零反爬，优先于出版商 endpoint
                 locs = [loc for loc in (data.get("locations") or []) if isinstance(loc, dict)]
@@ -1579,92 +1616,47 @@ def _try_api_probe(doi: str, config: dict) -> str | None:
     return None
 
 # ---------------------------------------------------------------------------
-# Cookie 管理
+# Cookie / 登录态（v0.9.0 明确降级）
 # ---------------------------------------------------------------------------
+# 宿主 SDK 不提供通用交互浏览器，也没有宿主登录会话能力；明文 Cookie 既是
+# 宿主宿主边界门禁禁止的敏感 state，插件侧也无合法采集途径。
+# 因此机构 Cookie 登录通道（ACS 等 auth_method=cookie/saml）在本版明确
+# 降级为不可用：调用方会得到 unsupported_capability，不静默失败、不直连。
+
+
 def _get_cached_cookie(config: dict) -> list[dict] | None:
-    try:
-        result = _state_get(_cookie_key(config))
-        if result and result.get("value"):
-            cookies = json.loads(result["value"])
-            now = time.time()
-            for c in cookies:
-                exp = c.get("expires", -1)
-                if exp > 0 and exp < now: return None
-            return cookies
-    except Exception as e:
-        _log("swallowed_exception", level=logging.DEBUG, where="cookie_get", error=str(e))
+    """不再读取插件 state 中的 Cookie（敏感凭证不入插件 state，宿主运行期亦拒绝）。"""
     return None
+
 
 def _save_cookie(config: dict, cookies: list[dict]) -> None:
-    try:
-        _state_set(_cookie_key(config), json.dumps(cookies))
-    except Exception as e:
-        _log("swallowed_exception", level=logging.DEBUG, where="cookie_set", error=str(e))
+    """不再保存 Cookie（无合法采集途径；宿主会拒绝敏感 state 键）。"""
+    _log("cookie_storage_disabled", level=logging.DEBUG)
+
 
 def _invalidate_cookie(config: dict) -> None:
-    try:
-        _state_delete(_cookie_key(config))
-    except Exception as e:
-        _log("swallowed_exception", level=logging.DEBUG, where="cookie_delete", error=str(e))
+    """登录态已不可用，失效操作退化为 no-op。"""
+    return None
+
 
 def _login_and_capture_cookie(config: dict) -> list[dict] | None:
-    inst = config.get("institution", {})
-    login_url = inst.get("login_url", "")
-    if not login_url: return None
-    proxy_url = _get_next_proxy(config)
-    try:
-        from urllib.parse import urlparse
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, proxy={"server": proxy_url} if proxy_url else None)
-            context = browser.new_context()
-            page = context.new_page()
-            page.goto(login_url)
-            # v0.4.0 修复：旧实现 wait_for_url("**/*") 在 goto 完成瞬间就匹配成功，
-            # 根本没等用户完成登录就把（很可能未登录的）Cookie 存走了。
-            # 现在轮询等待页面**离开登录域**（SSO 成功后必然跳到别的域），最多 120s，
-            # 超时则按现状捕获（宁可重登也不阻塞流程）。
-            try:
-                login_host = urlparse(login_url).netloc
-                deadline = time.time() + 120
-                print("[academic-paper-downloader] 请在弹出的浏览器窗口完成登录…", flush=True)
-                while time.time() < deadline:
-                    cur_host = ""
-                    try:
-                        cur_host = urlparse(page.url).netloc
-                    except Exception:
-                        pass
-                    if cur_host and cur_host != login_host:
-                        break
-                    page.wait_for_timeout(1000)
-            except Exception:
-                pass
-            cookies = context.cookies()
-            browser.close()
-            if cookies:
-                _save_cookie(config, cookies)
-                return cookies
-    except Exception as e:
-        _log("swallowed_exception", level=logging.DEBUG, where="login_window", error=str(e))
+    """登录捕获通道已移除：宿主无交互浏览器/登录会话 SDK，明确返回 None。
+
+    调用方应将其视为不支持的能力并降级（不可用时跳过机构层），绝不回退到
+    直连浏览器或自建登录窗口。
+    """
+    _log("institutional_login_unsupported", level=logging.INFO,
+         reason="host SDK has no browser/session capability")
     return None
 
 
 # ---------------------------------------------------------------------------
-# 代理池管理
+# 代理池管理（v0.9.0 已降级）
 # ---------------------------------------------------------------------------
+# 宿主 network.fetch 不暴露代理参数，代理池/健康探测在本插件内不再生效；
+# 函数保留仅为兼容旧配置形状，恒返回 None，调用方不得据此启用直连。
 def _get_next_proxy(config: dict) -> str | None:
-    proxy_list = config.get("institution", {}).get("proxy_list", [])
-    if not proxy_list:
-        return config.get("institution", {}).get("proxy_url")
-    try:
-        key = f"apd_proxy_idx_{hashlib.md5(str(config).encode()).hexdigest()[:8]}"
-        result = _state_get(key)
-        idx = int(result.get("value", "0")) if result else 0
-        proxy = _PROXY_HEALTH.get_best_proxy(proxy_list) or proxy_list[idx % len(proxy_list)]
-        _state_set(key, str((idx + 1) % len(proxy_list)))
-        return proxy
-    except Exception:
-        return proxy_list[0] if proxy_list else None
+    return None
 
 # ---------------------------------------------------------------------------
 # 流式下载 + 智能重试
@@ -1684,182 +1676,51 @@ def _build_headers(publisher: str) -> dict:
 class _PdfTooLarge(Exception):
     """PDF 超过大小上限（防恶意超大文件拖垮磁盘/本进程）。"""
 
-# 共享 HTTP 客户端（连接池复用，线程安全）
-_HTTP_CLIENT: httpx.Client | None = None
-_HTTP_CLIENT_PROXY: str = ""
-_HTTP_CLIENT_LOCK = threading.RLock()
-_HTTP_CLIENT_USERS: dict[int, int] = {}
-_RETIRED_HTTP_CLIENTS: list[Any] = []
 
+def _fetch_pdf(pdf_url: str, headers: dict, cookies: dict | None = None, timeout: int = 60) -> tuple[bytes | None, int | None]:
+    """经宿主 EgressBroker 抓取 PDF（内存返回），带大小上限。返回 (content, status_code)。
 
-def _close_http_clients() -> None:
-    global _HTTP_CLIENT, _HTTP_CLIENT_PROXY
-    with _HTTP_CLIENT_LOCK:
-        clients = _RETIRED_HTTP_CLIENTS[:]
-        _RETIRED_HTTP_CLIENTS.clear()
-        if _HTTP_CLIENT is not None:
-            clients.append(_HTTP_CLIENT)
-        _HTTP_CLIENT, _HTTP_CLIENT_PROXY = None, ""
-    for client in clients:
-        try:
-            client.close()
-        except Exception as exc:
-            _log("http_client_close_failed", level=logging.DEBUG, error=type(exc).__name__)
-
-
-import atexit
-atexit.register(_close_http_clients)
-
-
-def _get_http_client() -> httpx.Client:
-    """代理感知的 httpx 客户端：institution.proxy_url 变化时重建连接池（v0.3.3）。
-
-    之前代理只传给浏览器通道，HTTP 层完全无视 proxy_url —— 用户校外填了
-    机构代理后 HTTP 层依然直连失败。现在按"当前代理"缓存客户端，代理切换
-    （如补填代理重试）自动重建。
+    v0.9.0：不再直连 httpx；cookies 参数仅保留调用形状（宿主无 Cookie 注入能力，
+    机构登录层已明确降级），传入值不会被使用。
     """
-    global _HTTP_CLIENT, _HTTP_CLIENT_PROXY
-    config = _get_download_config()
-    proxy = ""
     try:
-        proxy = _get_next_proxy(config) or ""
-    except Exception:
-        proxy = ""
-    with _HTTP_CLIENT_LOCK:
-        if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed or _HTTP_CLIENT_PROXY != proxy:
-            max_conn = int(_get_config_value(config, "http_pool_max_connections", 20))
-            max_keepalive = int(_get_config_value(config, "http_pool_max_keepalive", 10))
-            old_client = _HTTP_CLIENT
-            _HTTP_CLIENT = httpx.Client(
-                timeout=60.0,
-                limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_keepalive),
-                follow_redirects=True,
-                proxy=proxy or None,
-            )
-            _HTTP_CLIENT_PROXY = proxy
-            if old_client is not None and not old_client.is_closed:
-                _RETIRED_HTTP_CLIENTS.append(old_client) if _HTTP_CLIENT_USERS.get(id(old_client), 0) else old_client.close()
-        return _HTTP_CLIENT
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def _client_stream(*args, **kwargs):
-    # Retire clients only after every stream using that client has exited.
-    with _HTTP_CLIENT_LOCK:
-        client = _get_http_client()
-        identity = id(client)
-        _HTTP_CLIENT_USERS[identity] = _HTTP_CLIENT_USERS.get(identity, 0) + 1
-    try:
-        with client.stream(*args, **kwargs) as response:
-            yield response
-    finally:
-        with _HTTP_CLIENT_LOCK:
-            users = _HTTP_CLIENT_USERS.get(identity, 1) - 1
-            if users:
-                _HTTP_CLIENT_USERS[identity] = users
-            else:
-                _HTTP_CLIENT_USERS.pop(identity, None)
-                if client in _RETIRED_HTTP_CLIENTS:
-                    _RETIRED_HTTP_CLIENTS.remove(client)
-                    client.close()
-
-
-def _fetch_pdf(pdf_url: str, headers: dict, cookies: dict, timeout: int = 60) -> tuple[bytes | None, int | None]:
-    """内存下载（供最小链路复用），带大小上限。返回 (content, status_code)。"""
-    if not _HAS_HTTPX:
-        return None, None
-    try:
-        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
-            if resp.status_code != 200:
-                return None, resp.status_code
-            ct = resp.headers.get("content-type", "")
-            if "pdf" not in ct:
-                return None, resp.status_code
-            chunks = []
-            total = 0
-            for chunk in resp.iter_bytes(chunk_size=8192):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > _MAX_PDF_BYTES:
-                    raise _PdfTooLarge(f"pdf exceeds limit: {total} > {_MAX_PDF_BYTES}")
-                chunks.append(chunk)
-            return b"".join(chunks), resp.status_code
+        body, status, _final = _host_fetch(pdf_url, headers=headers)
+        if status != 200:
+            return None, status
+        if not body:
+            return None, status
+        if len(body) > _MAX_PDF_BYTES:
+            raise _PdfTooLarge(f"pdf exceeds limit: {len(body)} > {_MAX_PDF_BYTES}")
+        if not body.lstrip()[:5] == b"%PDF-":
+            return None, status
+        return body, status
     except _PdfTooLarge:
         raise
-    except Exception:
-        return None, None
-
-
-def _stream_pdf(pdf_url: str, headers: dict, cookies: dict, timeout: int, dest: Path) -> tuple[Path | None, int | None]:
-    """流式写到临时文件（正文不驻留内存），超限即中断清理。返回 (path, status_code)。"""
-    if not _HAS_HTTPX:
-        return None, None
-    try:
-        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=timeout) as resp:
-            if resp.status_code != 200:
-                return None, resp.status_code
-            ct = resp.headers.get("content-type", "")
-            if "pdf" not in ct:
-                return None, resp.status_code
-            total = 0
-            try:
-                with open(dest, "wb") as f:
-                    for chunk in resp.iter_bytes(chunk_size=65536):
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > _MAX_PDF_BYTES:
-                            raise _PdfTooLarge(f"pdf exceeds limit: {total} > {_MAX_PDF_BYTES}")
-                        f.write(chunk)
-            except _PdfTooLarge:
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
-                return None, None
-            if total == 0:
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
-                return None, resp.status_code
-            return dest, resp.status_code
-    except _PdfTooLarge:
-        try:
-            dest.unlink()
-        except Exception:
-            pass
+    except _SdkUnavailable:
         return None, None
     except Exception:
         return None, None
 
-def _download_with_retry(pdf_url: str, paper: dict, config: dict, cookies: dict,
+
+def _download_with_retry(pdf_url: str, paper: dict, config: dict, cookies: dict | None = None,
                          error_class: str = "unknown", headers: dict | None = None,
-                         dest: str | None = None) -> tuple[bytes | None | str, str]:
-    """重试下载，返回 (content 或 临时文件路径, 最终 error_class)。"""
+                         dest: str | None = None) -> tuple[bytes | None, str]:
+    """经宿主 EgressBroker 重试下载，返回 (content, 最终 error_class)。
+
+    v0.9.0：取消插件侧流式临时文件与直连代理；dest 参数仅为兼容调用形状而保留，
+    宿主 network.fetch 无流式接口，正文一次性经内存返回后交给 artifact.stream。
+    """
     max_retries = config.get("retry_count", 3)
     timeout = config.get("download_timeout", 60)
     hdrs = _build_headers(paper.get("publisher", "unknown"))
     if headers:
         hdrs.update(headers)
 
-    # 设置下载配置上下文（供 _stream_pdf/_fetch_pdf 使用）
-    _set_download_config(config)
-
     for attempt in range(max_retries + 1):
         try:
-            if dest:
-                out, status = _stream_pdf(pdf_url, hdrs, cookies, timeout, Path(dest))
-                if out is not None:
-                    return str(out), "ok"
-            else:
-                content, status = _fetch_pdf(pdf_url, hdrs, cookies, timeout)
-                if content:
-                    return content, "ok"
+            content, status = _fetch_pdf(pdf_url, hdrs, cookies, timeout)
+            if content:
+                return content, "ok"
             publisher = paper.get("publisher", "unknown")
             free_oa = _PUBLISHERS.get(publisher, {}).get("auth_method") == "none"
             if status == 200:
@@ -1885,13 +1746,13 @@ def _download_with_retry(pdf_url: str, paper: dict, config: dict, cookies: dict,
 # PDF 下载保存（工作区内）
 # ---------------------------------------------------------------------------
 def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -> dict | None:
-    if isinstance(content, (str, os.PathLike)):
-        try:
-            if Path(content).stat().st_size > _MAX_PDF_BYTES:
-                return None
-        except OSError:
-            return None
-    elif len(content) > _MAX_PDF_BYTES:
+    # v0.9.0：迁移到宿主 artifact.stream（不再写 workspace 本地文件）。
+    # 校验与元数据提取需要在本地临时文件进行，完成后经 artifact.stream.commit 交付宿主，
+    # 临时文件删除。文件名沿用既有命名/元数据重命名规则，提交给宿主的 artifact name 不含路径分隔符。
+    if not isinstance(content, bytes):
+        _log("pdf_save_rejected_non_bytes", doi=paper.get("doi"))
+        return None
+    if len(content) > _MAX_PDF_BYTES:
         return None
     papers_dir = workspace / "papers"
     _safe_mkdir(papers_dir)
@@ -1903,20 +1764,8 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
     base_name = f"{first_author}_{year}_{safe_title}.pdf"
     out_path = _unique_filename(papers_dir, base_name)
 
-    # 支持 bytes（内存下载）或临时文件路径（流式下载：移至工作区后删除临时源）
-    file_size = 0
-    if isinstance(content, (str, os.PathLike)):
-        tmp = Path(content)
-        if not tmp.is_file():
-            return None
-        try:
-            shutil.move(str(tmp), str(out_path))
-        except Exception:
-            return None
-        file_size = out_path.stat().st_size
-    else:
-        out_path.write_bytes(content)
-        file_size = len(content)
+    file_size = len(content)
+    out_path.write_bytes(content)
 
     # 单次打开：校验 + 元数据提取
     if not _validate_pdf(out_path):
@@ -1941,16 +1790,9 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
     req_doi = normalize_doi(paper.get("doi") or "").rstrip(".")
     verified = True
     if ext_doi and req_doi and ext_doi != req_doi:
-        # v0.6.3 实机修正：mismatch 不再删文件——实机发现 MDPI 下载到的 PDF 很可能
-        # 是正确的（DOI 提取在排版上抽错），删除即丢掉"过了人机验证才拿到"的文件。
-        # 处理：保留并标记 UNVERIFIED（不计入成功，用户可人工确认）。
         _log("pdf_doi_mismatch", doi=req_doi, extracted=ext_doi, path=str(out_path))
         verified = False
     if req_doi and not ext_doi:
-        # ★ 提不出 DOI **不等于**文件是错的（arXiv/扫描版 PDF 本就提不出，见既有用例
-        #   `test_no_extracted_doi_accepted` 的理由），但也**绝不能**当作成功 ——
-        #   反爬挑战页/登录页/文章落地页同样提不出 DOI，那正是"假成功"的来源（issue #22 §1）。
-        #   取向：**保留文件、标记未核验、不计入成功** —— 两边的坑都避开。
         verified = False
         _log("pdf_doi_unverified", doi=req_doi, path=str(out_path))
 
@@ -1959,15 +1801,30 @@ def _save_pdf(paper: dict, content: bytes | str, workspace: Path, source: str) -
         if not _get_download_config().get("allow_weak_pdf_validation", True):
             out_path.unlink(missing_ok=True)
             return None
+
+    # v0.9.0：交付宿主 artifact（受控产物），本地临时文件清理。
+    artifact_info = None
+    try:
+        data = out_path.read_bytes()
+        artifact_info = _host_save_pdf(out_path.name, data, maximum_bytes=_MAX_PDF_BYTES)
+    finally:
+        out_path.unlink(missing_ok=True)
+    if not artifact_info:
+        _log("pdf_artifact_unavailable", doi=paper.get("doi"))
+        return None
+
     record = {
         "doi": paper.get("doi", ""), "canonical_doi": req_doi, "title": title, "authors": paper.get("authors", ""),
         "year": year, "journal": paper.get("journal", ""), "publisher": paper.get("publisher", ""),
-        "pdf_url": "", "filename": out_path.name, "local_path": str(out_path.relative_to(workspace)),
+        "pdf_url": "", "filename": out_path.name,
+        # v0.9.0：宿主 artifact 引用（宿主统一管理产物；本地 workspace 不再留 PDF）。
+        "artifact_id": artifact_info.get("artifact_id", ""),
+        "local_path": "",
         "download_source": source, "file_size": file_size, "pdf_meta": meta,
         # 是否已核验为"请求的那篇"（DOI 交叉核对通过）。未核验仍保留文件，但不计入成功。
         "verified": verified,
         "verification": "header_only" if validation_level == "header_only" else "doi_mismatch" if ext_doi and req_doi and ext_doi != req_doi else "doi_not_found_in_pdf" if req_doi and not ext_doi else "doi_matched" if req_doi else "doi_not_requested",
-        "sha256": file_digest(out_path),
+        "sha256": artifact_info.get("sha256") or hashlib.sha256(content).hexdigest(),
     }
     record["download_evidence"] = build_evidence(record)
     return record
@@ -2058,14 +1915,6 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
     cookies: dict = {}
     cookies_raw: list[dict] = []
     campus_direct = _campus_direct(config)
-    if config.get("level", 1) >= 3:
-        monitor = _get_cookie_monitor(config)
-        fetched = monitor.refresh_if_needed()
-        if fetched:
-            cookies_raw = fetched
-            cookies = {c["name"]: c["value"] for c in fetched}
-        if campus_direct:
-            _log("campus_direct_mode", doi=doi, has_cookies=bool(fetched))
 
     def _try_layer(name: str, func, *args) -> tuple[bool, str]:
         """返回 (是否成功, 该层最终 error_class)。"""
@@ -2078,27 +1927,14 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
             if result:
                 pdf_url = result
                 if isinstance(result, str) and result.startswith("http"):
-                    # 流式下载到工作区临时文件，正文不驻留内存
-                    tmp_dir = workspace / ".tmp"
-                    _safe_mkdir(tmp_dir)
-                    tmp_dest = tmp_dir / f"{hashlib.md5(result.encode()).hexdigest()[:16]}.part"
                     content, local_error = _download_with_retry(
-                        result, paper, config, cookies, local_error, dest=str(tmp_dest))
-                elif isinstance(result, str) and os.path.exists(result):
-                    # Keep browser exports on disk until _save_pdf moves them.
-                    if Path(result).stat().st_size > _MAX_PDF_BYTES:
-                        Path(result).unlink(missing_ok=True)
-                        raise _PdfTooLarge("browser PDF exceeds configured size limit")
-                    content = result
+                        result, paper, config, cookies, local_error)
                 if content:
                     layer_used = name
                     _log("layer_success", doi=doi, layer=name, duration_ms=int((time.time() - t0) * 1000))
                     return True, "ok"
         except _PdfTooLarge:
             local_error = "pdf_too_large"
-        except _HttpStatusError as e:
-            local_error = _classify_error(e.status, None, publisher)
-            _log("layer_error", doi=doi, layer=name, error=f"http_{e.status}")
         except Exception as e:
             local_error = _classify_error(None, str(e))
             _log("layer_error", doi=doi, layer=name, error=str(e))
@@ -2125,8 +1961,7 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
         else:
             if ec in ("bot_blocked", "captcha"):
                 ctx["saw_mismatch"] = True
-            # 实机回归教训：浏览器静默失败（unknown）不得抹掉先前层更有信息量的
-            # 分类（如 institutional_http 的 auth_required），否则有头轮漏目标。
+            # v0.9.0：错误分类注释已移除机构层引用（institutional_http 层已删除）。
             if ec != "unknown" or ctx["error_class"] == "unknown":
                 ctx["error_class"] = ec
         if browser and not ok:
@@ -2136,15 +1971,9 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
         ("oa_direct", _try_oa_direct, (doi, publisher, is_oa),
          lambda: robots_allowed and not profile_skip_http),
         ("api", _try_api_probe, (doi, config), lambda: True),
-        ("institutional_http", _http_download_with_cookie, (doi, publisher, cookies, config),
-         lambda: config.get("level", 1) >= 3 and not profile_skip_http),
-        ("institutional_browser", _browser_download, (doi, publisher, cookies_raw, config),
-         lambda: config.get("level", 1) >= 3 and ctx["http_failed"]),
-        # 通道升级（横切）：bot_blocked/captcha 是"通道不匹配"信号而非终态，
-        # OA 内容（L1/L2）同样允许走浏览器通道重试（无需任何凭证）；
-        # 信号按累计判定（saw_mismatch），后续层的失败类型不会抹掉先前层证据。
-        ("browser_channel_upgrade", _browser_download, (doi, publisher, cookies_raw, config),
-         lambda: not ctx["browser_tried"] and (ctx["saw_mismatch"] or ctx["error_class"] in ("bot_blocked", "captcha"))),
+        # v0.9.0：宿主 SDK 无交互浏览器/登录会话能力，机构 Cookie 登录通道明确降级为
+        # 不可用（不会静默失败：Cookie 函数只记日志并返回 None）。代理参数宿主不暴露，
+        # _get_next_proxy/_PROXY_HEALTH 已降级。
     ]
 
     ok = False
@@ -2152,49 +1981,23 @@ def _process_download(paper: dict, config: dict, workspace: Path, progress: dict
     for name, fn, args, gate in plan:
         if ctx["ok"] or not gate():
             continue
-        if "browser" in name:
-            _BROWSER_OUTCOME.reason = "unknown"
         ok, ec = _try_layer(name, fn, *args)
-        if "browser" in name and not ok and _browser_outcome() == "blocked":
-            # v0.6.3：浏览器层证据传导——挑战页 = 需要人机验证 = bot_blocked，
-            # 否则该信号被浏览器静默失败抹掉，有头轮永远抓不到目标
-            ec = "bot_blocked"
-        if name == "institutional_http" and not ok:
-            ctx["http_failed"] = True
-            ctx["http_error"] = ec
-        _mark(ok, ec, browser=("browser" in name))
+        _mark(ok, ec)
 
-    # 认证失效 → 重新登录后重试一次（仅此前已有 Cookie 时才触发）
-    if not ctx["ok"] and ctx["http_error"] == "auth_required" and cookies and config.get("level", 1) >= 3:
-        _invalidate_cookie(config)
-        _log("relogin_attempt", doi=doi, reason="auth_required")
-        new_cookies = _login_and_capture_cookie(config)
-        if new_cookies:
-            cookies_raw = new_cookies
-            cookies = {c["name"]: c["value"] for c in new_cookies}
-            ok, error_class = _try_layer("institutional_http_retry", _http_download_with_cookie, doi, publisher, cookies, config)
-            if not ok:
-                ok, error_class = _try_layer("institutional_browser_retry", _browser_download, doi, publisher, cookies_raw, config)
-        ctx["ok"] = bool(ok)
-        if not ok:
-            ctx["error_class"] = error_class
     error_class = ctx["error_class"] if not ctx["ok"] else "ok"
     ok = ctx["ok"]
 
     # U5：把通道不匹配证据写入域画像，同域后续论文跳过 http 通道直连升级
     if domain and (ctx["saw_mismatch"] or (not ok and error_class in ("bot_blocked", "captcha"))):
         _profile_channel_mismatch(domain)
-    elif domain and ok and layer_used in ("institutional_http", "oa_direct"):
+    elif domain and ok and layer_used in ("oa_direct", "api"):
         _profile_channel_clear(domain)
 
     # D11：未知出版商全层失败时显式归类（区别于"网络抖动"类可重试失败）
     if not ok and error_class in ("unknown",) and not _PUBLISHERS.get(publisher):
         error_class = "unknown_publisher"
-    # v0.6.3：OA 内容 + auth_required → bot_blocked（OA 不该要权限，403 即反爬
-    # 而非订阅墙；实机回归：IOP OA 期刊 J.Phys.Commun/MLST/NJP 全被误分类）。
-    # 前提是浏览器通道已真实尝试过（browser_tried），避免把未尝试误判为反爬。
-    if not ok and error_class == "auth_required" and is_oa and ctx.get("browser_tried"):
-        error_class = "bot_blocked"
+    # v0.9.0：OA 内容 + auth_required → bot_blocked 的调整保留（OA 不该要权限）；
+    # 机构 Cookie 登录层已明确降级（宿主无交互浏览器/登录会话能力），无需再改判。
 
     duration_ms = int((time.time() - start_time) * 1000)
     _log("paper_finished", doi=doi, layer=layer_used, ok=bool(content), duration_ms=duration_ms,
@@ -2359,568 +2162,12 @@ def _failure_reason(error_class: str) -> str:
     """error_class → 人类可读失败原因。"""
     return _FAILURE_REASON_MAP.get(error_class, _FAILURE_REASON_MAP["unknown"])
 
-def _http_download_with_cookie(doi: str, publisher: str, cookies: dict, config: dict) -> str | None:
-    cfg = _PUBLISHERS.get(publisher)
-    if not cfg:
-        return None
-    pdf_url = _build_oa_url(doi, cfg)
-    if not pdf_url:
-        return None
-    if not _HAS_HTTPX:
-        return None
-    _set_download_config(config)
-    try:
-        headers = _build_headers(publisher)
-        # 只流式读响应头校验，不下载正文（正文统一由 _download_with_retry 下载一次）
-        with _client_stream("GET", pdf_url, headers=headers, cookies=cookies, timeout=60) as resp:
-            ct = resp.headers.get("content-type", "")
-            if resp.status_code == 200 and "pdf" in ct:
-                return pdf_url
-            # 重定向链中出现登录页 → Cookie 已失效
-            for hop in getattr(resp, "history", []) or []:
-                loc = hop.headers.get("location", "").lower()
-                if any(k in loc for k in ("login", "sso", "signin", "account", "auth")):
-                    _invalidate_cookie(config)
-                    break
-            if resp.status_code in (401, 403) or (resp.status_code == 200 and "pdf" not in ct):
-                _invalidate_cookie(config)
-                raise _HttpStatusError(resp.status_code)
-    except _HttpStatusError:
-        raise
-    except Exception:
-        pass
+_BROWSER_MIGRATION_REMOVED = True
+
+# v0.9.0：以下浏览器 / 直连 HTTP / 子进程实现已被宿主能力适配整体移除。
+# 保留占位以避免外部测试误导入；真实下载仅经宿主 network.fetch/artifact.stream。
+def _browser_removed_placeholder() -> None:
     return None
-
-class _HttpStatusError(Exception):
-    """携带 HTTP 状态码的层失败，用于把该层错误分类透传给重登判定。"""
-    def __init__(self, status: int):
-        self.status = status
-        super().__init__(f"http_{status}")
-
-def _normalize_cookies_for_browser(cookies: list[dict], home: str) -> list[dict]:
-    """补齐 Playwright add_cookies 必需字段（name/value + url 或 domain/path）。"""
-    normalized: list[dict] = []
-    for c in cookies:
-        if not isinstance(c, dict):
-            continue
-        item = dict(c)
-        if not item.get("name") or item.get("value") is None:
-            continue
-        if not (item.get("url") or item.get("domain")):
-            item["url"] = home
-        item.setdefault("path", "/")
-        normalized.append(item)
-    return normalized
-
-def _save_browser_download(dl) -> str | None:
-    """把 Playwright 下载对象落到临时 PDF，返回本地路径。"""
-    try:
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        tmp.close()
-        dl.save_as(tmp.name)
-        path = Path(tmp.name)
-        if path.stat().st_size > 0:
-            return tmp.name
-        try:
-            path.unlink()
-        except Exception:
-            pass
-    except Exception:
-        pass
-    return None
-
-#: 反爬挑战 / 登录 / 拒绝页的文本特征 —— 假成功（issue #22 §1）的直接来源
-_BLOCK_PAGE_MARKERS = (
-    # 强特征：正文命中即可判拦截
-    "security verification",
-    "just a moment",
-    "checking your browser",
-    "captcha",
-    "are you a robot",
-    "verify you are human",
-    "access denied",
-    "enable javascript",
-    "cloudflare",
-)
-_LOGIN_PAGE_MARKERS = (
-    # v0.6.3 修复：这些词在**正常文章页页眉**里也大量出现（Sign in 链接），
-    # 正文匹配会造成大面积误判（实机回归：MDPI/IOP 文章页被误判为登录墙，
-    # 捕获逻辑在点下载按钮之前就放弃）。只在 title / URL 中匹配。
-    "sign in",
-    "log in",
-    "login",
-    "institutional login",
-)
-
-
-_CAPTCHA_WIDGET_SELECTORS = (
-    # v0.6.6：DOM 级验证组件检测（原 _solve_captcha_if_present 的探测部分）。
-    # 动因：验证页文本可能是中文/本地化文案（"请验证您是真人"），文本 marker
-    # 全 miss，而 iframe src 是稳定的英文特征——widget 检测有实打实的判定价值。
-    "iframe[src*='challenges.cloudflare.com']",   # Cloudflare Turnstile
-    "iframe[title*='Widget containing a Cloudflare']",
-    "iframe[src*='recaptcha']",                    # Google reCAPTCHA
-    "iframe[src*='hcaptcha']",                     # hCaptcha
-    "img[id*='captcha']", "img[class*='captcha']",
-    "#captcha-img", ".captcha-image",
-)
-
-
-def _captcha_widget_present(page) -> bool:
-    """页面是否存在验证码/人机验证组件（DOM 级探测，与语言无关）。"""
-    try:
-        for sel in _CAPTCHA_WIDGET_SELECTORS:
-            if page.query_selector(sel):
-                return True
-        return False
-    except Exception:
-        return False
-
-
-def _page_block_reason(page) -> str | None:
-    """页面是否为反爬挑战/登录/拒绝页？命中即**不可**当成功（返回命中的特征短语）。"""
-    try:
-        title = (page.title() or "").casefold()
-        body = (page.inner_text("body") or "")[:4000].casefold()
-        url = (getattr(page, "url", "") or "").casefold()
-    except Exception:
-        return None
-    for marker in _BLOCK_PAGE_MARKERS:
-        if marker in title or marker in body:
-            return marker
-    for marker in _LOGIN_PAGE_MARKERS:
-        if marker in title or "/login" in url or "/signin" in url or "/sso" in url:
-            return marker
-    # v0.6.6：文本 marker 未命中时查 DOM 验证组件——验证页文案本地化（中文）
-    # 时文本特征会全 miss，iframe 特征与语言无关。**仅当正文极短**时才采信：
-    # 拦截页正文只有几十字符，而正常文章页即使页脚嵌了验证 widget（部分出版商
-    # 评论区有），正文也远超 300 字符——避免"文章页误判为挑战页"的回归。
-    if len(body.strip()) < 300 and _captcha_widget_present(page):
-        return "captcha"
-    return None
-
-
-def _looks_like_inline_pdf(page) -> bool:
-    """页面**本身**是不是 PDF 视图（而不是文章落地页/挑战页）。
-
-    只有这种页面才允许 ``page.pdf()`` 兜底：把落地页打印成 PDF 会产出"合法的 1 页 PDF"，
-    再被当成论文计入成功 —— 这正是本插件最严重的失败模式。
-    """
-    try:
-        url = (getattr(page, "url", "") or "").casefold()
-        # v0.6.3：IOP 的内联 PDF 以 /pdf 结尾（article/DOI/pdf），不含 ".pdf" 后缀
-        if url.endswith(".pdf") or ".pdf?" in url or ".pdf#" in url \
-           or url.endswith("/pdf") or "/pdf?" in url or "/pdf#" in url:
-            return True
-        for selector in (
-            "embed[type='application/pdf']",
-            "object[type='application/pdf']",
-            "embed[src*='.pdf']",
-            "object[src*='.pdf']",
-            "iframe[src*='.pdf']",
-            "iframe[src*='/pdf']",
-            "embed[src*='/pdf']",
-        ):
-            if page.query_selector(selector) is not None:
-                return True
-    except Exception:
-        return False
-    return False
-
-
-def _browser_capture_pdf(context, page) -> str | None:
-    """在浏览器会话内捕获 PDF。优先级（v0.6.3 重构）：
-
-    ① 页面内下载元素一键点击（selectors 单次扫描，命中即点，不再 6 个盲等）；
-    ② citation_pdf_url meta 直链导航（出版商自带的标准映射表，一次导航一次下载事件）；
-    ③ 内联 PDF 视图 → context.request 抓字节（有头可用；page.pdf() 仅无头兜底）。
-
-    ★ 两条 fail-closed 规则（issue #22 §1）：挑战/登录页直接放弃；
-      page.pdf() 只在页面本身就是 PDF 视图时允许。
-    """
-    block_reason = _page_block_reason(page)
-    if block_reason:
-        _log("browser_page_blocked", reason=block_reason, url=str(getattr(page, "url", "")))
-        return None
-
-    def _inline_bytes(target_url: str) -> str | None:
-        try:
-            resp = context.request.get(target_url)
-            body = resp.body() if resp is not None else None
-            if body and body[:5] == b"%PDF-" and len(body) > 1000:
-                tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                tmp.close()
-                Path(tmp.name).write_bytes(body)
-                return tmp.name
-        except Exception:
-            pass
-        return None
-
-    # ① citation_pdf_url meta：最快、最确定（一次导航触发下载事件；若内联渲染则抓字节）
-    try:
-        meta = page.query_selector("meta[name='citation_pdf_url']")
-        meta_url = (meta.get_attribute("content") or "").strip() if meta else ""
-        if meta_url:
-            _log("citation_pdf_url_found", url=meta_url)
-            try:
-                with page.expect_download(timeout=20000) as dl_info:
-                    try:
-                        page.goto(meta_url, wait_until="domcontentloaded", timeout=30000)
-                    except Exception:
-                        pass
-                saved = _save_browser_download(dl_info.value)
-                if saved:
-                    return saved
-            except Exception:
-                pass
-            if _looks_like_inline_pdf(page):
-                saved = _inline_bytes(str(getattr(page, "url", "") or meta_url))
-                if saved:
-                    return saved
-    except Exception:
-        pass
-
-    # ② 页面内下载元素：单次扫描，命中第一个候选就点（12s 下载 / 8s 新标签 + 12s）
-    for sel in ("a[href*='pdf']", "a[href*='download']", "a.pdf-download",
-                "a[class*='pdf']", "button[class*='pdf']", "a[class*='download']"):
-        link = page.query_selector(sel)
-        if not link:
-            continue
-        try:
-            with page.expect_download(timeout=12000) as dl_info:
-                link.click()
-            return _save_browser_download(dl_info.value)
-        except Exception:
-            pass
-        try:
-            with context.expect_page(timeout=8000) as page_info:
-                link.click()
-            popup = page_info.value
-            try:
-                popup.wait_for_load_state("domcontentloaded", timeout=15000)
-                with popup.expect_download(timeout=12000) as dl_info:
-                    popup.wait_for_timeout(500)
-                return _save_browser_download(dl_info.value)
-            except Exception:
-                popup.close()
-        except Exception:
-            pass
-        break  # 找到候选但点击失败：不再盲等其余 selectors
-
-    # ③ 内联 PDF 视图 → 抓字节（page.pdf() 仅无头兜底）
-    if not _looks_like_inline_pdf(page):
-        _log("browser_no_pdf_evidence", url=str(getattr(page, "url", "")))
-        return None
-    saved = _inline_bytes(str(getattr(page, "url", "") or ""))
-    if saved:
-        return saved
-    try:
-        pdf_bytes = page.pdf()  # 仅无头可用；有头窗口抛异常被吞掉
-        if pdf_bytes and len(pdf_bytes) > 1000:
-            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-            tmp.close()
-            Path(tmp.name).write_bytes(pdf_bytes)
-            return tmp.name
-    except Exception:
-        pass
-    return None
-
-
-_HEADED_LOCK = threading.Lock()
-
-def _institution_headless(config: dict) -> bool:
-    """``institution.headless``（缺省 True：与既有行为一致）。"""
-    inst = config.get("institution") if isinstance(config, dict) else None
-    if isinstance(inst, dict) and "headless" in inst:
-        return bool(inst.get("headless"))
-    return True
-
-
-def _institution_visible_fallback(config: dict) -> bool:
-    """headless 被反爬挡下后，是否允许用**可见浏览器**重试一次。
-
-    v0.4.0：``defer_headed`` 开启时批处理内一律抑制弹窗——可见浏览器集中到
-    ``_deferred_headed_pass``（报告前的第二阶段）串行执行。
-    v0.4.0+：``defer_headed`` **默认开启**（两阶段是推荐形态），
-    显式传 ``defer_headed: false`` 恢复批内即时弹窗。
-    """
-    if isinstance(config, dict) and config.get("defer_headed", True):
-        return False
-    inst = config.get("institution") if isinstance(config, dict) else None
-    if isinstance(inst, dict) and "visible_fallback" in inst:
-        return bool(inst.get("visible_fallback"))
-    return True
-
-
-_BROWSER_OUTCOME = threading.local()  # 线程局部：最近一次浏览器尝试的失败原因
-_HEADED_COOKIES: list[dict] = []  # 有头/无头会话 Cookie 跨篇累积：每域只过一次验证
-
-def _merge_headed_cookies(new_cookies) -> None:
-    """浏览器会话 Cookie 并入累积池（同名同域覆盖）。"""
-    if not isinstance(new_cookies, list):
-        return
-    idx = {(c.get("name"), c.get("domain")): i for i, c in enumerate(_HEADED_COOKIES)}
-    for c in new_cookies:
-        if not isinstance(c, dict) or not c.get("name"):
-            continue
-        k = (c.get("name"), c.get("domain"))
-        if k in idx:
-            _HEADED_COOKIES[idx[k]] = c
-        else:
-            idx[k] = len(_HEADED_COOKIES)
-            _HEADED_COOKIES.append(c)
-
-def _browser_outcome() -> str:
-    return str(getattr(_BROWSER_OUTCOME, "reason", "unknown") or "unknown")
-
-# 无头指纹优化（v0.6.3）：隐藏 webdriver 等自动化特征，降低被反爬识别概率
-_STEALTH_INIT_SCRIPT = """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-window.chrome = window.chrome || { runtime: {} };
-"""
-
-def _browser_launch_chromium(p, *, headless: bool, proxy_url: str | None, config: dict):
-    """启动浏览器（v0.6.6）：优先**本机真浏览器**，回退链 ``chrome → msedge → 内置``。
-
-    动因（实机回归 2026-09-25）：ScienceDirect 的 Cloudflare Turnstile 在
-    Playwright 内置 Chromium 下**无限重置挑战**——点选后环境检测发现自动化
-    指纹（旧版 UA / CDP 痕迹）就重来一遍，人工永远点不过。真 Chrome/Edge
-    指纹干净（原生新版 UA + 原生插件栈），通过率显著更高。全部 channel 不可用
-    （本机既无 Chrome 也无 Edge）时回退 Playwright 内置 Chromium。
-    返回 ``(browser, used_real_browser)``。
-    """
-    proxy = {"server": proxy_url} if proxy_url else None
-    configured = str(config.get("browser_channel", "") or "").strip()
-    channels = [configured] if configured else ["chrome", "msedge"]
-    for channel in channels:
-        try:
-            return p.chromium.launch(headless=headless, proxy=proxy, channel=channel), True
-        except Exception as e:
-            _log("browser_channel_fallback", channel=channel, error=str(e)[:80])
-    return p.chromium.launch(headless=headless, proxy=proxy), False
-
-
-def _browser_attempt(
-    doi: str, publisher: str, home: str, cookies: list[dict], config: dict, *, headless: bool
-) -> str | None:
-    """一次浏览器尝试（同页/新标签页与「兜底必须有 PDF 证据」见 ``_browser_capture_pdf``）。
-
-    v0.6.3：失败原因写入线程局部 ``_BROWSER_OUTCOME.reason``
-    （blocked=挑战页需要人 / no_evidence=页面加载但无 PDF 证据 / navigation_failed=导航失败），
-    供编排层把"需要人"的失败升级为 bot_blocked → 触发有头轮。
-    """
-    proxy_url = _get_next_proxy(config)
-    _BROWSER_OUTCOME.reason = "navigation_failed"
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser, real_chrome = _browser_launch_chromium(
-                p, headless=headless, proxy_url=proxy_url, config=config)
-            ctx_kwargs = {"accept_downloads": True, "locale": "zh-CN", "timezone_id": "Asia/Shanghai"}
-            if not real_chrome:
-                # 仅内置 Chromium 需要自造 UA；真 Chrome 用**原生 UA**（自造旧版
-                # UA 本身就是 Turnstile 的自动化红旗，覆盖反而降低通过率）。
-                ctx_kwargs["user_agent"] = _build_headers(publisher)["User-Agent"]
-            context = browser.new_context(**ctx_kwargs)
-            context.add_init_script(_STEALTH_INIT_SCRIPT)
-            all_cookies = list(cookies or []) + list(_HEADED_COOKIES)
-            if all_cookies:
-                context.add_cookies(_normalize_cookies_for_browser(all_cookies, home))
-            page = context.new_page()
-            # 统一走 doi.org：由解析器 301 到出版商的**实际**文章页。
-            # 旧实现写死 f"{home}/doi/{doi}"，对 Nature（/articles/<suffix>）、
-            # Elsevier（/science/article/pii/<pii>）等并不适用（issue #22 §3）。
-            page.goto(f"https://doi.org/{doi}", wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(1500)
-            # v0.6.3：IOP/PerimeterX 类挑战需要 JS 执行后种 Cookie 才放行——轮询等挑战清除。
-            # 无头会被重定向到 validate.perfdrive.com 且无法通过（实测）→ 快速失败交有头轮；
-            # 有头会自动通过（诊断实测无需人工点击）。
-            challenge_deadline = time.time() + float(config.get("challenge_wait_timeout", 45))
-            while time.time() < challenge_deadline:
-                try:
-                    u = (page.url or "").lower()
-                    if "perfdrive" in u:
-                        _BROWSER_OUTCOME.reason = "blocked"
-                        break
-                    if _page_block_reason(page) is None:
-                        break
-                except Exception:
-                    pass
-                page.wait_for_timeout(1000)
-            if _page_block_reason(page):
-                _BROWSER_OUTCOME.reason = "blocked"
-            elif _BROWSER_OUTCOME.reason != "blocked":
-                _BROWSER_OUTCOME.reason = "pending"
-            if not headless and _BROWSER_OUTCOME.reason == "blocked":
-                # 有头 = 人在场：轮询等待用户通过挑战（挑战消失/页面跳离），
-                # 默认最长 180s（headed_solve_timeout 可配）。
-                try:
-                    solve_sec = int(config.get("headed_solve_timeout", 180))
-                    solve_deadline = time.time() + solve_sec
-                    print(f"[academic-paper-downloader] 检测到人机验证，请在弹出的窗口中完成"
-                          f"（{doi}，最长等待 {solve_sec} 秒）…", flush=True)
-                    while time.time() < solve_deadline:
-                        try:
-                            if not _page_block_reason(page):
-                                _BROWSER_OUTCOME.reason = "pending"
-                                break
-                        except Exception:
-                            pass
-                        page.wait_for_timeout(1000)
-                    print("[academic-paper-downloader] 该篇处理完毕，继续…", flush=True)
-                except Exception:
-                    pass
-            result = _browser_capture_pdf(context, page)
-            try:
-                _merge_headed_cookies(context.cookies())  # Cookie 跨篇累积：每域只过一次验证
-            except Exception:
-                pass
-            if result:
-                _BROWSER_OUTCOME.reason = "ok"
-            elif _BROWSER_OUTCOME.reason == "pending":
-                _BROWSER_OUTCOME.reason = "no_evidence"
-            return result
-    except Exception:
-        return None
-    finally:
-        # v0.6.6：close 移入 finally——capture_pdf 抛异常时浏览器也必须显式关闭，
-        # 不再依赖 sync_playwright with 退出时的兜底清理（时机不受控）。
-        try:
-            browser.close()
-        except Exception:
-            pass
-
-
-#: v0.6.6 子进程运行体：import 插件本文件后调用 _browser_attempt，结果写 JSON。
-#: 插件市场打包硬性单文件（plugin.py）⇒ 子进程 ``import plugin`` 恰好加载同一份
-#: 代码，零逻辑复制；子进程内模块级状态全新初始化，天然隔离。
-_BROWSER_CHILD_CODE = (
-    "import sys, json, os\n"
-    "plugin_dir, payload_path, result_path = sys.argv[1], sys.argv[2], sys.argv[3]\n"
-    "sys.path.insert(0, plugin_dir)\n"
-    "import plugin\n"
-    "payload = json.load(open(payload_path, encoding='utf-8'))\n"
-    "out, reason = None, 'child_exception'\n"
-    "try:\n"
-    "    out = plugin._browser_attempt(**payload)\n"
-    "    reason = getattr(plugin._BROWSER_OUTCOME, 'reason', None)\n"
-    "except Exception:\n"
-    "    pass\n"
-    "cookies = list(getattr(plugin, '_HEADED_COOKIES', []) or [])\n"
-    "with open(result_path, 'w', encoding='utf-8') as f:\n"
-    "    json.dump({'path': out, 'reason': reason, 'cookies': cookies}, f)\n"
-)
-
-
-def _kill_process_tree(proc) -> None:
-    """超时后杀掉子进程**及其浏览器进程树**（playwright: python→node→chrome）。"""
-    try:
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                           capture_output=True, timeout=10)
-        else:
-            import signal
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-
-def _run_browser_attempt_isolated(payload: dict, timeout: float) -> tuple[str | None, str | None]:
-    """浏览器尝试的**子进程隔离**执行（v0.6.6）。
-
-    线程版看门狗的根本缺陷：超时后无法终止正在运行的线程——Playwright 卡死时
-    线程与浏览器驱动进程持续累积（实测单篇挂 11.4h 的根源面）。子进程版超时
-    ``taskkill /T`` 整树击杀，僵尸归零。
-
-    返回 ``(pdf_path, outcome_reason)``；PDF 落系统临时目录，由调用方读字节后清理。
-    Cookie 由子进程回传，父进程合并进累积池（子进程内存随退出销毁）。
-    """
-    plugin_dir = str(Path(__file__).resolve().parent)
-    import tempfile
-    tmpdir = tempfile.mkdtemp(prefix="apd_browser_")
-    payload_path = os.path.join(tmpdir, "payload.json")
-    result_path = os.path.join(tmpdir, "result.json")
-    try:
-        with open(payload_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        kwargs: dict = {}
-        if sys.platform == "win32":
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            kwargs["start_new_session"] = True
-        proc = subprocess.Popen(
-            [sys.executable, "-c", _BROWSER_CHILD_CODE, plugin_dir, payload_path, result_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _log("browser_attempt_timeout", timeout=timeout, mode="process")
-            _kill_process_tree(proc)
-            return None, "timeout"
-        if proc.returncode != 0 or not os.path.exists(result_path):
-            return None, None  # 子进程崩溃：按普通失败处理（不误标 timeout）
-        with open(result_path, encoding="utf-8") as f:
-            out = json.load(f)
-        _merge_headed_cookies(out.get("cookies"))
-        return out.get("path"), out.get("reason")
-    except Exception:
-        return None, None
-    finally:
-        try:
-            import shutil
-            shutil.rmtree(tmpdir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def _browser_download(doi: str, publisher: str, cookies: list[dict], config: dict) -> str | None:
-    """浏览器层：在真实浏览器会话内完成授权下载（校园 IP 直连 / 机构 Cookie）。
-
-    - URL 走 ``https://doi.org/<doi>``，不再假设各家都有 ``{home}/doi/{doi}`` 入口（#22 §3）；
-    - ``institution.headless`` 可配；headless 被反爬挡下时按 ``institution.visible_fallback``
-      用可见浏览器重试一次（#22 §4）——出版商对 headless 直接返回挑战页。
-    - v0.6.3：每次尝试带硬超时看门狗（无头 120s / 有头 headed_solve_timeout+300s），
-      防 Playwright 子线程偶发死锁拖死整个批处理。
-    - v0.6.5：预算跟随本段尝试的实际形态（headless=False 直入即有头预算）。
-    - v0.6.6：浏览器内核优先本机真 Chrome/Edge（回退链见 _browser_launch_chromium）。
-    """
-    cfg = _PUBLISHERS.get(publisher)
-    home = str((cfg or {}).get("home") or "")
-    if not home:
-        # 未知/未登记出版商（issue #22 §5）：仍走一次**通用路径** —— doi.org 解析到实际
-        # 文章页之后，由 ``_browser_capture_pdf`` 在页面上找 PDF 链接。
-        # 旧实现直接 return None ⇒ 这类 DOI 连一次尝试都没有（用户看到的是"直接放弃"）。
-        home = "https://doi.org"
-        _log("browser_generic_publisher", doi=doi, publisher=publisher)
-    headless = _institution_headless(config)
-    # v0.6.5：预算跟随本段尝试的实际形态——headless=False 传入时第一段就是有头
-    # （两阶段有头轮正是这么调用的），必须用有头预算；否则 120s 看门狗会在挑战
-    # 等待（180s）内把尝试砍掉，且 headless=False 又进不了下方 480s 重试分支。
-    if headless:
-        headless_timeout = float(config.get("browser_attempt_timeout", 120))
-    else:
-        headless_timeout = float(config.get("headed_solve_timeout", 180)) + 300.0
-    payload = {"doi": doi, "publisher": publisher, "home": home,
-               "cookies": list(cookies or []), "config": config, "headless": headless}
-    result, reason = _run_browser_attempt_isolated(payload, headless_timeout)
-    if reason:
-        _BROWSER_OUTCOME.reason = reason
-    if result is None and headless and _institution_visible_fallback(config):
-        # v0.4.0：可见浏览器全局串行——并发 3 时最多同时弹一个窗口，避免窗口轰炸
-        with _HEADED_LOCK:
-            if result is None:
-                _log("browser_visible_retry", doi=doi, publisher=publisher)
-                headed_timeout = float(config.get("headed_solve_timeout", 180)) + 300.0
-                result, reason = _run_browser_attempt_isolated(
-                    {**payload, "headless": False}, headed_timeout)
-                if reason:
-                    _BROWSER_OUTCOME.reason = reason
-    return result
 
 # ---------------------------------------------------------------------------
 # Hook: after_run — 生成报告
@@ -3047,62 +2294,14 @@ def _prompt_proxy_and_retry(config: dict, workspace: Path, results: list,
 
 def _deferred_headed_pass(config: dict, workspace: Path, results: list,
                           failed: list, file_path: str = "") -> tuple[list, list, int]:
-    """两阶段批处理的第二阶段（v0.4.0，defer_headed 开启时生效）。
-
-    第一阶段（_process_download 批处理）：defer_headed 抑制可见浏览器弹窗，
-    全部论文先走低成本组合（httpx/无头）。第二阶段（本函数，报告生成前）：
-    对 bot_blocked/captcha 失败集中走一轮**串行有头浏览器**——用户在场时可顺手
-    过掉人机验证。成功者并入 results，仍失败者覆盖原因。返回 (results, failed, saved)。
-    """
-    if _cancel_requested() or not config.get("defer_headed", True):
-        return results, failed, 0
-    # v0.6.3 收紧（用户定案）：有头 = 只服务"需要人机验证"的失败。
-    # bot_blocked（挑战页）/captcha（验证码）→ 需要人；auth_required/unknown 等
-    # 走无头重试 + Cookie/域画像，不弹窗。浏览器失败原因由 _BROWSER_OUTCOME 传导。
-    # v0.6.3+：auth_required 也纳入——IOP/PerimeterX 对无头无解（perfdrive 重定向），
-    # 有头会自动通过挑战（无需人工）；若真是订阅墙，捕获失败照旧标记。
+    """v0.9.0：有头浏览器阶段已明确降级为不可用——宿主 SDK 不提供交互浏览器或
+    登录会话能力，也不再通过 subprocess 拉起本机浏览器。这里只记录降级日志，
+    不重试、不弹窗。"""
     targets = [f for f in failed if isinstance(f, dict)
                and f.get("error_class") in ("bot_blocked", "captcha", "auth_required")]
-    if not targets:
-        return results, failed, 0
-    try:
-        import playwright  # noqa: F401
-    except Exception:
-        return results, failed, 0
-    cfg2 = {**config, "institution": {**config.get("institution", {}), "headless": False}}
-
-    def runner(paper: dict) -> dict:
-        _set_download_config(cfg2)
-        started = time.monotonic()
-        out = None
-        try:
-            out = _browser_download(paper["doi"], paper["publisher"], [], cfg2)
-        except Exception:
-            out = None
-        record = None
-        if out and os.path.exists(out):
-            record = _save_pdf(paper, out, workspace, "headed_deferred")
-            if not record:
-                Path(out).unlink(missing_ok=True)
-        if record:
-            record["pdf_url"] = ""
-            record["download_evidence"] = build_evidence(record, duration_ms=int((time.monotonic() - started) * 1000))
-            _mark_done(config, paper["doi"], record)
-            return {"records": [record], "errors": []}
-        ec = "captcha"
-        return {"records": [], "errors": [{"doi": paper["doi"], "title": paper.get("title", ""),
-                 "last_layer": "headed_deferred", "error_class": ec}]}
-
-    with _HEADED_LOCK:
-        print(f"[academic-paper-downloader] 两阶段第二阶段：对 {len(targets)} 篇被反爬拦截"
-              "的文献集中走有头浏览器…如遇人机验证请顺手通过。", flush=True)
-        # ★ 实机回归修复：只把 targets（bot_blocked/captcha）传给执行器。
-        # v0.6.1 重构时误传了整个 failed 列表——44 篇全部弹有头窗口且每个只停留
-        # ~30s，人来不及过验证（正是"为什么这么快就用有头"的直接原因）。
-        new_results, new_failed = _rerun_failed(cfg2, workspace, results, targets,
-                                                file_path, runner, "有头浏览器")
-    results2, failed2 = _merge_retry(results, failed, new_results, new_failed)
-    return results2, failed2, len(new_results)
+    if targets:
+        _log("headed_browser_unsupported", count=len(targets))
+    return results, failed, 0
 
 
 def _retry_transient_pass(config: dict, workspace: Path, results: list,
@@ -3134,9 +2333,10 @@ def _retry_transient_pass(config: dict, workspace: Path, results: list,
                      "title": paper.get("title", ""),
                      "last_layer": "transient_retry", "error_class": "network"}]}
 
-    with _HEADED_LOCK:
-        new_results, new_failed = _rerun_failed(config, workspace, results, targets,
-                                                file_path, runner, "瞬时失败重试")
+    # v0.9.0：浏览器层已降级（宿主无交互浏览器/登录会话），瞬时失败重试不再有
+    # 有头预算并发冲突，无需浏览器全局锁。
+    new_results, new_failed = _rerun_failed(config, workspace, results, targets,
+                                            file_path, runner, "瞬时失败重试")
     results2, failed2 = _merge_retry(results, failed, new_results, new_failed)
     return results2, failed2, len(new_results)
 
@@ -3266,10 +2466,9 @@ def _check_robots_txt(domain: str) -> bool:
             return _ROBOTS_CACHE[domain]
     allowed = True
     try:
-        import httpx
-        resp = httpx.get(f"https://{domain}/robots.txt", timeout=5)
-        if resp.status_code == 200:
-            content = resp.text.lower()
+        body, status, _final = _host_fetch(f"https://{domain}/robots.txt")
+        if status == 200:
+            content = body.decode("utf-8", errors="replace").lower()
             # 简单检查：是否有 Disallow: /pdf 或 Disallow: /*pdf
             for line in content.splitlines():
                 line = line.strip()
@@ -3289,16 +2488,16 @@ def _check_robots_txt(domain: str) -> bool:
 # Hook: before_run — 代理健康检查 + 登录态预热 + robots.txt 检查
 # ---------------------------------------------------------------------------
 def _before_run(payload: dict) -> dict:
-    """运行前检查代理健康、登录态、robots.txt。"""
+    """运行前检查 robots.txt；代理级探测与登录态监控已明确降级（v0.9.0）。"""
     _CANCEL_EVENT.clear()
     _state_set(_CANCEL_KEY, "false")
     config = payload.get("config", {})
-    proxy_list = config.get("institution", {}).get("proxy_list", [])
-    if proxy_list:
-        healthy = sum(1 for p in proxy_list if _PROXY_HEALTH.check(p, config))
-        _log("proxy_health_check", total=len(proxy_list), healthy=healthy)
-    monitor = _get_cookie_monitor(config)
-    cookie_valid = monitor.is_valid() if config.get("level", 1) >= 3 else None
+    # v0.9.0：宿主 network.fetch 不暴露代理参数——代理级探测不可用（已降级），
+    # 不再做代理健康检查；机构登录态监控同样不可用（宿主无登录会话能力）。
+    cookie_valid = None
+    if config.get("institution", {}).get("proxy_list"):
+        _log("proxy_probe_unsupported",
+             note="host network.fetch has no proxy support; download goes through host EgressBroker")
 
     # robots.txt 检查（仅对已知出版商域名）
     robots_ok = {}
@@ -3360,17 +2559,16 @@ def _validate_config(config: dict) -> list[str]:
 # 入口
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# View 面板（v0.5.0）：登录态控制中心
+# View 面板（v0.9.0）：任务控制中心
 #
-# 宿主 view 契约 = 声明式控件面板（label/button/select/...），不是浏览器引擎，
-# 无法内嵌出版商登录页（反爬挑战页在受限渲染中不可用）。因此形态为：
-#   面板（状态显示 + 按钮） ──▶ 弹出独立有头 Chromium 窗口（真实浏览器：
-#   输入/点击/滚动/验证码原生可用）──▶ Cookie 自动捕获入库，后续下载复用。
-# Cookie 经 SDK state 存取（宿主上下文），绝不落 workspace 明文（见 _state_set）。
+# v0.9.0 起：宿主 SDK 不提供交互浏览器或宿主登录会话能力，宿主边界审计也禁止
+# 插件把 Cookie/会话/凭据写入插件 state。因此机构登录捕获与代理级探测**明确
+# 降级为不支持**：面板仅保留进度/取消与说明文案；机构代理字段保留为展示项，
+# 但宿主 network.fetch 不应用该配置（请求一律经宿主 EgressBroker）。
+# 不再弹出有头 Chromium 窗口，也不再捕获或存储任何 Cookie。
 # ---------------------------------------------------------------------------
 _VIEW_KEY = "apd_view_cfg"
 _VIEW_ID = "academic-paper-downloader.main"
-_LOGIN_THREAD: threading.Thread | None = None
 # U6：批处理计数器（面板进度用），_seed 时重置
 _RUN_STATS: dict = {"success": 0, "failed": 0}
 _CANCEL_EVENT = threading.Event()
@@ -3441,35 +2639,23 @@ def _view_sync_from_run(config: dict, workspace) -> None:
         _view_cfg_save(data)
 
 def _view_cookie_status() -> str:
-    data = _view_cfg()
-    config = {"institution": {"proxy_url": data.get("proxy_url", "")}}
-    try:
-        cookies = _get_cached_cookie(config)
-    except Exception:
-        cookies = None
-    if not cookies:
-        return "无登录态（未登录或已清除）"
-    exps = [c.get("expires", -1) for c in cookies if isinstance(c, dict) and c.get("expires", -1) > 0]
-    if exps and min(exps) < time.time():
-        return "登录态已失效，请点“打开登录窗口”重新登录"
-    return f"登录态有效（{len(cookies)} 条 Cookie，后续下载自动复用）"
+    # v0.9.0：机构登录捕获已明确降级——宿主 SDK 无交互浏览器/登录会话能力，
+    # 且宿主边界审计禁止插件把 Cookie 写入插件 state。面板如实展示不支持，
+    # 不再读取任何历史 Cookie 缓存。
+    return "机构登录不支持（v0.9.0 起：宿主无交互浏览器能力，Cookie 不存储）"
 
 def _view_components() -> list:
     data = _view_cfg()
-    # U4：宿主 v528cedc 提供 text 组件后，代理/登录页可直接在面板填写（此前仅 TTY）。
-    # 文本输入取代旧 select（自由输入覆盖预设列表）。
+    # v0.9.0：登录窗口/清除登录态按钮移除；机构代理字段保留为只读展示（宿主
+    # network.fetch 不应用代理配置，请求一律经宿主 EgressBroker）。
     return [
         {"type": "label", "id": "status", "label": "登录态", "text": _view_cookie_status()},
-        {"type": "text", "id": "proxy-input", "label": "机构代理",
+        {"type": "label", "id": "capability-note", "label": "能力说明",
+         "text": "0.9.0 起经宿主 EgressBroker 下载；机构登录/代理绕行已明确降级为不支持。"},
+        {"type": "text", "id": "proxy-input", "label": "机构代理（仅展示，宿主不应用）",
          "value": data.get("proxy_url", ""),
-         "placeholder": "http://proxy.lib.xxx.edu.cn:8080（留空=直连/校园 IP）",
+         "placeholder": "（宿主不应用代理配置，下载经 EgressBroker）",
          "maxlength": 512, "action": "configure-proxy"},
-        {"type": "text", "id": "login-url-input", "label": "登录页",
-         "value": data.get("login_url", ""),
-         "placeholder": "https://login.lib.xxx.edu.cn（学校统一认证入口）",
-         "maxlength": 512, "action": "configure-login-url"},
-        {"type": "button", "id": "open-login", "label": "打开登录窗口", "action": "open-login"},
-        {"type": "button", "id": "clear-login", "label": "清除登录态", "action": "clear-login"},
         {"type": "button", "id": "refresh", "label": "刷新状态", "action": "refresh"},
         {"type": "label", "id": "message", "label": "消息", "text": str(data.get("message", "就绪"))},
         {"type": "button", "id": "cancel-downloads", "label": "取消后续下载", "action": "cancel-downloads"},
@@ -3482,40 +2668,12 @@ def _view() -> dict:
             "minimum_height": 280, "components": _view_components()}
 
 def _view_open_login() -> dict:
-    """后台线程弹出有头登录窗口（不阻塞面板动作调用）。
-
-    生命周期：窗口由用户关闭或登录域跳离后自动收尾；Cookie 捕获成功即入库；
-    页面加载失败/异常 → 消息区显示原因；重复点击 → 提示进行中。
-    """
-    global _LOGIN_THREAD
-    data = _view_cfg()
-    login_url = data.get("login_url", "")
-    if not login_url:
-        return {"view": _view(),
-                "message": "尚未配置登录页：请先运行一次含 institution.login_url 的任务"}
-    if _LOGIN_THREAD is not None and _LOGIN_THREAD.is_alive():
-        return {"view": _view(), "message": "登录窗口已在进行中，请查看已打开的浏览器窗口"}
-
-    def _work() -> None:
-        global _LOGIN_THREAD
-        try:
-            cookies = _login_and_capture_cookie(
-                {"institution": {"login_url": login_url,
-                                 "proxy_url": _view_cfg().get("proxy_url", "")}})
-            data2 = _view_cfg()
-            data2["message"] = ("登录成功，Cookie 已保存并在后续下载中复用" if cookies
-                                else "登录未完成（超时或窗口被关闭），可重试")
-        except Exception as e:  # 页面加载失败、playwright 异常等
-            data2 = _view_cfg()
-            data2["message"] = f"登录窗口异常：{type(e).__name__}: {str(e)[:100]}"
-        _view_cfg_save(data2)
-        _LOGIN_THREAD = None
-
-    data["message"] = "登录窗口已打开，请在窗口中完成登录（含验证码），完成后点“刷新状态”"
-    _view_cfg_save(data)
-    _LOGIN_THREAD = threading.Thread(target=_work, daemon=True)
-    _LOGIN_THREAD.start()
-    return {"view": _view(), "message": data["message"]}
+    """v0.9.0：登录窗口已明确降级为不支持——宿主 SDK 无交互浏览器/登录会话
+    能力，宿主边界审计禁止插件把 Cookie 写入插件 state。返回明确降级信息，
+    不弹窗、不启动任何浏览器。"""
+    _log("institutional_login_unsupported", surface="view")
+    return {"view": _view(),
+            "message": "机构登录不支持（0.9.0 起）：宿主无交互浏览器能力，Cookie 不存储。"}
 
 def _view_action(payload: dict) -> dict:
     action = str((payload or {}).get("action", ""))
@@ -3527,11 +2685,13 @@ def _view_action(payload: dict) -> dict:
     if action == "open-login":
         return _view_open_login()
     if action == "configure-proxy":
-        # U4：面板文本输入的机构代理；_after_run 的失败重试自动使用（清空=直连/校园 IP）
+        # v0.9.0：仅保留展示。宿主 network.fetch 不应用代理配置，下载一律经
+        # 宿主 EgressBroker；保存值仅用于面板展示与既有配置兼容。
         data = _view_cfg()
         data["proxy_url"] = value
         _view_cfg_save(data)
-        msg = f"机构代理已更新：{value}" if value else "机构代理已清空（直连/校园 IP）"
+        msg = (f"机构代理已记录（宿主不应用，下载经 EgressBroker）：{value}" if value
+               else "机构代理已清空（下载经宿主 EgressBroker）")
         return {"view": _view(), "message": msg}
     if action == "configure-login-url":
         # U4：面板填写的登录页供"打开登录窗口"使用
@@ -3559,10 +2719,7 @@ def handle(operation: str, payload: dict) -> dict:
     if operation == "source.seed": return _seed(payload)
     if operation == "processor.process": return _process(payload)
     if operation == "hook.after_run":
-        try:
-            return _after_run(payload)
-        finally:
-            _close_http_clients()
+        return _after_run(payload)
     if operation == "hook.before_run": return _before_run(payload)
     if operation == "view.describe": return {"view": _view()}
     if operation == "view.action": return _view_action(payload)

@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
 
 PLUGIN_METADATA = {
     "name": "chronicle-capsule",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "api_version": 1,
     "description": "以隐私、元数据或原始保全模式生成有界 WARC 1.1 归档",
     "plugin_types": ["exporter"],
@@ -234,21 +234,22 @@ def _iter_warc_records(
 def handle(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     if operation != "exporter.export":
         return {}
-    import omnicrawler_sdk
-
     options = dict(payload.get("options") or {})
     mode = str(options.get("mode", "privacy")).casefold()
     if mode not in {"privacy", "metadata", "preservation"}:
         mode = "privacy"
     try:
-        if isinstance(options.get("max_records"), bool):
-            raise ValueError("boolean limit")
-        limit = max(1, min(int(options.get("max_records", 1000)), MAX_RECORDS))
+        limit_value = options.get("max_records", 1000)
+        if isinstance(limit_value, bool) or isinstance(limit_value, float) and not limit_value.is_integer():
+            raise ValueError("non-integer limit")
+        limit = max(1, min(int(limit_value), MAX_RECORDS))
     except (TypeError, ValueError):
         raise ValueError("max_records 必须是整数") from None
     name = str(options.get("name") or f"chronicle-capsule-{mode}.warc.gz")
     if not name.endswith(".warc.gz") or "/" in name or "\\" in name:
         name = f"chronicle-capsule-{mode}.warc.gz"
+    import omnicrawler_sdk
+
     opened = omnicrawler_sdk.call(
         "artifact.stream.open", {"name": name, "media_type": "application/warc+gzip"}
     )
