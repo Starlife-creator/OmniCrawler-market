@@ -165,9 +165,10 @@ def _metadata(
     return metadata, {}
 
 
-def finalize(args: argparse.Namespace) -> int:
+def finalize(args: argparse.Namespace, *, registry: Path | None = None) -> int:
+    registry = registry or REGISTRY
     source = Path(args.submission_dir).resolve()
-    submissions_root = REGISTRY / "submissions"
+    submissions_root = registry / "submissions"
     kind, package_id = validate_one(source, submissions_root)
     manifest_bytes = (source / "package.manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
@@ -177,7 +178,7 @@ def finalize(args: argparse.Namespace) -> int:
     )
     if args.reviewed_manifest_sha256 != hashlib.sha256(manifest_bytes).hexdigest():
         raise ValueError("维护者确认的审核哈希与当前 package manifest 不一致")
-    authors = load_authors(REGISTRY)
+    authors = load_authors(registry)
     handle = assign_market_handle(authors, identity.key_fingerprint, identity.username)
     market_id = args.market_id or package_id
     if market_id != package_id:
@@ -185,7 +186,7 @@ def finalize(args: argparse.Namespace) -> int:
             "market ID 属于创作者签名包身份，维护者不能改写；ID 冲突时请作者用新 ID 重新签名投稿"
         )
     directory_name = market_id if kind == "plugin" else market_id.replace("/", "--")
-    destination = REGISTRY / ("plugins" if kind == "plugin" else "templates") / directory_name
+    destination = registry / ("plugins" if kind == "plugin" else "templates") / directory_name
     new_version = str(manifest["version"])
     _semver_key(new_version)
     is_update = destination.exists()
@@ -219,7 +220,7 @@ def finalize(args: argparse.Namespace) -> int:
     if not metadata["summary"] or not metadata["license"]:
         raise ValueError("正式发布需要非空 summary 与 license")
     private_pem = Path(args.maintainer_key).expanduser().read_bytes()
-    validate_maintainer_private_key(REGISTRY, private_pem)
+    validate_maintainer_private_key(registry, private_pem)
     _copy_creator_package(source, package_destination, manifest)
     (package_destination / "package.manifest.maintainer.sig").write_bytes(
         sign_bytes(manifest_bytes, private_pem)
@@ -228,9 +229,9 @@ def finalize(args: argparse.Namespace) -> int:
     (package_destination / f"{main_name}.sig").write_bytes(
         sign_bytes((package_destination / main_name).read_bytes(), private_pem)
     )
-    public_path = REGISTRY / "keys" / f"{identity.key_fingerprint}.pub.pem"
+    public_path = registry / "keys" / f"{identity.key_fingerprint}.pub.pem"
     public_path.write_bytes(_public_pem(identity.public_key))
-    author_path = REGISTRY / "authors" / f"{handle}.yaml"
+    author_path = registry / "authors" / f"{handle}.yaml"
     if not author_path.exists():
         author_path.write_text(
             yaml.safe_dump(
@@ -250,7 +251,7 @@ def finalize(args: argparse.Namespace) -> int:
             encoding="utf-8",
             newline="\n",
         )
-    base = package_destination.relative_to(REGISTRY).as_posix()
+    base = package_destination.relative_to(registry).as_posix()
     overlay: dict[str, Any] = {
         "id": market_id,
         "name": metadata["name"],
@@ -307,12 +308,12 @@ def finalize(args: argparse.Namespace) -> int:
         encoding="utf-8",
         newline="\n",
     )
-    generate(REGISTRY)
-    catalog = REGISTRY / "catalog.json"
-    (REGISTRY / "catalog.json.sig").write_bytes(sign_bytes(catalog.read_bytes(), private_pem))
+    generate(registry)
+    catalog = registry / "catalog.json"
+    (registry / "catalog.json.sig").write_bytes(sign_bytes(catalog.read_bytes(), private_pem))
     # P2-5 v2 哈希链 + P2-11 审核留痕：链接上一条 v2 条目，固化 manifest 证据哈希、
     # 审核人/结论/备注；公网 Rekor 类公开账本锚定属外部配套。
-    prev = last_v2_entry(REGISTRY / "signing_transparency.jsonl")
+    prev = last_v2_entry(registry / "signing_transparency.jsonl")
     log_entry = build_v2_entry(
         prev,
         operation="update-package" if is_update else "finalize-package",
@@ -327,7 +328,7 @@ def finalize(args: argparse.Namespace) -> int:
         review_comment=args.review_comment,
         extra={"market_handle": handle},
     )
-    with (REGISTRY / "signing_transparency.jsonl").open(
+    with (registry / "signing_transparency.jsonl").open(
         "a", encoding="utf-8", newline="\n"
     ) as stream:
         # P3-11：路径字段 POSIX 归一后落盘，杜绝新条目再引入反斜杠路径。
@@ -337,12 +338,17 @@ def finalize(args: argparse.Namespace) -> int:
             )
             + "\n"
         )
-    return publish_check(REGISTRY)
+    return publish_check(registry)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="审核后准备正式市场发布（绝不执行投稿代码）")
     parser.add_argument("submission_dir")
+    parser.add_argument(
+        "--registry",
+        default=str(REGISTRY),
+        help="registry 根目录（默认本工具所在市场仓根；对隔离 worktree 发布时指向该 worktree）",
+    )
     parser.add_argument("--reviewed-manifest-sha256", required=True)
     parser.add_argument("--maintainer-key", required=True)
     parser.add_argument("--market-id", default=None)
@@ -356,8 +362,9 @@ def main(argv: list[str] | None = None) -> int:
         help="人工审核结论",
     )
     args = parser.parse_args(argv)
+    registry = Path(args.registry).resolve()
     try:
-        result = finalize(args)
+        result = finalize(args, registry=registry)
     except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"FAIL finalize: {exc}")
         return 1
