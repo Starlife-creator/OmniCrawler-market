@@ -1,6 +1,6 @@
 id: upstream-lantern
 name: Upstream Lantern
-version: 0.3.0
+version: 0.3.1
 publisher: starlife
 category: source
 summary: 以只读、有限请求发现 GitHub 发布、提交、工作流和安全公告
@@ -27,7 +27,7 @@ tags:
 - community
 - security-advisories
 - monitoring
-updated_at: '2026-10-04'
+updated_at: '2026-11-02'
 homepage: https://docs.github.com/en/rest
 plugin_types:
 - source

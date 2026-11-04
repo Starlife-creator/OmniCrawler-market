@@ -41,7 +41,7 @@ def test_workflow_change_tracking_and_errors(optimized, monkeypatch):
     values={}
     def call(op,args):
         if op == 'state.get': return {'found': args['key'] in values, 'value': values.get(args['key'])}
-        if op == 'state.set': values[args['key']] = args['value']; return {}
+        if op == 'state.set': values[args['key']] = args['value']; return {'saved': True}
         raise AssertionError(op)
     monkeypatch.setattr(sys.modules['omnicrawler_sdk'], 'call', call)
     request={'url':'https://api.github.com/repos/psf/requests/actions/runs','meta':{'lantern_signal':'workflow_runs','repository':'psf/requests','track_changes':True}}
@@ -53,6 +53,22 @@ def test_workflow_change_tracking_and_errors(optimized, monkeypatch):
     payload['result']['status']=429
     error=optimized.handle('extractor.process',payload)['records'][0]
     assert error['record_type']=='upstream_error' and not error['data']['complete']
+
+
+def test_failed_state_save_marks_tracking_unavailable(optimized, monkeypatch):
+    values = {}
+    def call(op, args):
+        if op == 'state.get':
+            return {'found': args['key'] in values, 'value': values.get(args['key'])}
+        if op == 'state.set':
+            return {}
+        raise AssertionError(op)
+    monkeypatch.setattr(sys.modules['omnicrawler_sdk'], 'call', call)
+    request = {'url': 'https://api.github.com/repos/psf/requests/releases', 'meta': {'lantern_signal': 'releases', 'repository': 'psf/requests', 'track_changes': True}}
+    payload = {'result': {'request': request, 'status': 200, 'body_b64': base64.b64encode(json.dumps([{'id': 1, 'tag_name': 'v1'}]).encode()).decode()}}
+    data = optimized.handle('extractor.process', payload)['records'][0]['data']
+    assert data['change'] == 'tracking_unavailable'
+    assert data['attention'] is False
 
 
 def test_invalid_adaptive_option_and_budget_rejected(optimized):

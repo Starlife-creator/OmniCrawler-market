@@ -1,10 +1,16 @@
-"""v0.5.0 view 面板（登录态控制中心）契约测试。"""
+"""v0.9.0 view 面板契约测试。
+
+v0.9.0 架构变更（宿主安全边界迁移）：
+- 登录窗口 / 清除登录态按钮已移除（宿主 SDK 无交互浏览器/登录会话能力，
+  且禁止插件把 Cookie 写入插件 state）——open-login 动作保留但必须返回
+  明确的降级信息，不得再启动任何线程或浏览器。
+- 机构代理字段保留为只读展示（宿主 network.fetch 不应用代理配置，
+  下载一律经宿主 EgressBroker）。
+本文件不得再断言登录窗口可用——那属于旧契约，断言即红。
+"""
 
 import sys
-import json
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -17,58 +23,46 @@ class TestViewDescribe:
         view = res["view"]
         assert view["view_id"] == "academic-paper-downloader.main"
         ids = [c["id"] for c in view["components"]]
-        assert ids == ["status", "proxy-input", "login-url-input",
-                       "open-login", "clear-login", "refresh", "message", "cancel-downloads"]
+        # v0.9.0：open-login / clear-login / login-url-input 已移除
+        assert ids == ["status", "capability-note", "proxy-input",
+                       "refresh", "message", "cancel-downloads"]
         texts = {c["id"]: c for c in view["components"] if c["type"] == "text"}
         assert texts["proxy-input"]["action"] == "configure-proxy"
-        assert texts["login-url-input"]["action"] == "configure-login-url"
-        actions = {c["id"]: c.get("action") for c in view["components"]}
-        assert actions["open-login"] == "open-login"
-        assert actions["clear-login"] == "clear-login"
+        # 反向守卫：登录类组件不得出现
+        assert "open-login" not in ids
+        assert "clear-login" not in ids
+        assert "login-url-input" not in ids
 
-    def test_cookie_status_reflects_absence(self, tmp_path):
+    def test_cookie_status_reflects_degradation(self, tmp_path):
+        """v0.9.0 契约：登录态状态如实说明不支持，不得声称有/无登录态。"""
         plugin_module._set_state_dir(tmp_path)
         try:
             res = plugin_module.handle("view.describe", {})
             status = next(c for c in res["view"]["components"] if c["id"] == "status")
-            assert "无登录态" in status["text"]
+            assert "机构登录不支持" in status["text"]
         finally:
             plugin_module._set_state_dir(Path("."))
 
 
 class TestViewActions:
-    def test_open_login_without_url_is_rejected(self, tmp_path):
+    def test_open_login_is_explicitly_unsupported(self, tmp_path):
+        """v0.9.0 契约：open-login 必须返回明确降级信息，不得弹窗/起线程。"""
         plugin_module._set_state_dir(tmp_path)
         try:
             res = plugin_module.handle("view.action", {"action": "open-login"})
-            assert "尚未配置登录页" in res["message"]
+            assert "机构登录不支持" in res["message"]
+            # 不得残留任何登录线程引用
+            assert not hasattr(plugin_module, "_LOGIN_THREAD")
         finally:
             plugin_module._set_state_dir(Path("."))
 
-    def test_open_login_rejects_reentry(self, tmp_path, monkeypatch):
+    def test_clear_login_reports_cleared_without_cookie_store(self, tmp_path):
+        """v0.9.0 契约：clear-login 只清面板视图状态；Cookie 根本不存储。"""
         plugin_module._set_state_dir(tmp_path)
         try:
-            plugin_module._view_cfg_save({"login_url": "https://login.test", "message": ""})
-            # 模拟已有登录线程在跑（Event 保持存活，防竞态）
-            import threading
-            ev = threading.Event()
-            blocker = threading.Thread(target=ev.wait)
-            blocker.start()
-            monkeypatch.setattr(plugin_module, "_LOGIN_THREAD", blocker, raising=False)
-            res = plugin_module.handle("view.action", {"action": "open-login"})
-            assert "已在进行中" in res["message"]
-            ev.set()
-            blocker.join()
-        finally:
-            plugin_module._set_state_dir(Path("."))
-
-    def test_clear_login_invalidates_and_reports(self, tmp_path):
-        plugin_module._set_state_dir(tmp_path)
-        try:
-            config = {"institution": {}}
-            plugin_module._save_cookie(config, [{"name": "sid", "value": "v", "expires": -1}])
+            config = {"institution": {"proxy_url": "http://proxy.lib.test:8080"}}
             res = plugin_module.handle("view.action", {"action": "clear-login"})
-            assert "已清除" in res["message"]
+            assert "登录态已清除" in res["message"]
             assert plugin_module._get_cached_cookie(config) is None
         finally:
             plugin_module._set_state_dir(Path("."))
@@ -89,25 +83,19 @@ class TestViewActions:
             plugin_module._set_state_dir(Path("."))
 
     def test_text_inputs_persist_values(self, tmp_path):
-        """U4：面板 text 组件（configure-proxy / configure-login-url）持久化输入值。"""
+        """U4：面板 text 组件（configure-proxy）持久化输入值并回显。"""
         plugin_module._set_state_dir(tmp_path)
         try:
             res = plugin_module.handle("view.action",
                                        {"action": "configure-proxy",
                                         "payload": {"value": "http://proxy.lib.test:8080"}})
             assert "proxy.lib.test" in res["message"]
-            res = plugin_module.handle("view.action",
-                                       {"action": "configure-login-url",
-                                        "payload": {"value": "https://login.lib.test"}})
-            assert "登录页已更新" in res["message"]
             data = plugin_module._view_cfg()
             assert data["proxy_url"] == "http://proxy.lib.test:8080"
-            assert data["login_url"] == "https://login.lib.test"
             # describe 回显输入值
             res = plugin_module.handle("view.describe", {})
             texts = {c["id"]: c for c in res["view"]["components"] if c["type"] == "text"}
             assert texts["proxy-input"]["value"] == "http://proxy.lib.test:8080"
-            assert texts["login-url-input"]["value"] == "https://login.lib.test"
         finally:
             plugin_module._set_state_dir(Path("."))
 
@@ -130,36 +118,14 @@ class TestViewActions:
 
 
 class TestViewRunSync:
-    def test_run_config_syncs_login_url_and_proxy(self, tmp_path):
+    def test_run_config_syncs_proxy(self, tmp_path):
         plugin_module._set_state_dir(tmp_path)
         try:
             plugin_module._view_sync_from_run(
-                {"institution": {"login_url": "https://login.lib.test",
-                                 "proxy_url": "http://proxy.lib.test:8080"}},
+                {"institution": {"proxy_url": "http://proxy.lib.test:8080"}},
                 tmp_path)
             data = plugin_module._view_cfg()
-            assert data["login_url"] == "https://login.lib.test"
             assert data["proxy_url"] == "http://proxy.lib.test:8080"
             assert data["workspace"] == str(tmp_path)
-        finally:
-            plugin_module._set_state_dir(Path("."))
-
-    def test_open_login_success_flow(self, tmp_path, monkeypatch):
-        """填写 login_url 后点按钮：后台线程执行登录并回写消息。"""
-        plugin_module._set_state_dir(tmp_path)
-        try:
-            plugin_module._view_cfg_save({"login_url": "https://login.test", "message": ""})
-            monkeypatch.setattr(plugin_module, "_login_and_capture_cookie",
-                                lambda cfg: [{"name": "sid", "value": "v", "expires": -1}])
-            res = plugin_module.handle("view.action", {"action": "open-login"})
-            assert "登录窗口已打开" in res["message"]
-            # 等待后台线程收尾（monkeypatch 版本应立即完成）
-            import time
-            for _ in range(50):
-                if plugin_module._LOGIN_THREAD is None:
-                    break
-                time.sleep(0.05)
-            data = plugin_module._view_cfg()
-            assert "登录成功" in data["message"]
         finally:
             plugin_module._set_state_dir(Path("."))

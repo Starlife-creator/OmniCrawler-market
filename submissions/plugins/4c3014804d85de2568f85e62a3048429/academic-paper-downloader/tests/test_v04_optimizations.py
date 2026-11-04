@@ -24,22 +24,19 @@ class TestRobotsCache:
         plugin_module._ROBOTS_CACHE.clear()
         calls = []
 
-        class FakeResp:
-            status_code = 200
-            text = "User-agent: *\nDisallow: /pdf\n"
-
-        def fake_get(url, timeout=5):
+        def fake_host_fetch(url, headers=None):
             calls.append(url)
-            return FakeResp()
+            return (b"User-agent: *\nDisallow: /pdf\n", 200, url)
 
-        monkeypatch.setattr("httpx.get", fake_get)
+        monkeypatch.setattr(plugin_module, "_host_fetch", fake_host_fetch)
         assert plugin_module._check_robots_txt("blocked.test") is False
         assert plugin_module._check_robots_txt("blocked.test") is False
         assert len(calls) == 1  # 第二次命中缓存
 
     def test_cache_per_domain(self, monkeypatch):
         plugin_module._ROBOTS_CACHE.clear()
-        monkeypatch.setattr("httpx.get", lambda url, timeout=5: type("R", (), {"status_code": 404, "text": ""})())
+        monkeypatch.setattr(plugin_module, "_host_fetch",
+                            lambda url, headers=None: (b"", 404, url))
         assert plugin_module._check_robots_txt("a.test") is True
         assert plugin_module._check_robots_txt("b.test") is True
         assert "a.test" in plugin_module._ROBOTS_CACHE and "b.test" in plugin_module._ROBOTS_CACHE
@@ -96,78 +93,61 @@ class TestStateFileFallback:
 
 class TestUnpaywallMirrorPreference:
     def test_repository_url_wins_over_publisher(self, monkeypatch):
-        class FakeResp:
-            status_code = 200
-            def json(self):
-                return {
-                    "best_oa_location": {"host_type": "publisher",
-                                         "url_for_pdf": "https://iopscience.iop.org/article/x/pdf"},
-                    "oa_locations": [
-                        {"host_type": "publisher", "url_for_pdf": "https://iopscience.iop.org/article/x/pdf"},
-                        {"host_type": "repository", "url_for_pdf": "https://arxiv.org/pdf/1234.pdf"},
-                    ],
-                }
+        payload = json.dumps({
+            "best_oa_location": {"host_type": "publisher",
+                                 "url_for_pdf": "https://iopscience.iop.org/article/x/pdf"},
+            "oa_locations": [
+                {"host_type": "publisher", "url_for_pdf": "https://iopscience.iop.org/article/x/pdf"},
+                {"host_type": "repository", "url_for_pdf": "https://arxiv.org/pdf/1234.pdf"},
+            ],
+        }).encode("utf-8")
 
-        monkeypatch.setattr("httpx.get", lambda url, params=None, timeout=20: FakeResp())
+        def fake_host_fetch(url, headers=None):
+            return (payload, 200, url)
+
+        monkeypatch.setattr(plugin_module, "_host_fetch", fake_host_fetch)
         url = plugin_module._try_api_probe("10.1000/mirror", {"unpaywall_email": "t@t.io"})
         assert url == "https://arxiv.org/pdf/1234.pdf"
 
     def test_falls_back_to_best_location_without_repository(self, monkeypatch):
-        class FakeResp:
-            status_code = 200
-            def json(self):
-                return {"best_oa_location": {"host_type": "publisher",
-                                             "url_for_pdf": "https://pub.test/x.pdf"},
-                        "oa_locations": [{"host_type": "publisher", "url_for_pdf": "https://pub.test/x.pdf"}]}
+        payload = json.dumps({
+            "best_oa_location": {"host_type": "publisher",
+                                 "url_for_pdf": "https://pub.test/x.pdf"},
+            "oa_locations": [{"host_type": "publisher", "url_for_pdf": "https://pub.test/x.pdf"}],
+        }).encode("utf-8")
 
-        monkeypatch.setattr("httpx.get", lambda url, params=None, timeout=20: FakeResp())
-        # crossref/openalex 用 httpx.get 且不带 params——这里只挂了带 params 的签名会炸
-        # 因此直接调用内部逻辑不可行，改为验证 _unpaywall 语义：用独立调用
-        # （_try_api_probe 里 crossref/openalex 的失败被吞掉，不影响断言）
+        def fake_host_fetch(url, headers=None):
+            return (payload, 200, url)
+
+        monkeypatch.setattr(plugin_module, "_host_fetch", fake_host_fetch)
         url = plugin_module._try_api_probe("10.1000/nomirror", {"unpaywall_email": "t@t.io"})
-        assert url in (None, "https://pub.test/x.pdf", "https://doi.crossref.org/x.pdf")
+        assert url == "https://pub.test/x.pdf"
 
 
-class TestHttpClientProxyRebuild:
-    def test_client_rebuilds_when_proxy_changes(self, monkeypatch):
-        plugin_module._set_download_config({"institution": {}})
-        c1 = plugin_module._get_http_client()
-        assert plugin_module._HTTP_CLIENT_PROXY == ""
-        plugin_module._set_download_config({"institution": {"proxy_url": "http://proxy.test:8080"}})
-        c2 = plugin_module._get_http_client()
-        assert c2 is not c1
-        assert plugin_module._HTTP_CLIENT_PROXY == "http://proxy.test:8080"
-        # 同一代理再次获取：复用，不重建
-        c3 = plugin_module._get_http_client()
-        assert c3 is c2
-        # 切回无代理：再重建
-        plugin_module._set_download_config({"institution": {}})
-        c4 = plugin_module._get_http_client()
-        assert c4 is not c2
-        assert plugin_module._HTTP_CLIENT_PROXY == ""
+class TestHostFetchContract:
+    """v0.9.0：所有网络请求必须经宿主 network.fetch，不得自建 HTTP 客户端。"""
 
+    def test_host_fetch_is_used_for_api_probe(self, monkeypatch):
+        calls = []
 
-class TestChannelUpgrade:
-    def test_bot_blocked_oa_content_upgrades_to_browser(self, tmp_path, monkeypatch):
-        """L1/L2 内容遇 bot_blocked 时允许走浏览器通道（不限机构内容）。"""
-        # L1 真实产出 bot_blocked：is_oa + 已登记出版商 → oa_direct 拼出 URL，
-        # 但下载器对出版商 URL 返回 (None, "bot_blocked")
-        def fake_dl(*args, **kwargs):
-            url = args[0] if args else ""
-            if url.startswith("https://upgraded.test"):
-                return (b"%PDF-1.4\nfake", "ok")
-            return (None, "bot_blocked")
-        monkeypatch.setattr(plugin_module, "_download_with_retry", fake_dl)
-        monkeypatch.setattr(plugin_module, "_try_api_probe", lambda *a, **k: None)
-        monkeypatch.setattr(plugin_module, "_check_robots_txt", lambda d: True)
-        monkeypatch.setattr(plugin_module, "_get_cookie_monitor",
-                            lambda cfg: type("M", (), {"refresh_if_needed": lambda self: None})())
-        monkeypatch.setattr(plugin_module, "_browser_download",
-                            lambda doi, pub, cookies, config: "https://upgraded.test/x.pdf")
-        monkeypatch.setattr(plugin_module, "_validate_pdf", lambda p: True)
-        monkeypatch.setattr(plugin_module, "_mark_done", lambda *a, **k: None)
-        monkeypatch.setattr(plugin_module, "_mark_failed", lambda *a, **k: None)
+        def fake_host_fetch(url, headers=None):
+            calls.append(url)
+            return (json.dumps({"message": {"link": [
+                {"content-type": "application/pdf", "URL": "https://api.test/x.pdf"}]}}).encode(), 200, url)
 
-        paper = {"doi": "10.3390/blocked", "title": "B", "publisher": "mdpi", "is_oa": True}
-        res = plugin_module._process_download(paper, {"level": 2}, Path(tmp_path), {"done": 0, "total": 1})
-        assert res["records"], "bot_blocked 后应走 browser_channel_upgrade 成功"
+        monkeypatch.setattr(plugin_module, "_host_fetch", fake_host_fetch)
+        url = plugin_module._try_api_probe("10.1000/crossref", {})
+        assert url == "https://api.test/x.pdf"
+        assert calls and "api.crossref.org" in calls[0]
+
+    def test_no_direct_http_client_symbols(self):
+        """反向守卫：v0.9.0 不得残留任何自建 HTTP 客户端符号。"""
+        for name in ("httpx", "_HTTP_CLIENT", "_RETIRED_HTTP_CLIENTS",
+                     "_get_http_client", "_close_http_clients", "_client_stream"):
+            assert not hasattr(plugin_module, name), f"直连 HTTP 残留符号 {name}"
+
+    def test_host_fetch_missing_sdk_degrades(self, monkeypatch):
+        """宿主 SDK 不可用时 _host_fetch 抛错（绝不静默成功/拒绝直连降级）。"""
+        monkeypatch.setitem(sys.modules, "omnicrawler_sdk", None)
+        with pytest.raises(Exception):
+            plugin_module._host_fetch("https://x.test/a.pdf")

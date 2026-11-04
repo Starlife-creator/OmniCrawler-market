@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 PLUGIN_METADATA = {
     "name": "upstream-lantern",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "api_version": 1,
     "description": "将 GitHub 项目转换为发布、提交、工作流和安全公告抓取请求",
     "plugin_types": ["source", "extractor"],
@@ -713,7 +713,9 @@ def _extract(payload):
                 change = "new" if not old_digest else "unchanged" if old_digest == digest else "changed"
                 recovered = bool(signal == "workflow_runs" and isinstance(old, dict) and
                                  old.get("conclusion") in {"failure", "timed_out", "action_required"} and item.get("conclusion") == "success")
-                omnicrawler_sdk.call("state.set", {"key": key, "value": {"sha256": digest, "conclusion": item.get("conclusion")}})
+                saved = omnicrawler_sdk.call("state.set", {"key": key, "value": {"sha256": digest, "conclusion": item.get("conclusion")}})
+                if saved.get("saved") is not True:
+                    change = "tracking_unavailable"
             except Exception:
                 change = "tracking_unavailable"
         concise["change"] = change

@@ -1,0 +1,68 @@
+ catalog.json                                       |  157 [32m++[m[31m-[m
+ catalog.json.sig                                   |  Bin [31m64[m -> [32m64[m bytes
+ plugins/academic-paper-downloader/market.yaml      |   31 [32m+[m[31m-[m
+ plugins/chronicle-capsule/market.yaml              |   24 [32m+[m[31m-[m
+ plugins/signal-sieve/market.yaml                   |   24 [32m+[m[31m-[m
+ plugins/tideprint-gate/market.yaml                 |   24 [32m+[m[31m-[m
+ plugins/upstream-lantern/market.yaml               |   24 [32m+[m[31m-[m
+ signing_transparency.jsonl                         |    5 [32m+[m
+ .../academic-paper-downloader/.gitignore           |   15 [32m+[m
+ .../academic-paper-downloader/CHANGELOG.md         |    8 [32m+[m
+ .../academic-paper-downloader/README.md            |   27 [32m+[m[31m-[m
+ .../academic-paper-downloader/creator.sig          |  Bin [31m64[m -> [32m64[m bytes
+ .../academic-paper-downloader/listing.md           |   16 [32m+[m[31m-[m
+ .../package.manifest.creator.sig                   |  Bin [31m64[m -> [32m64[m bytes
+ .../package.manifest.json                          |    2 [32m+[m[31m-[m
+ .../academic-paper-downloader/plugin.py            | 1331 [32m++++[m[31m----------------[m
+ .../academic-paper-downloader/plugin.yaml          |   17 [32m+[m[31m-[m
+ .../academic-paper-downloader/submission.json      |    4 [32m+[m[31m-[m
+ .../academic-paper-downloader/tests/conftest.py    |   41 [32m+[m
+ .../tests/test_false_success_guards.py             |  199 [32m+[m[31m--[m
+ .../tests/test_layer_institutional.py              |  190 [32m++[m[31m-[m
+ .../tests/test_network_smoke.py                    |   35 [32m+[m[31m-[m
+ .../tests/test_optimization.py                     |   33 [32m+[m[31m-[m
+ .../tests/test_optimizations.py                    |  149 [32m++[m[31m-[m
+ .../tests/test_pdf_utils.py                        |   48 [32m+[m[31m-[m
+ .../tests/test_process_flow.py                     |  211 [32m+[m[31m---[m
+ .../tests/test_v04_optimizations.py                |  136 [32m+[m[31m-[m
+ .../tests/test_v060_batch.py                       |  306 [32m+[m[31m----[m
+ .../tests/test_v062_view_progress.py               |    4 [32m+[m
+ .../tests/test_view_panel.py                       |   98 [32m+[m[31m-[m
+ .../chronicle-capsule/CHANGELOG.md                 |    4 [32m+[m
+ .../chronicle-capsule/README.md                    |    2 [32m+[m[31m-[m
+ .../chronicle-capsule/creator.sig                  |  Bin [31m64[m -> [32m64[m bytes
+ .../chronicle-capsule/listing.md                   |    2 [32m+[m[31m-[m
+ .../chronicle-capsule/package.manifest.creator.sig |  Bin [31m64[m -> [32m64[m bytes
+ .../chronicle-capsule/package.manifest.json        |    2 [32m+[m[31m-[m
+ .../chronicle-capsule/plugin.py                    |   13 [32m+[m[31m-[m
+ .../chronicle-capsule/plugin.yaml                  |    4 [32m+[m[31m-[m
+ .../chronicle-capsule/submission.json              |    4 [32m+[m[31m-[m
+ .../tests/test_chronicle_capsule.py                |   10 [32m+[m
+ .../signal-sieve/CHANGELOG.md                      |    4 [32m+[m
+ .../signal-sieve/README.md                         |    2 [32m+[m[31m-[m
+ .../signal-sieve/creator.sig                       |  Bin [31m64[m -> [32m64[m bytes
+ .../signal-sieve/package.manifest.creator.sig      |  Bin [31m64[m -> [32m64[m bytes
+ .../signal-sieve/package.manifest.json             |    2 [32m+[m[31m-[m
+ .../signal-sieve/plugin.py                         |    4 [32m+[m[31m-[m
+ .../signal-sieve/plugin.yaml                       |    4 [32m+[m[31m-[m
+ .../signal-sieve/submission.json                   |    4 [32m+[m[31m-[m
+ .../signal-sieve/tests/test_optimization.py        |    7 [32m+[m
+ .../tideprint-gate/CHANGELOG.md                    |    4 [32m+[m
+ .../tideprint-gate/README.md                       |    2 [32m+[m[31m-[m
+ .../tideprint-gate/creator.sig                     |  Bin [31m64[m -> [32m64[m bytes
+ .../tideprint-gate/package.manifest.creator.sig    |  Bin [31m64[m -> [32m64[m bytes
+ .../tideprint-gate/package.manifest.json           |    2 [32m+[m[31m-[m
+ .../tideprint-gate/plugin.py                       |   36 [32m+[m[31m-[m
+ .../tideprint-gate/plugin.yaml                     |    4 [32m+[m[31m-[m
+ .../tideprint-gate/submission.json                 |    4 [32m+[m[31m-[m
+ .../tideprint-gate/tests/test_optimization.py      |   32 [32m+[m
+ .../upstream-lantern/CHANGELOG.md                  |    4 [32m+[m
+ .../upstream-lantern/README.md                     |    2 [32m+[m[31m-[m
+ .../upstream-lantern/creator.sig                   |  Bin [31m64[m -> [32m64[m bytes
+ .../upstream-lantern/package.manifest.creator.sig  |  Bin [31m64[m -> [32m64[m bytes
+ .../upstream-lantern/package.manifest.json         |    2 [32m+[m[31m-[m
+ .../upstream-lantern/plugin.py                     |    6 [32m+[m[31m-[m
+ .../upstream-lantern/plugin.yaml                   |    4 [32m+[m[31m-[m
+ .../upstream-lantern/submission.json               |    4 [32m+[m[31m-[m
+ .../upstream-lantern/tests/test_optimization.py    |   18 [32m+[m[31m-[m
+ 67 files changed, 1142 insertions(+), 2209 deletions(-)

@@ -1,6 +1,6 @@
 id: academic-paper-downloader
 name: Academic Paper Downloader
-version: 0.8.0
+version: 0.9.0
 api_version: 1
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
@@ -18,7 +18,7 @@ tags:
 - unpaywall
 - openalex
 - batch-download
-summary: 从 Web of Science 导出文件批量下载论文 PDF，全优化版
+summary: 从 Web of Science 导出文件批量下载论文 PDF（0.9.0：迁移到宿主网络/产物能力，移除直连与自建浏览器）
 description_file: listing.md
 plugin_file: plugin.py
 permissions:
@@ -28,6 +28,7 @@ permissions:
 - state:write
 - secrets:read
 - files:read
+- artifacts:write
 domains:
 - api.crossref.org
 - api.unpaywall.org
@@ -51,27 +52,23 @@ input_files:
 - '*.csv'
 - '*.json'
 dependencies:
-- name: httpx
-  version: '>=0.27,<1.0'
-  license: BSD-3-Clause
 - name: yaml
   version: '>=5.4,<7.0'
   license: MIT
 - name: openpyxl
-- name: xlrd
   version: '>=3.0,<4.0'
   license: MIT
+- name: xlrd
+  version: '>=2.0,<3.0'
+  license: BSD-3-Clause
 - name: pdfplumber
   version: '>=0.10,<1.0'
   license: MIT
 - name: pypdf
   version: '>=3.0,<4.0'
   license: BSD-3-Clause
-- name: playwright
-  version: '>=1.30,<2.0'
-  license: Apache-2.0
 license: MIT
 execution_mode: subprocess
 min_core_version: 0.11.2
 compatible_core: '>=0.11.2'
-updated_at: '2026-10-04'
+updated_at: '2026-11-02'

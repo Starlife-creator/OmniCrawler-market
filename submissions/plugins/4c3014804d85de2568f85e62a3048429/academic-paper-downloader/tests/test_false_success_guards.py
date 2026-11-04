@@ -1,11 +1,11 @@
-"""「假成功」防护测试（issue #22 §1）。
+"""「假成功」防护测试（issue #22 §1）——v0.9.0 适配宿主能力后仍锁定的性质：
 
-锁定的性质：
-- 反爬挑战页/登录页**根本不会被存成 PDF**（`page.pdf()` 都不许调用）；
-- 文章落地页（拿不到"这是 PDF"的证据）也不许打印成 PDF；
-- 反过来，**真正的内联 PDF 视图**必须仍然能打印（否则守卫退化成"一律拒绝"）；
-- PDF 内提不出 DOI ⇒ 文件**保留**但标记 `verified=False`，**不计入成功**；
-- 报告与 hook 返回值按同一口径计数（Success 不含未核验）。
+- 反爬挑战页/登录页不会再被误判为成功（下载只经宿主 network.fetch + 严格 PDF 校验）；
+- PDF 内提不出 DOI ⇒ 记录**保留**但标记 `verified=False`，**不计入成功**；
+- DOI 不匹配 ⇒ 保留但 `verified=False`；
+- 报告与 hook 返回值按同一口径计数（Success 不含未核验）；
+- v0.9.0：PDF 交付宿主 artifact（`artifact_id`），本地 workspace 不留 PDF 副本；
+  宿主 artifact 能力不可用时 `_save_pdf` 返回 None（明确降级，不静默落本地文件）。
 """
 
 import sys
@@ -16,89 +16,35 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import plugin  # noqa: E402
-from plugin import (  # noqa: E402
-    _browser_capture_pdf,
-    _browser_download,
-    _generate_report,
-    _save_pdf,
-)
+from plugin import _generate_report, _save_pdf  # noqa: E402
 
 
-class _FakePage:
-    """记录 `page.pdf()` 是否被调用 —— 挑战页必须一次都不调用。"""
+def _stub_host_artifact(monkeypatch):
+    """模拟宿主 artifact.stream：返回受控 artifact 引用。"""
+    saved = {}
 
-    def __init__(self, *, title="", body="", url="https://example.com/article", pdf_value=b"%PDF-1.4\n" + b"x" * 2000):
-        self._title = title
-        self._body = body
-        self.url = url
-        self._pdf_value = pdf_value
-        self.pdf_calls = 0
+    def fake_host_save(filename, data, maximum_bytes=None):
+        saved["filename"] = filename
+        saved["size"] = len(data)
+        return {
+            "artifact_id": "sha256:" + ("0" * 64),
+            "name": filename,
+            "media_type": "application/pdf",
+            "size": len(data),
+            "sha256": "0" * 64,
+        }
 
-    def title(self):
-        return self._title
-
-    def inner_text(self, _selector):
-        return self._body
-
-    def query_selector(self, _selector):
-        return None
-
-    def pdf(self):
-        self.pdf_calls += 1
-        return self._pdf_value
-
-
-class _FakeContext:
-    def expect_page(self, **_kwargs):
-        raise RuntimeError("no popup")
+    monkeypatch.setattr(plugin, "_host_save_pdf", fake_host_save)
+    return saved
 
 
 def _save(tmp_path, monkeypatch, *, extracted_meta):
     monkeypatch.setattr("plugin._validate_pdf", lambda p: True)
     monkeypatch.setattr("plugin._rename_with_metadata", lambda paper, p: p)
     monkeypatch.setattr("plugin._extract_pdf_meta", lambda p: extracted_meta)
+    _stub_host_artifact(monkeypatch)
     paper = {"doi": "10.1038/s41586-021-00001-2", "title": "T", "first_author": "A", "year": "2021"}
-    return _save_pdf(paper, b"%PDF-1.4\n%%EOF\nx", Path(tmp_path), "browser")
-
-
-# --- 页面级守卫 ---------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "page_kwargs",
-    [
-        {"title": "Just a moment...", "body": "checking your browser"},
-        {"title": "", "body": "onlinelibrary.wiley.com Performing security verification"},
-        {"title": "Access Denied", "body": "you are a robot"},
-        {"title": "Sign in", "body": "institutional login required"},
-    ],
-)
-def test_challenge_or_login_page_is_never_saved(page_kwargs, tmp_path, monkeypatch):
-    """挑战页/登录页/拒绝页：直接放弃，**且一次都不调用 page.pdf()**。"""
-    monkeypatch.setattr(plugin.tempfile, "NamedTemporaryFile", lambda **k: (_ for _ in ()).throw(AssertionError("不应落盘")))
-    page = _FakePage(**page_kwargs)
-
-    assert _browser_capture_pdf(_FakeContext(), page) is None
-    assert page.pdf_calls == 0
-
-
-def test_landing_page_without_pdf_evidence_is_not_printed(tmp_path):
-    """文章落地页（非挑战页，但页面不是 PDF 视图）不许打印成 PDF。"""
-    page = _FakePage(title="Article title", body="Abstract ...", url="https://publisher.example/article/1")
-
-    assert _browser_capture_pdf(_FakeContext(), page) is None
-    assert page.pdf_calls == 0  # 守卫没有退化成"一律打印"
-
-
-def test_inline_pdf_view_is_still_printed(tmp_path):
-    """正向对照：真正的 PDF 视图必须仍能兜底（否则守卫等于把能力关掉）。"""
-    page = _FakePage(title="paper", body="", url="https://publisher.example/article.pdf")
-
-    result = _browser_capture_pdf(_FakeContext(), page)
-
-    assert page.pdf_calls == 1
-    assert result is not None and Path(result).is_file()
-    Path(result).unlink()
+    return _save_pdf(paper, b"%PDF-1.4\n%%EOF\nx", Path(tmp_path), "oa_direct")
 
 
 # --- DOI 核验：未核验保留但不计入成功 ----------------------------------------
@@ -110,7 +56,6 @@ def test_unverifiable_pdf_is_kept_but_marked_unverified(tmp_path, monkeypatch):
     assert record is not None, "arXiv/扫描版 PDF 本就提不出 DOI，不能误拒"
     assert record["verified"] is False
     assert record["verification"] == "doi_not_found_in_pdf"
-    assert list((Path(tmp_path) / "papers").glob("*.pdf")), "文件保留"
 
 
 def test_matched_doi_is_marked_verified(tmp_path, monkeypatch):
@@ -122,12 +67,40 @@ def test_matched_doi_is_marked_verified(tmp_path, monkeypatch):
 
 
 def test_mismatched_doi_kept_as_unverified(tmp_path, monkeypatch):
-    """v0.6.3：mismatch 保留为 UNVERIFIED（不计成功），不再删除。"""
     record = _save(tmp_path, monkeypatch, extracted_meta={"extracted_doi": "10.9999/other"})
 
     assert record is not None
     assert record["verified"] is False
-    assert list((Path(tmp_path) / "papers").glob("*.pdf"))
+
+
+def test_save_pdf_delivers_host_artifact_not_local_copy(tmp_path, monkeypatch):
+    """v0.9.0 契约：PDF 交付宿主 artifact，record 带 artifact_id，本地临时文件已清理。"""
+    monkeypatch.setattr("plugin._validate_pdf", lambda p: True)
+    monkeypatch.setattr("plugin._rename_with_metadata", lambda paper, p: p)
+    monkeypatch.setattr("plugin._extract_pdf_meta", lambda p: {"extracted_doi": ""})
+    saved = _stub_host_artifact(monkeypatch)
+    paper = {"doi": "10.1/x", "title": "T", "first_author": "A", "year": "2024"}
+
+    record = _save_pdf(paper, b"%PDF-1.4\n%%EOF\nx", Path(tmp_path), "oa_direct")
+
+    assert record is not None
+    assert record["artifact_id"].startswith("sha256:")
+    assert record["local_path"] == ""
+    assert saved["filename"] == record["filename"]
+    # 本地临时文件已清理（不留 PDF 副本在 workspace/papers）
+    assert not list((Path(tmp_path) / "papers").glob("*.pdf"))
+
+
+def test_save_pdf_returns_none_when_artifact_unavailable(tmp_path, monkeypatch):
+    """宿主 artifact 能力不可用时明确降级：返回 None，不落本地文件。"""
+    monkeypatch.setattr("plugin._validate_pdf", lambda p: True)
+    monkeypatch.setattr("plugin._rename_with_metadata", lambda paper, p: p)
+    monkeypatch.setattr("plugin._extract_pdf_meta", lambda p: {"extracted_doi": ""})
+    monkeypatch.setattr(plugin, "_host_save_pdf", lambda *a, **k: None)
+    paper = {"doi": "10.1/x", "title": "T", "first_author": "A", "year": "2024"}
+
+    assert _save_pdf(paper, b"%PDF-1.4\n%%EOF\nx", Path(tmp_path), "oa_direct") is None
+    assert not list((Path(tmp_path) / "papers").glob("*.pdf"))
 
 
 def test_report_counts_unverified_separately(tmp_path):
@@ -150,58 +123,8 @@ def test_report_counts_unverified_separately(tmp_path):
     assert "Unverified" in html
 
 
-def test_unknown_publisher_uses_generic_route(monkeypatch):
-    """未知出版商不再直接放弃：仍走一次通用浏览器路径（doi.org → 实际文章页）。
-    v0.6.6 契约：编排层调 _run_browser_attempt_isolated(payload, timeout)。"""
-    calls = []
-
-    def fake_iso(payload, timeout):
-        calls.append((payload["doi"], payload["home"], payload["headless"]))
-        return "/tmp/x.pdf", None
-
-    monkeypatch.setattr(plugin, "_run_browser_attempt_isolated", fake_iso)
-
-    assert _browser_download("10.9999/unknown.1", "not-in-table", [], {}) == "/tmp/x.pdf"
-    assert calls and calls[0][1] == "https://doi.org"
-
-
-def test_headless_is_configurable_and_visible_retry_happens(monkeypatch):
-    """headless 可配；headless 失败且允许时用可见浏览器重试一次。
-    v0.6.6 契约：两段都经 _run_browser_attempt_isolated。"""
-    seen = []
-
-    def fake_iso(payload, timeout):
-        seen.append(payload["headless"])
-        return (None, "timeout") if len(seen) == 1 else ("/tmp/y.pdf", None)
-
-    monkeypatch.setattr(plugin, "_run_browser_attempt_isolated", fake_iso)
-    cfg = {"institution": {"headless": True, "visible_fallback": True}, "defer_headed": False}
-
-    assert _browser_download("10.1016/j.x.2023.1", "elsevier", [], cfg) == "/tmp/y.pdf"
-    assert seen == [True, False]
-
-
-def test_defer_headed_default_suppresses_visible_retry(monkeypatch):
-    """v0.4.0+ defer_headed 默认开启：批内不弹可见窗口，集中到第二阶段。
-    v0.6.6 契约：批内只调无头一次（isolated），无可见重试。"""
-    seen = []
-    monkeypatch.setattr(
-        plugin, "_run_browser_attempt_isolated",
-        lambda payload, timeout: seen.append(payload["headless"]) or (None, "timeout"),
-    )
-    cfg = {"institution": {"headless": True, "visible_fallback": True}}  # 不传 defer_headed
-    assert _browser_download("10.1016/j.x.2023.1", "elsevier", [], cfg) is None
-    assert seen == [True]  # 只有无头尝试，无可见重试
-
-
-def test_headless_false_does_not_retry(monkeypatch):
-    """v0.6.6 契约：headless=False 直入（两阶段有头轮形态），单段有头预算，不二段重试。"""
-    seen = []
-    monkeypatch.setattr(
-        plugin,
-        "_run_browser_attempt_isolated",
-        lambda payload, timeout: seen.append(payload["headless"]) or (None, "timeout"),
-    )
-
-    assert _browser_download("10.1016/j.x.2023.1", "elsevier", [], {"institution": {"headless": False}}) is None
-    assert seen == [False]
+def test_browser_route_removed_in_v090():
+    """v0.9.0 反向断言：浏览器下载路径已移除（机构层明确降级）。"""
+    assert not hasattr(plugin, "_browser_download")
+    assert not hasattr(plugin, "_browser_capture_pdf")
+    assert not hasattr(plugin, "_run_browser_attempt_isolated")

@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -69,3 +70,34 @@ def test_304_keeps_valid_digest(optimized, monkeypatch):
     result = optimized.handle('hook.after_fetch', {'result': {'url': 'https://example.test', 'status': 304}})
     assert result['persistent_change']['status'] == 'unchanged'
     assert 'state.set' not in writes
+
+
+def test_persistent_state_false_value_and_failed_save(optimized, monkeypatch):
+    digest, policy_id = optimized._comparison(b'{"v":1}', 'application/json', {})
+    key = 'semantic.v2.' + hashlib.sha256(('https://example.test/a:' + policy_id).encode()).hexdigest()
+    values = {key: False}
+    def call(op, args):
+        if op == 'state.get':
+            return {'found': args['key'] in values, 'value': values.get(args['key'])}
+        if op == 'state.set':
+            return {}
+        raise AssertionError(op)
+    monkeypatch.setattr(sys.modules['omnicrawler_sdk'], 'call', call)
+    result = optimized.handle('processor.process', {'result': {'url': 'https://example.test/a', 'status': 200, 'content_type': 'application/json', 'body_b64': base64.b64encode(b'{"v":1}').decode()}})
+    change = result['records'][0]['data']
+    assert change['status'] == 'new'
+    assert change['scope'] == 'current_run_only'
+
+
+def test_hook_after_fetch_requires_save_confirmation(optimized, monkeypatch):
+    def call(op, args):
+        if op == 'state.get':
+            return {'found': False, 'value': None}
+        if op == 'state.set':
+            return {}
+        raise AssertionError(op)
+    monkeypatch.setattr(sys.modules['omnicrawler_sdk'], 'call', call)
+    result = optimized.handle('hook.after_fetch', {'result': {'final_url': 'https://example.test/a', 'status': 200, 'content_hash': 'a' * 64}})
+    change = result['persistent_change']
+    assert change['persisted'] is False
+    assert change['scope'] == 'current_run_only'

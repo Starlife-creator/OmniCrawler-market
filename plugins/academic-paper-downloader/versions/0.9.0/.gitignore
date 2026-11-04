@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# 测试/运行残留（不是发布载荷）
+.tmp/
+.tmp-home/
+.test-tmp/
+.pytest-tmp/
+apd-locks/
+tmp_*
+tmp*.csv
+tmp*.json
+tmp*.tsv
+tmp*.bib
+tmp*.ris
+apd_browser_*/
+tmp*/

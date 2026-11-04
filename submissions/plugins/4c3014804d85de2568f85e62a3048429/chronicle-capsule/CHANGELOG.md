@@ -1,5 +1,9 @@
 # 变更记录
 
+## 0.4.1 — 2026-11-02
+
+修复 `max_records` 为分数浮点数或 NaN 时被静默截断/转换的问题；非法值现在在打开工件前拒绝，不创建半套归档。有效整数与缺失默认值行为不变。
+
 ## 0.4.0 — 2026-10-04
 
 分别统计 scanned_inputs、业务 records、missing_payloads、truncated_payloads。输出输入上限、是否仍有后续数据及终止原因；同一 WARC 增加 metadata 索引记录，关联 Record-ID、来源、载荷摘要和截断状态。

@@ -57,24 +57,21 @@ def test_cross_process_lock_exclusion_and_crash_release(optimized,tmp_path):
         proc.stdin.close();proc.stdout.close()
 
 
-def test_proxy_clients_retire_after_last_active_stream(optimized,monkeypatch):
-    class FakeClient:
-        def __init__(self,**kwargs): self.is_closed=False
-        def close(self): self.is_closed=True
-        def stream(self,*args,**kwargs):
-            from contextlib import nullcontext
-            return nullcontext('response')
-    monkeypatch.setattr(optimized.httpx,'Client',FakeClient)
-    monkeypatch.setattr(optimized,'_get_next_proxy',lambda cfg: cfg.get('proxy',''))
-    optimized._set_download_config({'proxy':'http://a'})
-    with optimized._client_stream('GET','https://example.test'):
-        old=optimized._HTTP_CLIENT
-        optimized._set_download_config({'proxy':'http://b'})
-        optimized._get_http_client()
-        assert not old.is_closed
-    assert old.is_closed and optimized._RETIRED_HTTP_CLIENTS==[]
-    optimized._close_http_clients()
-    assert optimized._HTTP_CLIENT is None
+def test_no_direct_http_clients_after_host_migration(optimized):
+    """v0.9.0 反直连断言：插件模块不得再持有 httpx/直连 HTTP 客户端工厂。
+
+    网络全部经宿主 EgressBroker（_host_fetch）；若将来有人重新引入直连通道，
+    此断言先红。seccomp/Landlock 之外的应用层边界同样由它看守。
+    """
+    assert not hasattr(optimized, "httpx")
+    for removed in ("_HTTP_CLIENT", "_RETIRED_HTTP_CLIENTS", "_client_stream",
+                    "_get_http_client", "_close_http_clients"):
+        assert not hasattr(optimized, removed), f"直连 HTTP 残留符号 {removed}"
+    # _get_next_proxy 保留形状但必须恒降级（宿主不暴露代理参数）
+    assert optimized._get_next_proxy({}) is None
+    assert optimized._get_next_proxy({"institution": {"proxy_url": "http://a"}}) is None
+    assert hasattr(optimized, "_host_fetch")
+    assert hasattr(optimized, "_host_save_pdf")
 
 
 def test_cancel_preserves_finished_state_and_skips_download(optimized,monkeypatch,tmp_path):

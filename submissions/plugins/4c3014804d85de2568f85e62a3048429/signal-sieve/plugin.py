@@ -12,7 +12,7 @@ from typing import Any
 
 PLUGIN_METADATA = {
     "name": "signal-sieve",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "api_version": 1,
     "description": "融合文本密度、语义标签与 JSON-LD 提取正文、元数据和可解释诊断",
     "plugin_types": ["extractor", "transformer"],
@@ -124,6 +124,8 @@ class _Extractor(HTMLParser):
         if self.skip_depth:
             return
         text = SPACE.sub(" ", html.unescape(data)).strip()
+        # Never present markup fragments as extracted prose.
+        text = text.replace("<", "").replace(">", "").strip()
         if not text:
             return
         if self.in_title:
