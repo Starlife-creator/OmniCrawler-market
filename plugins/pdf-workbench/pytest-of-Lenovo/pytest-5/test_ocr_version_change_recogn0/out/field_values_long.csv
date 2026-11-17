@@ -1,2 +1,0 @@
-﻿记录ID,文档ID,文件名,字段名,原始值,标准化值,单位,页码,原文证据,抽取方式,字段置信度,校验状态
-b785be06ae43b3444d077e7cc4948d23d5bab173065360667f046e5aa2e096b3,ed5a6b8e815cf7b42ad462de4f7a852267ca31beaea9a1bc69524f9879a84c5f,sample.pdf,invoice,OCR2,OCR2,,1,Invoice: OCR2,content_rule,0.55,invalid

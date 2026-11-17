@@ -1,6 +1,0 @@
-From: sender@example.com
-To: me@example.com
-Subject: 纯HTML邮件
-Content-Type: text/html; charset=utf-8
-
-<html><body><p>这是HTML正文内容，包含<b>加粗</b>片段。</p></body></html>

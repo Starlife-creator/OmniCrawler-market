@@ -1,6 +1,0 @@
-﻿记录ID,复核决定,复核备注,金额,金额_原始值,金额_单位,金额_页码,金额_原文证据
-'accepted,确认,ok,100,'1百,元,2,evidence
-rejected,拒绝,bad,,,,,
-missing,确认,,,,,,
-accepted,maybe,,,,,,
-,,,,,,,

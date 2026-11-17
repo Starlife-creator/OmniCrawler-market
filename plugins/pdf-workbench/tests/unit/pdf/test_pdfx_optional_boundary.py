@@ -80,7 +80,7 @@ def test_host_does_not_import_pdfx_at_module_level() -> None:
     )
 
 
-def test_normalize_amount_available_without_pdfx() -> None:
+def test_normalize_amount_available_without_pdfx(tmp_path: Path) -> None:
     """金额归一这类**纯函数**必须能在不导入 pdfx 的前提下使用。
 
     它是质量基准与通用后处理都要用的基础能力，不该绑在文档子系统上。
@@ -96,10 +96,11 @@ def test_normalize_amount_available_without_pdfx() -> None:
         "print('PDFX_LOADED=' + repr(loaded))\n"
         "print('VALUE=' + repr(normalize_amount('12,345.67 元')))\n"
     )
-    # 不用 capture_output：本沙箱禁命名管道（见 tests/unit/tools 里的同类记录）
-    import tempfile
-
-    out = Path(tempfile.mkdtemp()) / "probe.txt"
+    # 不用 capture_output：本沙箱禁命名管道（见 tests/unit/tools 里的同类记录）。
+    # 用 tmp_path 而**不是** mkdtemp：后者在本环境把目录建到
+    # 插件仓内部且不清理，跑一次测试就在仓库里留下 tmp* 目录（实测踩到，
+    # 还被误提交进了 git）。tmp_path 由 pytest 自动清理。
+    out = tmp_path / "probe.txt"
     with out.open("w", encoding="utf-8") as handle:
         result = subprocess.run(
             [sys.executable, "-c", script],

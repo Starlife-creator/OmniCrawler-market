@@ -1,2 +1,0 @@
-﻿记录ID,文档ID,文件名,原始路径,记录序号,文档类型,抽取方式,记录置信度,校验状态,复核状态,校验信息,Invoice,Invoice_原始值,Invoice_单位,Invoice_页码,Invoice_原文证据,Invoice_字段置信度
-a228433be27cd0678d28e73e5a5a07195488e70dbdfd9a15a4ccfc3d6e4e1b52,d6c987aa5673ee3e052c00ebc508d776677d22b05801bf28d7e54189fc579116,sample.pdf,E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_parser_change_reparses_an0\in\sample.pdf,1,,rules,0.98,invalid,needs_review,"[""字段代码不是 6 位数字：Invoice=A0""]",A0,A0,,1,Invoice: A0,0.98

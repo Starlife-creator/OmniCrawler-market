@@ -1,2 +1,0 @@
-===== 第1页 | native =====
-Invoice: A1 Amount: 100 Company: Alias

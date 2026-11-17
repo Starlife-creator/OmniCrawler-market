@@ -1,8 +1,0 @@
-project_name: sha-test
-input_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-5\test_ingest_detects_same_path_0\pdfs
-work_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-5\test_ingest_detects_same_path_0\work
-output_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-5\test_ingest_detects_same_path_0\out
-fields:
-  - name: title
-    label: 标题
-    type: text

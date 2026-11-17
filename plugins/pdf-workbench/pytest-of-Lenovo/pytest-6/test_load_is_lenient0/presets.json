@@ -1,1 +1,0 @@
-{"presets": {"mine": {"description": "test", "options": {"quality": 70}, "convert": {"compression": "ultra", "on_error": "explode", "unknown_key": 1}, "output": {"on_conflict": "nope", "bogus": true}}}}

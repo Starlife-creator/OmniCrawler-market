@@ -1,2 +1,0 @@
-﻿记录ID,文档ID,文件名,原始路径,记录序号,文档类型,抽取方式,记录置信度,校验状态,复核状态,校验信息,Invoice,Invoice_原始值,Invoice_单位,Invoice_页码,Invoice_原文证据,Invoice_字段置信度,Amount,Amount_原始值,Amount_单位,Amount_页码,Amount_原文证据,Amount_字段置信度
-5df429ed0af9a4650e4af58bd74e8b834c3228c402dee8e1e793e6b5b470d405,8db7f445059f3336b44619be031bdc78e24582b5a5246557ad37928463747f59,sample0.pdf,E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_changed_dependencies_pres0\in\sample0.pdf,1,,rules,1.0,human_reviewed,human_accepted,,MANUAL,,,,,1.0,,,,,,

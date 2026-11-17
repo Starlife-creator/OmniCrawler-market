@@ -1,2 +1,0 @@
-﻿记录ID,文档ID,文件名,字段名,原始值,标准化值,单位,页码,原文证据,抽取方式,字段置信度,校验状态
-67caae29518f273e5ce71508dca4fe457953d9d01695b5553b9f702c83c252f6,fa04fc8607958c36b9004e4ec9760391f3be910cc5b26c5e3fe456e30193154c,sample0.pdf,invoice,A0,A0,,1,Invoice: A0 Amount: 100 Company: Alias,content_rule,0.98,invalid

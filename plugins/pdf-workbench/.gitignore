@@ -1,0 +1,10 @@
+# 插件测试运行时产生的临时目录与缓存。
+#
+# 为什么需要这份 ignore：本环境的 pytest 临时根常落在**当前目录**下
+# （`pytest-of-*`、`tmp*`），跑完测试就会留下；不 ignore 会被误提交
+# （实测已发生一次，见提交历史）。
+__pycache__/
+.pytest_cache/
+pytest-of-*/
+tmp*/
+.probe/
