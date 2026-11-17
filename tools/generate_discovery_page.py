@@ -553,7 +553,7 @@ def _index_page(
 
     body = f"""
 <section class="hero">
-<h1>插件与模板市场</h1>
+<h1>OmniCrawler 市场</h1>
 <p class="lede">本页由市场目录在构建时生成：目录经维护者 Ed25519 签名，<strong>验签先于渲染且 fail-closed</strong>——验签失败则本页永不产出。安装与最终验签在 OmniCrawler 客户端完成，这里只作展示。</p>
 <dl class="stats">
 <div><dt>插件</dt><dd>{len(plugins)}</dd></div>
