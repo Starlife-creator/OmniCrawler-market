@@ -437,24 +437,18 @@ def convertx_module() -> Any:
 def table_io() -> Any:
     """返回表格数据读写注册表（供宿主 `transform` 命令使用）。
 
-    返回对象需具备 `READERS` / `WRITERS` / `sniff_format` 三个属性。
+    **2026-11-22 起改为返回宿主实现**（`omnicrawler.services.table_io`）。
 
-    ⚠ 类体里不能写 `READERS = READERS`：类作用域在赋值右侧求值时
-    会把左侧的名字当成局部，抛 `NameError`（实测踩到）。所以用别名。
+    表格读写（csv/jsonl/xlsx/parquet/duckdb）已从本插件的 `convertx`
+    **上提到宿主**——它是支柱①数据加工的通用能力，不该让 transform
+    依赖 PDF 插件。
+
+    插件侧保留本入口只为**兼容旧调用点**；实际返回的是同一份实现，
+    不存在两份漂移。
     """
-    from omnicrawler_pdf.convertx import READERS as _readers
-    from omnicrawler_pdf.convertx import WRITERS as _writers
-    from omnicrawler_pdf.convertx import sniff_format as _sniff
+    from omnicrawler.services import table_io as host_table_io
 
-    class _TableIO:
-        READERS = _readers
-        WRITERS = _writers
-
-        @staticmethod
-        def sniff_format(path: Any) -> Any:
-            return _sniff(path)
-
-    return _TableIO
+    return host_table_io
 
 
 def pdf_region_selector() -> Any:
