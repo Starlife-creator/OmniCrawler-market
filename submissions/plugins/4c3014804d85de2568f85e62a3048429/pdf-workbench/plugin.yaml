@@ -18,10 +18,10 @@ domains: []
 input_files: []
 dependencies:
 - name: omnicrawler_pdf
-  version: 1.0.0
+  version: '1.0.0'
   license: Apache-2.0
 - name: yaml
-  version: '>=6'
+  version: '>=6.0,<7.0'
   license: MIT
 license: Apache-2.0
 # 契约 1：PDF 工作台必须自由读写用户指定的项目目录（读 PDF、写五表、建 SQLite），
