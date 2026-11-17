@@ -1,0 +1,738 @@
+"""User-visible loss reporting and cancellation must preserve committed output.
+
+★ monkeypatch 注入点约定（P0-2 下沉后的坑）：本文件补丁的三个内部常量
+（XLSX_ROW_LIMIT / _DECODE_CHUNK_BYTES / _ENCODING_SAMPLE_BYTES）由
+``convertx._core`` 内的函数在运行期读取，因此补丁必须打在
+**调用点所在模块** ``convertx._core`` 上。打在包门面 ``convertx`` 上只会改包属性、
+实现仍读旧值（包只是 re-export，补丁不过门面）。
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+from threading import Event
+
+import pytest
+
+from omnicrawler_docs import convertx
+
+
+def source_file(root: Path) -> Path:
+    source = root / "input.jsonl"
+    source.write_text('\n'.join(json.dumps({"id": n}) for n in range(700)), encoding="utf-8")
+    return source
+
+
+def test_skipped_records_have_bounded_non_sensitive_diagnostics(tmp_path):
+    source = tmp_path / "input.jsonl"
+    source.write_text('{"id":1}\n\n' + '{"secret":invalid\n' * 20 + '[]\n{"id":2}\n', encoding="utf-8")
+    result = convertx.convert(source, tmp_path / "out.csv")
+    assert result.rows == 2
+    assert result.extra["accepted_records"] == result.extra["written_records"] == 2
+    assert result.extra["rejected_records"] == 21
+    assert len(result.extra["rejection_samples"]) == 10
+    assert result.extra["rejection_samples"][0]["line"] == 3
+    assert "21" in result.warnings[0]
+    assert "secret" not in json.dumps(result.extra) + str(result.warnings)
+
+
+@pytest.mark.parametrize("bad_line", ['{"bad":', '[]', 'null'])
+def test_abort_preserves_existing_output(tmp_path, bad_line):
+    source = tmp_path / "input.jsonl"
+    source.write_text('{"id":1}\n' + bad_line, encoding="utf-8")
+    target = tmp_path / "out.csv"
+    target.write_bytes(b"previous output")
+    with pytest.raises(ValueError, match="行 2"):
+        convertx.convert(source, target, on_error="abort")
+    assert target.read_bytes() == b"previous output"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_options_can_be_reused_without_leaking_hooks_or_statistics(tmp_path):
+    source = source_file(tmp_path)
+    options = {"reader_jsonl": {"flat": True}, "writer_csv": {"encoding": "utf-8"}}
+    expected = json.loads(json.dumps(options))
+    first = convertx.convert(source, tmp_path / "first.csv", options=options, should_stop=lambda: False)
+    second = convertx.convert(source, tmp_path / "second.csv", options=options)
+    assert options == expected
+    assert first.extra == second.extra
+
+
+def test_custom_registry_keeps_unknown_counts_and_writer_metadata(tmp_path, monkeypatch):
+    source = source_file(tmp_path)
+    metadata = {"warnings": ["custom warning"]}
+    monkeypatch.setitem(convertx.READERS, ".jsonl", lambda path, options: [{"custom": True}])
+
+    def writer(rows, path, options):
+        path.write_text(json.dumps(rows), encoding="utf-8")
+        return metadata
+
+    monkeypatch.setitem(convertx.WRITERS, ".csv", writer)
+    result = convertx.convert(source, tmp_path / "custom.csv")
+    assert result.rows == 1
+    assert result.extra["rejected_records"] is None
+    assert result.extra["written_records"] is None
+    assert metadata == {"warnings": ["custom warning"]}
+
+
+def test_multiline_csv_counts_logical_records(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text('id,text\n1,"first\nsecond"\n2,third\n', encoding="utf-8", newline="")
+    result = convertx.convert(source, tmp_path / "out.jsonl")
+    assert result.extra["written_records"] == 2
+    assert result.extra["rejected_records"] == 0
+    assert json.loads((tmp_path / "out.jsonl").read_text(encoding="utf-8").splitlines()[0])["text"] == "first\nsecond"
+
+
+def test_xlsx_reports_actual_rows_and_cell_truncation(tmp_path, monkeypatch):
+    openpyxl = pytest.importorskip("openpyxl")
+    monkeypatch.setattr(convertx._core, "XLSX_ROW_LIMIT", 2)
+    source = tmp_path / "input.jsonl"
+    source.write_text('\n'.join(json.dumps({"id": i, "text": "x" * 33000 if i == 0 else "ok"}) for i in range(3)), encoding="utf-8")
+    target = tmp_path / "out.xlsx"
+    result = convertx.convert(source, target)
+    assert result.rows == 3  # Existing API retains the accepted-record count.
+    assert result.extra["written_records"] == 2
+    assert result.extra["omitted_records"] == 1
+    assert result.extra["truncated_cells"] == 1
+    assert len(result.warnings) == 2
+    wb = openpyxl.load_workbook(target, read_only=True)
+    try:
+        rows = list(wb.active.values)
+        assert len(rows) == 3  # header + two actual records
+        assert len(rows[1][rows[0].index("text")]) == 32700
+    finally:
+        wb.close()
+    styled = openpyxl.load_workbook(target)
+    try:
+        sheet = styled["结构化记录"]
+        assert sheet.freeze_panes == "A2"
+        assert all(cell.font.bold and cell.font.color.rgb == "00FFFFFF" for cell in sheet[1])
+        assert all(cell.fill.fgColor.rgb == "001F4E78" for cell in sheet[1])
+    finally:
+        styled.close()
+
+
+def test_csv_reports_existing_cell_truncation_without_changing_formula_protection(tmp_path):
+    source = tmp_path / "input.jsonl"
+    source.write_text(json.dumps({"long": "x" * 33000, "formula": "=SUM(A1)"}), encoding="utf-8")
+    target = tmp_path / "out.csv"
+    result = convertx.convert(source, target)
+    assert result.extra["truncated_cells"] == 1
+    assert "截断" in result.warnings[0]
+    with target.open(encoding="utf-8-sig", newline="") as fh:
+        row = next(csv.DictReader(fh))
+    assert len(row["long"]) == 32700
+    assert row["formula"] == "'=SUM(A1)"
+
+
+def test_both_cli_entry_points_report_actual_written_rows(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from omnicrawler.cli._handlers import _run_convert
+    from omnicrawler_docs.convertx.__main__ import main
+
+    pytest.importorskip("openpyxl")
+    monkeypatch.setattr(convertx._core, "XLSX_ROW_LIMIT", 2)
+    source = source_file(tmp_path)
+    target = tmp_path / "out.xlsx"
+    assert main([str(source), str(target)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    payload = json.loads(next(line.split("  ", 1)[1] for line in lines if line.startswith("[cx] WARN")))
+    assert payload["rows"] == 700
+    assert payload["written_records"] == 2
+    _run_convert(argparse.Namespace(src=str(source), dst=str(target), quiet=False))
+    captured = capsys.readouterr()
+    # P2-2 之后的人类摘要走 **stderr**；stdout 必须保持纯 JSON（管道可解析）。
+    assert "写入 2 行" in captured.err
+    assert "有异常" in captured.err
+    json.loads(captured.out)
+
+
+@pytest.mark.parametrize("stage", ["before", "read", "write"])
+def test_cancellation_has_one_terminal_event_and_preserves_output(tmp_path, stage):
+    source = source_file(tmp_path)
+    target = tmp_path / "out.csv"
+    target.write_bytes(b"old")
+    stopped = Event()
+    events = []
+    if stage == "before":
+        stopped.set()
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source, target, should_stop=stopped.is_set, on_progress=events.append,
+            on_read_progress=(lambda payload: stopped.set()) if stage == "read" else None,
+            on_write_progress=(lambda payload: stopped.set()) if stage == "write" else None,
+        )
+    assert [ev.state for ev in events if ev.state in {"finished", "cancelled", "failed"}] == ["cancelled"]
+    assert target.read_bytes() == b"old"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+@pytest.mark.parametrize("extension,dependency", [(".csv", None), (".jsonl", None), (".xlsx", "openpyxl"), (".parquet", "pyarrow")])
+def test_file_writer_cancel_before_commit_preserves_old_file(tmp_path, extension, dependency):
+    if dependency:
+        pytest.importorskip(dependency)
+    source = source_file(tmp_path)
+    target = tmp_path / ("out" + extension)
+    target.write_bytes(b"old content")
+    stop = Event()
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(source, target, should_stop=stop.is_set, on_write_progress=lambda payload: stop.set())
+    assert target.read_bytes() == b"old content"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+@pytest.mark.parametrize("error", [PermissionError, KeyboardInterrupt])
+def test_commit_failure_cleans_temporary_file(tmp_path, monkeypatch, error):
+    source = source_file(tmp_path)
+    target = tmp_path / "out.csv"
+    target.write_bytes(b"old")
+    events = []
+
+    def fail_replace(self, other):
+        raise error("blocked")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(error):
+        convertx.convert(source, target, on_progress=events.append)
+    assert target.read_bytes() == b"old"
+    assert len(list(tmp_path.iterdir())) == 2
+    expected = "cancelled" if error is KeyboardInterrupt else "failed"
+    assert [ev.state for ev in events if ev.state in {"finished", "cancelled", "failed"}] == [expected]
+
+
+def test_cancellation_after_commit_does_not_report_false_cancel(tmp_path, monkeypatch):
+    source = source_file(tmp_path)
+    target = tmp_path / "out.csv"
+    stop = Event()
+    events = []
+    replace = Path.replace
+
+    def replace_then_cancel(self, other):
+        result = replace(self, other)
+        stop.set()
+        return result
+
+    monkeypatch.setattr(Path, "replace", replace_then_cancel)
+    result = convertx.convert(source, target, should_stop=stop.is_set, on_progress=events.append)
+    assert result.extra["written_records"] == 700
+    assert [ev.state for ev in events if ev.state in {"finished", "cancelled", "failed"}] == ["finished"]
+    with target.open(encoding="utf-8-sig", newline="") as fh:
+        assert len(list(csv.DictReader(fh))) == 700
+
+
+def test_csv_to_jsonl_streams_with_compatible_results_and_progress(tmp_path):
+    source = tmp_path / "input.csv"
+    with source.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["record_id", "title", "note"])
+        writer.writeheader()
+        writer.writerows([
+            {"record_id": "1", "title": "甲", "note": "first\nsecond"},
+            {"record_id": "2", "title": "乙", "note": "plain"},
+        ])
+    assert isinstance(convertx.read_csv(source, {}), list)
+    events = []
+    read_updates = []
+    write_updates = []
+    target = tmp_path / "output.jsonl"
+
+    result = convertx.convert(
+        source,
+        target,
+        on_progress=events.append,
+        on_read_progress=read_updates.append,
+        on_write_progress=write_updates.append,
+    )
+
+    values = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    assert values == [
+        {"record_id": "1", "title": "甲", "note": "first\nsecond"},
+        {"record_id": "2", "title": "乙", "note": "plain"},
+    ]
+    assert result.rows == result.extra["accepted_records"] == result.extra["written_records"] == 2
+    assert result.columns == ["record_id", "source_url", "record_type", "created_at", "title", "note"]
+    assert read_updates[-1]["records_so_far"] == 2
+    assert write_updates[-1]["written"] == 2
+    assert {event.stage for event in events if event.stage} == {"convert"}
+    assert [event.state for event in events if event.state == "finished"] == ["finished"]
+    assert events[-1].state == "finished"
+
+    nested_target = tmp_path / "nested.jsonl"
+    convertx.convert(source, nested_target, nested=True)
+    nested = json.loads(nested_target.read_text(encoding="utf-8").splitlines()[0])
+    assert nested == {
+        "record_id": "1",
+        "data": {"title": "甲", "note": "first\nsecond"},
+        "evidence": {},
+    }
+
+
+def test_csv_to_jsonl_stream_cancel_preserves_existing_output(tmp_path):
+    source = tmp_path / "input.csv"
+    with source.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["record_id", "value"])
+        writer.writeheader()
+        writer.writerows({"record_id": str(index), "value": "x" * 20} for index in range(1000))
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+    stopped = Event()
+    events = []
+
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source,
+            target,
+            should_stop=stopped.is_set,
+            on_progress=events.append,
+            on_write_progress=lambda _payload: stopped.set(),
+        )
+
+    assert target.read_bytes() == b"old"
+    assert [event.state for event in events if event.state in {"finished", "cancelled", "failed"}] == ["cancelled"]
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_csv_auto_encoding_streams_without_whole_file_read(tmp_path, monkeypatch):
+    source = tmp_path / "input.csv"
+    with source.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["record_id", "名称"])
+        writer.writeheader()
+        writer.writerows({"record_id": str(index), "名称": f"商品{index}"} for index in range(600))
+    target = tmp_path / "output.jsonl"
+    events = []
+
+    def reject_read_bytes(_self):
+        raise AssertionError("auto encoding must not load the complete file with Path.read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+    result = convertx.convert(
+        source,
+        target,
+        options={"reader_csv": {"encoding": "auto"}},
+        on_progress=events.append,
+    )
+
+    with target.open("r", encoding="utf-8") as handle:
+        first = json.loads(next(handle))
+    assert first == {"record_id": "0", "名称": "商品0"}
+    assert result.rows == result.extra["written_records"] == 600
+    assert {event.stage for event in events if event.stage} == {"convert"}
+
+
+def test_csv_auto_encoding_validation_can_cancel_before_commit(tmp_path, monkeypatch):
+    source = tmp_path / "input.csv"
+    source.write_text("record_id,value\n" + "1,内容\n" * 100, encoding="utf-8")
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+    checks = 0
+
+    def should_stop():
+        nonlocal checks
+        checks += 1
+        return checks >= 5
+
+    monkeypatch.setattr(convertx._core, "_DECODE_CHUNK_BYTES", 32)
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source,
+            target,
+            options={"reader_csv": {"encoding": "auto"}},
+            should_stop=should_stop,
+        )
+
+    assert target.read_bytes() == b"old"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_csv_auto_encoding_retries_when_non_utf_bytes_appear_after_sample(tmp_path, monkeypatch):
+    source = tmp_path / "late-gbk.csv"
+    source.write_bytes("name,value\nascii,1\n中文,2\n".encode("gb18030"))
+    monkeypatch.setattr(convertx._core, "_ENCODING_SAMPLE_BYTES", len(b"name,value\nascii,1\n"))
+
+    rows = convertx.read_csv(source, {"encoding": "auto"})
+
+    assert rows == [{"name": "ascii", "value": "1"}, {"name": "中文", "value": "2"}]
+
+
+def test_csv_stream_path_respects_registered_reader_override(tmp_path, monkeypatch):
+    source = tmp_path / "input.csv"
+    source.write_text("ignored\n", encoding="utf-8")
+    target = tmp_path / "output.jsonl"
+    called = []
+
+    def custom_reader(path, options):
+        called.append((path, options))
+        return [{"custom": "kept"}]
+
+    monkeypatch.setitem(convertx.READERS, ".csv", custom_reader)
+    result = convertx.convert(source, target)
+
+    assert called and result.rows == 1
+    assert json.loads(target.read_text(encoding="utf-8")) == {"custom": "kept"}
+
+
+def test_jsonl_to_jsonl_stream_preserves_flattening_errors_and_columns(tmp_path):
+    source = tmp_path / "input.jsonl"
+    source.write_text(
+        '\n'.join([
+            json.dumps({
+                "record_id": "1",
+                "data": {"title": "甲", "details": {"score": 9}},
+                "evidence": {"title": {"source": "text"}},
+            }, ensure_ascii=False),
+            "not-json",
+            "[]",
+            json.dumps({"record_id": "2", "tail_only": "present"}, ensure_ascii=False),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "output.jsonl"
+    events = []
+
+    result = convertx.convert(source, target, on_progress=events.append)
+
+    values = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    assert values == [
+        {
+            "record_id": "1",
+            "title": "甲",
+            "details": '{"score": 9}',
+            "evidence_json": '{"title": {"source": "text"}}',
+        },
+        {"record_id": "2", "tail_only": "present"},
+    ]
+    assert result.rows == result.extra["accepted_records"] == result.extra["written_records"] == 2
+    assert result.extra["rejected_records"] == 2
+    assert result.columns == [
+        "record_id", "source_url", "record_type", "created_at",
+        "title", "details", "evidence_json", "tail_only",
+    ]
+    assert result.warnings and "跳过 2 条" in result.warnings[0]
+    assert {event.stage for event in events if event.stage} == {"convert"}
+
+
+def test_jsonl_to_csv_stream_discovers_late_columns_without_retaining_rows(tmp_path):
+    source = tmp_path / "input.jsonl"
+    source.write_text(
+        "\n".join(
+            json.dumps({"record_id": str(index), "value": index, **({"tail_only": "kept"} if index == 699 else {})})
+            for index in range(700)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "output.csv"
+
+    result = convertx.convert(source, target)
+
+    with target.open(encoding="utf-8-sig", newline="") as handle:
+        values = list(csv.DictReader(handle))
+    assert result.rows == result.extra["written_records"] == 700
+    assert result.columns[-1] == "tail_only"
+    assert values[0]["tail_only"] == ""
+    assert values[-1]["tail_only"] == "kept"
+
+
+def test_jsonl_to_csv_rejects_source_changes_between_schema_scan_and_write(tmp_path):
+    source = tmp_path / "input.jsonl"
+    original = "\n".join(json.dumps({"record_id": str(index)}) for index in range(3)) + "\n"
+    source.write_text(original, encoding="utf-8")
+    target = tmp_path / "output.csv"
+    target.write_bytes(b"old")
+    changed = False
+
+    def mutate_after_scan(payload):
+        nonlocal changed
+        if not changed and payload.get("records_so_far") == 3:
+            changed = True
+            source.write_text(original.replace('"record_id": "2"', '"record_id": "changed"'), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="源文件在转换期间发生变化"):
+        convertx.convert(source, target, on_read_progress=mutate_after_scan)
+
+    assert target.read_bytes() == b"old"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_jsonl_to_parquet_stream_discovers_late_columns(tmp_path):
+    pytest.importorskip("pyarrow")
+    source = tmp_path / "input.jsonl"
+    source.write_text(
+        "\n".join(
+            json.dumps({"record_id": str(index), "value": index, **({"tail_only": "kept"} if index == 699 else {})})
+            for index in range(700)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "output.parquet"
+
+    result = convertx.convert(source, target)
+    values = convertx.READERS[".parquet"](target, {})
+
+    assert result.rows == result.extra["written_records"] == 700
+    assert result.columns[-1] == "tail_only"
+    assert values[0]["tail_only"] is None
+    assert values[-1]["tail_only"] == "kept"
+
+
+def test_empty_jsonl_to_parquet_keeps_empty_output_contract(tmp_path):
+    pytest.importorskip("pyarrow")
+    source = tmp_path / "input.jsonl"
+    source.write_text("", encoding="utf-8")
+    target = tmp_path / "output.parquet"
+
+    result = convertx.convert(source, target)
+    values = convertx.READERS[".parquet"](target, {})
+
+    assert result.rows == result.extra["written_records"] == 0
+    assert result.columns == ["record_id"]
+    assert values == []
+
+
+def test_jsonl_to_duckdb_stream_discovers_late_columns(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    source = tmp_path / "input.jsonl"
+    source.write_text(
+        "\n".join(
+            json.dumps({"record_id": str(index), "value": index, **({"tail_only": "kept"} if index == 699 else {})})
+            for index in range(700)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "output.duckdb"
+
+    result = convertx.convert(source, target)
+
+    with duckdb.connect(str(target), read_only=True) as connection:
+        columns = [item[0] for item in connection.execute("DESCRIBE records").fetchall()]
+        values = connection.execute(
+            'SELECT "tail_only" FROM records ORDER BY CAST("record_id" AS INTEGER)'
+        ).fetchall()
+    assert result.rows == result.extra["written_records"] == 700
+    assert result.columns[-1] == "tail_only"
+    assert columns[-1] == "tail_only"
+    assert values[0] == (None,)
+    assert values[-1] == ("kept",)
+
+
+def test_empty_jsonl_to_duckdb_stream_creates_empty_table(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    source = tmp_path / "input.jsonl"
+    source.write_text("", encoding="utf-8")
+    target = tmp_path / "output.duckdb"
+
+    result = convertx.convert(source, target)
+
+    with duckdb.connect(str(target), read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM records").fetchone() == (0,)
+    assert result.rows == result.extra["written_records"] == 0
+
+
+def test_jsonl_to_xlsx_stream_discovers_late_columns(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    source = tmp_path / "input.jsonl"
+    source.write_text(
+        "\n".join(
+            json.dumps({"record_id": str(index), "value": index, **({"tail_only": "kept"} if index == 699 else {})})
+            for index in range(700)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "output.xlsx"
+
+    result = convertx.convert(source, target)
+
+    workbook = openpyxl.load_workbook(target, read_only=True, data_only=True)
+    try:
+        values = list(workbook.active.iter_rows(values_only=True))
+    finally:
+        workbook.close()
+    header = list(values[0])
+    assert result.rows == result.extra["written_records"] == 700
+    assert header[-1] == "tail_only"
+    assert values[1][-1] is None
+    assert values[-1][-1] == "kept"
+
+
+def test_jsonl_stream_abort_preserves_existing_output(tmp_path):
+    source = tmp_path / "input.jsonl"
+    source.write_text('{"record_id":"1"}\ninvalid\n', encoding="utf-8")
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+
+    with pytest.raises(ValueError, match="JSONL 解析失败"):
+        convertx.convert(source, target, on_error="abort")
+
+    assert target.read_bytes() == b"old"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_xlsx_to_jsonl_stream_cancel_closes_reader_and_preserves_output(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    source = tmp_path / "input.xlsx"
+    workbook = openpyxl.Workbook(write_only=True)
+    sheet = workbook.create_sheet()
+    sheet.append(["record_id", "value"])
+    for index in range(1000):
+        sheet.append([str(index), f"value-{index}"])
+    workbook.save(source)
+    workbook.close()
+    assert isinstance(convertx.READERS[".xlsx"](source, {}), list)
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+    stopped = Event()
+    events = []
+
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source,
+            target,
+            should_stop=stopped.is_set,
+            on_progress=events.append,
+            on_write_progress=lambda _payload: stopped.set(),
+        )
+
+    assert target.read_bytes() == b"old"
+    assert [event.state for event in events if event.state in {"finished", "cancelled", "failed"}] == ["cancelled"]
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_xlsx_stream_path_respects_registered_reader_override(tmp_path, monkeypatch):
+    pytest.importorskip("openpyxl")
+    source = tmp_path / "input.xlsx"
+    source.write_bytes(b"custom reader does not inspect this")
+    target = tmp_path / "output.jsonl"
+    called = []
+
+    def custom_reader(path, options):
+        called.append((path, options))
+        return [{"custom": "xlsx"}]
+
+    monkeypatch.setitem(convertx.READERS, ".xlsx", custom_reader)
+    result = convertx.convert(source, target)
+
+    assert called and result.rows == 1
+    assert json.loads(target.read_text(encoding="utf-8")) == {"custom": "xlsx"}
+
+
+def test_parquet_to_jsonl_stream_cancel_closes_reader_and_preserves_output(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    source = tmp_path / "input.parquet"
+    pq.write_table(pa.table({"record_id": [str(index) for index in range(1000)]}), source)
+    assert isinstance(convertx.READERS[".parquet"](source, {}), list)
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+    stopped = Event()
+    events = []
+
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source,
+            target,
+            should_stop=stopped.is_set,
+            on_progress=events.append,
+            on_write_progress=lambda _payload: stopped.set(),
+        )
+
+    assert target.read_bytes() == b"old"
+    assert [event.state for event in events if event.state in {"finished", "cancelled", "failed"}] == ["cancelled"]
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_duckdb_to_jsonl_stream_cancel_closes_connection_and_preserves_output(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    source = tmp_path / "input.duckdb"
+    with duckdb.connect(str(source)) as connection:
+        connection.execute("CREATE TABLE records AS SELECT range::VARCHAR AS record_id FROM range(1000)")
+    assert isinstance(convertx.READERS[".duckdb"](source, {}), list)
+    target = tmp_path / "output.jsonl"
+    target.write_bytes(b"old")
+    stopped = Event()
+
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(
+            source,
+            target,
+            should_stop=stopped.is_set,
+            on_write_progress=lambda _payload: stopped.set(),
+        )
+
+    assert target.read_bytes() == b"old"
+    with duckdb.connect(str(source), read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM records").fetchone() == (1000,)
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_xlsx_partial_save_does_not_replace_previous_workbook(tmp_path, monkeypatch):
+    openpyxl = pytest.importorskip("openpyxl")
+    source = source_file(tmp_path)
+    target = tmp_path / "out.xlsx"
+    target.write_bytes(b"original")
+
+    def broken_save(self, filename):
+        Path(filename).write_bytes(b"partial zip")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(openpyxl.Workbook, "save", broken_save)
+    with pytest.raises(RuntimeError, match="无法写入 Excel"):
+        convertx.convert(source, target)
+    assert target.read_bytes() == b"original"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_duckdb_cancel_rolls_back_target_table_and_preserves_other_tables(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    source = source_file(tmp_path)
+    target = tmp_path / "out.duckdb"
+    with duckdb.connect(str(target)) as con:
+        con.execute("CREATE TABLE records AS SELECT 99 AS old_id")
+        con.execute("CREATE TABLE unrelated AS SELECT 'keep' AS value")
+    stop = Event()
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(source, target, should_stop=stop.is_set, on_write_progress=lambda payload: stop.set())
+    with duckdb.connect(str(target)) as con:
+        assert con.execute("SELECT * FROM records").fetchall() == [(99,)]
+        assert con.execute("SELECT * FROM unrelated").fetchall() == [("keep",)]
+    result = convertx.convert(source, target)
+    assert result.extra["written_records"] == 700
+    with duckdb.connect(str(target)) as con:
+        assert con.execute("SELECT count(*) FROM records").fetchone() == (700,)
+        assert con.execute("SELECT * FROM unrelated").fetchall() == [("keep",)]
+
+
+def test_cancel_new_duckdb_leaves_no_empty_database(tmp_path):
+    pytest.importorskip("duckdb")
+    source = source_file(tmp_path)
+    target = tmp_path / "new.duckdb"
+    stop = Event()
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(source, target, should_stop=stop.is_set, on_write_progress=lambda payload: stop.set())
+    assert list(tmp_path.iterdir()) == [source]
+
+
+@pytest.mark.parametrize("extension", [".txt", ".md"])
+def test_document_write_cancellation_keeps_original(tmp_path, monkeypatch, extension):
+    source = tmp_path / "source.txt"
+    source.write_text("A document", encoding="utf-8")
+    target = tmp_path / ("out" + extension)
+    target.write_text("old", encoding="utf-8")
+    write_text = Path.write_text
+    stop = Event()
+
+    def write_then_cancel(self, *args, **kwargs):
+        result = write_text(self, *args, **kwargs)
+        stop.set()
+        return result
+
+    monkeypatch.setattr(Path, "write_text", write_then_cancel)
+    with pytest.raises(convertx.ConversionCancelledError):
+        convertx.convert(source, target, should_stop=stop.is_set)
+    assert target.read_text(encoding="utf-8") == "old"
+    assert len(list(tmp_path.iterdir())) == 2
