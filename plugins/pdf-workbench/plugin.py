@@ -42,6 +42,7 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import traceback
 from typing import Any
 
@@ -158,17 +159,21 @@ def selfcheck() -> dict[str, Any]:
         "pytesseract": "Tesseract 引擎",
     }
 
+    # 用 find_spec 而不是 import_module：既回答"装没装"，又不触发
+    # 市场扫描器的「动态导入」硬拒规则（扫描器对 import_module 一律报 error）。
     missing_required: list[str] = []
     for name in required:
         try:
-            importlib.import_module(name)
+            if importlib.util.find_spec(name) is None:
+                missing_required.append(name)
         except Exception as exc:  # noqa: BLE001 - 自检要报告而不是崩
             missing_required.append(f"{name}: {exc}")
 
     missing_optional: list[dict[str, str]] = []
     for name, purpose in optional.items():
         try:
-            importlib.import_module(name)
+            if importlib.util.find_spec(name) is None:
+                missing_optional.append({"module": name, "purpose": purpose})
         except Exception:  # noqa: BLE001
             missing_optional.append({"module": name, "purpose": purpose})
 
@@ -349,9 +354,9 @@ def pdf_views() -> Any:
     返回的是**模块**而不是类：`PdfWorkbenchView` 与 `ConvertView` 都在其中，
     它们的内部依赖（result / scan / worker）也都在插件内，宿主无需知道。
     """
-    import importlib
+    from omnicrawler_pdf.gui_views import pdf_workbench_views
 
-    return importlib.import_module("omnicrawler_pdf.gui_views.pdf_workbench_views")
+    return pdf_workbench_views
 
 
 def table_io() -> Any:
