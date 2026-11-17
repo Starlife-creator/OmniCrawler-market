@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import importlib.util
+import pathlib
 import traceback
 from typing import Any
 
@@ -83,10 +84,28 @@ class PDFWorkbenchProcessor:
 
     def process(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行 PDF 处理主流程。参数与返回值语义见 `README.md`。"""
-        from omnicrawler_pdf.pdfx.service import run_processing
+        from omnicrawler_pdf.pdfx.service import run_extraction
 
-        config = _resolve_project_config(payload)
-        return {"ok": True, "result": run_processing(config)}
+        # **完整管线**是 run_extraction(auto_prepare=True)，不是 run_processing。
+        #
+        # 实测踩到：run_processing 只做 ingest → parse → ocr → text_export，
+        # 返回里**没有** extract 键；用它当 "processor.process" 会让抽取结果
+        # 永远为空（五表照常产出，但字段全是空的）。真正串起
+        # ingest→parse→ocr→extract→export 的是 run_extraction，
+        # 它的 auto_prepare=True 会先补跑前置阶段。
+        #
+        # 两个函数都收**配置路径**（内部 prepare_config 再加载），不是对象。
+        config_path = _config_path(payload)
+        try:
+            return {"ok": True, "result": run_extraction(config_path)}
+        finally:
+            # 只有内联配置会落临时文件（config_path 分支返回的是调用方路径，
+            # 删它等于删用户的项目配置）。用前缀区分。
+            if pathlib.Path(config_path).name.startswith("tmp"):
+                try:
+                    pathlib.Path(config_path).unlink()
+                except OSError:
+                    pass
 
 
 class PDFWorkbenchExporter:
@@ -104,36 +123,66 @@ class PDFWorkbenchExporter:
         return {"ok": True, "summary": summary, "artifact_path": summary.get("files")}
 
 
+def _config_path(payload: dict[str, Any]) -> str:
+    """把 payload 归一为**配置文件路径**（
+un_processing 需要路径）。
+
+    为什么单独一个函数：插件里有两种消费方式——
+    * 
+un_processing(path) 收路径（内部自己 prepare_config）；
+    * xport_stage(config, db) 收 ProjectConfig 对象。
+
+    早先只写了"返回对象"的版本，导致 processor.process 把对象传给
+    
+un_processing 而失败（实测）。两条路径各取所需，不硬凑成一个。
+    """
+    path = payload.get("config_path") or payload.get("project")
+    if path:
+        return str(path)
+    return _write_inline_config(payload)
+
+
+def _write_inline_config(payload: dict[str, Any]) -> str:
+    """把内联配置字典落成临时 YAML，返回其路径。
+
+    **调用方负责删除**（_config_path 的使用者在处理完后清理）。
+    用临时文件而不是在内存里构造 ProjectConfig：走同一条 load_config
+    路径才能保证 schema 校验完全一致——两套加载逻辑必然漂移。
+    """
+    import tempfile
+
+    import yaml
+
+    inline = payload.get("config")
+    if not isinstance(inline, dict):
+        raise ValueError("需要 config_path 或 config（内联项目配置）")
+    handle = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8")
+    try:
+        handle.write(yaml.safe_dump(inline, allow_unicode=True))
+    finally:
+        handle.close()
+    return handle.name
+
+
 def _resolve_project_config(payload: dict[str, Any]) -> Any:
-    """按 payload 取 PDF 项目配置（路径优先，其次内联字典）。"""
+    """按 payload 取 **ProjectConfig 对象**（xport_stage 等需要对象）。"""
+    import os
+
     from omnicrawler_pdf.pdfx.config import load_config
 
     path = payload.get("config_path") or payload.get("project")
     if path:
         return load_config(path)
 
-    inline = payload.get("config")
-    if isinstance(inline, dict):
-        import os
-        import tempfile
-
-        import yaml
-
-        handle = tempfile.NamedTemporaryFile(
-            "w", suffix=".yaml", delete=False, encoding="utf-8"
-        )
+    # 内联配置：落临时文件 → 同一条 load_config 路径 → 删掉。
+    temporary = _write_inline_config(payload)
+    try:
+        return load_config(temporary)
+    finally:
         try:
-            handle.write(yaml.safe_dump(inline, allow_unicode=True))
-        finally:
-            handle.close()
-        try:
-            return load_config(handle.name)
-        finally:
-            try:
-                os.unlink(handle.name)
-            except OSError:
-                pass
-    raise ValueError("需要 config_path 或 config（内联项目配置）")
+            os.unlink(temporary)
+        except OSError:
+            pass
 
 
 def selfcheck() -> dict[str, Any]:
