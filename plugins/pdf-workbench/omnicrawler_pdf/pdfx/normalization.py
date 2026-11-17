@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import re
+import threading
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+
+# 条目 7 续：金额归一的实现在宿主侧（quality.amounts），这里只委托。
+from ..compat import amounts as _amounts
+from .config import FieldSpec, ProjectConfig
+from .templates import is_builtin_pdf_reference, resolve_builtin_pdf_reference
+
+AMOUNT_UNITS = {
+    "亿元": 100_000_000,
+    "亿": 100_000_000,
+    "千万元": 10_000_000,
+    "百万元": 1_000_000,
+    "百万": 1_000_000,
+    "万元": 10_000,
+    "万": 10_000,
+    "千元": 1_000,
+    "百元": 100,
+    "元": 1,
+}
+
+# S2.5.1：外币识别补符号/ISO 形式（$100 / USD 100 / €50 / HK$），
+# 中文币名保留原 _FOREIGN_CURRENCIES 语义。¥ 是人民币符号不拒。
+_FOREIGN_CURRENCY_RE = re.compile(
+    r"(?:美元|美金|港币|港元|欧元|日元|日圆|英镑|瑞郎|法郎)"
+    r"|(?<![A-Za-z])(?:USD|EUR|JPY|GBP|HKD|AUD|CAD)(?=\s*\d)"
+    r"|(?<=[\d，,.])\s*(?:USD|EUR|JPY|GBP|HKD|AUD|CAD)\b"
+    r"|(?:HK\$|\$|€|£)(?=\s*\d)"
+)
+
+
+#: 分隔符归一映射：全角/中文标点先收敛到 ASCII —— `．`/`。` 都是 OCR 的常见形态，
+#: 不先收敛会让同一份文本走不同分支。
+_SEPARATOR_TRANSLATION = str.maketrans({"，": ",", "．": ".", "。": ".", "｡": "."})
+
+# B-P3-2：比率上下文标记——出现这些词时 0–1 不再按百分数乘 100（避免比率被误判成百分数）。
+_RATIO_CONTEXT_RE = re.compile(r"比例|比率|占比|系数|ratio", re.IGNORECASE)
+
+# B-P3-2：别名否定词：多字否定词回溯 6 字符窗口；单字否定词仅回溯紧邻 2 字符。
+_NEGATION_MULTI = ("不是", "并非", "并未", "没有", "不属", "无权", "不构成")
+_NEGATION_SINGLE = "非不未无"
+_ALIAS_NEGATION_WINDOW = 6
+
+
+def _alias_match_index(text: str, alias: str) -> int:
+    """定位别名起点；含字母数字的别名要求两侧词边界，避免嵌入更长 token 误匹配。"""
+    if not alias:
+        return -1
+    if re.search(r"[A-Za-z0-9]", alias):
+        match = re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", text
+        )
+        return match.start() if match else -1
+    return text.find(alias)
+
+
+def _alias_is_negated(text: str, index: int) -> bool:
+    prefix = text[max(0, index - _ALIAS_NEGATION_WINDOW):index]
+    if any(token in prefix for token in _NEGATION_MULTI):
+        return True
+    tail = prefix[-2:]
+    return any(ch in tail for ch in _NEGATION_SINGLE)
+
+
+# ── 金额归一：实现已上提到宿主侧 `quality.amounts`（条目 7 续）──────────
+#
+# 为什么搬：`services/pdf_quality_benchmark.py` 此前在**模块顶层**导入
+# `pdfx.normalization.normalize_amount`，导致「只导入质量基准」也硬依赖 pdfx。
+# 而 pdfx 要作为可选组件分发，组件缺失时宿主不该连带崩掉。
+#
+# 这里保留同名函数与同名常量（pdfx 内部仍有调用点），实现委托到宿主侧，
+# **只有一份逻辑**，不会出现两边漂移。
+
+
+def _grouping_valid(token: str) -> bool:
+    return _amounts._grouping_valid(token)
+
+
+def _parse_numeric_token(token: str) -> float | None:
+    return _amounts.parse_numeric_token(token)
+
+
+def _number(text: str) -> float | None:
+    return _amounts.extract_number(text)
+
+
+def _format_decimal(value: object) -> str:
+    return _amounts.format_decimal(value)
+
+
+def normalize_amount(raw: str, target_unit: str | None = "元") -> tuple[str | None, str | None]:
+    return _amounts.normalize_amount(raw, target_unit)
+
+
+# B-P3-2：日期年份模式与合理性边界（未来日期 / 过早年份不作为可交付日期）。
+_DATE_YEAR_PATTERN = r"(?:19|20)\d{2}"
+_DATE_PATTERNS = [
+    rf"(?P<y>{_DATE_YEAR_PATTERN})[年./-](?P<m>\d{{1,2}})[月./-](?P<d>\d{{1,2}})日?",
+    rf"(?P<y>{_DATE_YEAR_PATTERN})年(?P<m>\d{{1,2}})月",
+    rf"(?P<y>{_DATE_YEAR_PATTERN})年?",
+]
+_DATE_YEAR_MIN = 1900
+
+
+def normalize_date(raw: str) -> tuple[str | None, None]:
+    text = raw.strip()
+    for pattern in _DATE_PATTERNS:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        year = int(match.group("y"))
+        month = int(match.groupdict().get("m") or 1)
+        day = int(match.groupdict().get("d") or 1)
+        try:
+            parsed = date(year, month, day)
+        except ValueError:
+            # D52：该 pattern 解析失败（如 2023年13月 的 OCR 错字）继续尝试下一 pattern
+            continue
+        # B-P3-2：未来日期与早于 1900 年的年份不作为有效交付日期，继续尝试下一模式。
+        if parsed.year > date.today().year or parsed.year < _DATE_YEAR_MIN:
+            continue
+        if "d" not in match.groupdict() or not match.groupdict().get("d"):
+            normalized = f"{year:04d}-{month:02d}" if match.groupdict().get("m") else f"{year:04d}"
+            return normalized, None
+        return parsed.isoformat(), None
+    return None, None
+
+
+def normalize_percent(raw: str) -> tuple[str | None, str]:
+    value = _number(raw)
+    if value is None:
+        return None, "%"
+    # B-P3-2：比率上下文（比例/比率/占比/系数/ratio）下 0–1 视为比率，不再误乘 100。
+    ratio_context = bool(_RATIO_CONTEXT_RE.search(raw))
+    if "%" not in raw and "百分之" not in raw and not ratio_context and 0 <= value <= 1:
+        value *= 100
+    text = str(int(value)) if value.is_integer() else f"{value:.8f}".rstrip("0").rstrip(".")
+    return text, "%"
+
+
+# Content-versioned cache: replacing a CSV while preserving timestamps must refresh aliases.
+_entity_cache: dict[str, tuple[str, dict[str, str]]] = {}
+_entity_lock = threading.Lock()
+
+
+def _entity_content_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+    except FileNotFoundError:
+        return "missing"
+    return digest.hexdigest()
+
+
+def _load_entities(csv_path: Path) -> dict[str, str]:
+    """Cache entity aliases by content using bounded-memory file hashing."""
+    resolved = csv_path.resolve()
+    content_digest = _entity_content_digest(resolved)
+    cache_key = str(resolved)
+    cached = _entity_cache.get(cache_key)
+    if cached is not None and cached[0] == content_digest:
+        return cached[1]
+    with _entity_lock:
+        cached = _entity_cache.get(cache_key)
+        if cached is not None and cached[0] == content_digest:
+            return cached[1]
+        aliases: dict[str, str] = {}
+        if resolved.exists():
+            with resolved.open("r", encoding="utf-8-sig", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    canonical = (row.get("standard_name") or "").strip()
+                    if not canonical:
+                        continue
+                    aliases[canonical.casefold()] = canonical
+                    for alias in (row.get("aliases") or "").split("|"):
+                        if alias.strip():
+                            aliases[alias.strip().casefold()] = canonical
+        if _entity_content_digest(resolved) == content_digest:
+            _entity_cache[cache_key] = (content_digest, aliases)
+            while len(_entity_cache) > 8:
+                _entity_cache.pop(next(iter(_entity_cache)))
+        return aliases
+
+
+@dataclass(slots=True)
+class EntityResolver:
+    aliases: dict[str, str]
+    # D44：预计算去空白键字典（resolve 每次调用不再重建全表）
+    _direct: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_config(cls, config: ProjectConfig) -> EntityResolver:
+        path_value = config.normalization.get("entity_master_csv")
+        if not path_value:
+            return cls({})
+        path = (
+            resolve_builtin_pdf_reference(str(path_value))
+            if is_builtin_pdf_reference(str(path_value))
+            else Path(path_value)
+        )
+        if not path.is_absolute():
+            base = config.path.parent
+            project_root_found = False
+            for candidate in [config.path.parent, *config.path.parents]:
+                if (candidate / "pyproject.toml").is_file():
+                    base = candidate
+                    project_root_found = True
+                    break
+            if not project_root_found:
+                for candidate in config.path.parents:
+                    if candidate.name == "configs":
+                        base = candidate.parent
+                        break
+            path = (base / path).resolve()
+        aliases = _load_entities(path)
+        direct = {re.sub(r"\s+", "", key): value for key, value in aliases.items()}
+        return cls(aliases, direct)
+
+    def resolve(self, raw: str) -> str:
+        key = re.sub(r"\s+", "", raw).casefold()
+        return self._direct.get(key, raw.strip())
+
+
+#: 汉字（含扩展 A、兼容区）——用于识别"汉字紧邻汉字"的 OCR 空格噪声
+_CJK_RANGE = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+
+
+def _collapse_whitespace(value: str) -> str:
+    """OCR 空白归一（两步，顺序有意义）：
+
+    1. **折叠连续空白**为单个空格 —— 与语言无关的常规化；
+    2. 删掉**相邻汉字之间**的那一个空格 —— chi_sim 会在汉字之间插空格
+       （实测 "示例服务合同" → "示例  服务  合同"），只做第 1 步仍得到
+       "示例 服务 合同"，与真值不一致。
+
+    第 2 步**只删"汉字紧邻汉字"**那一类：英文/数字之间的空白必须保留
+    （"Sample Service Contract"、"总额 1234 元" 里的空格是有意义的）。
+    """
+    collapsed = re.sub(r"\s+", " ", value)
+    return re.sub(rf"(?<=[{_CJK_RANGE}]) (?=[{_CJK_RANGE}])", "", collapsed)
+
+
+def normalize_value(
+    raw: str | None,
+    spec: FieldSpec,
+    entity_resolver: EntityResolver | None = None,
+    *,
+    from_ocr: bool = False,
+) -> tuple[str | None, str | None]:
+    """把原始文本归一到交付值。
+
+    ``from_ocr``：该值是否取自 **OCR 页**（`pages.parse_method == "ocr"`）。
+    文本类字段在未显式声明 `collapse_whitespace` 时**按它决定**是否折叠 OCR 空白伪影
+    —— 见文件末尾的说明（§5.8 #24）。显式声明（True/False）始终优先。
+    """
+    if raw is None or not str(raw).strip():
+        return None, spec.target_unit
+    text = str(raw).strip()
+    kind = spec.type.lower()
+    if kind in {"amount", "currency"}:
+        return normalize_amount(text, spec.target_unit or "元")
+    if kind == "date":
+        return normalize_date(text)
+    if kind == "percent":
+        return normalize_percent(text)
+    if kind == "integer":
+        value = _number(text)
+        return (str(int(value)) if value is not None else None), None
+    if kind == "number":
+        value = _number(text)
+        if value is None:
+            return None, spec.target_unit
+        normalized = str(int(value)) if value.is_integer() else str(value)
+        return normalized, spec.target_unit
+    if kind == "boolean":
+        folded = text.casefold()
+        if folded in {"是", "有", "true", "yes", "1"}:
+            return "1", None
+        if folded in {"否", "无", "false", "no", "0"}:
+            return "0", None
+        return None, None
+    if kind in {"enum", "relationship"}:
+        # D53：精确匹配优先；别名按最长优先，且拒绝含否定词（非/不/未/无）的误匹配
+        for canonical, _aliases in spec.value_aliases.items():
+            if text == canonical:
+                return canonical, None
+        best: str | None = None
+        best_length = -1
+        for canonical, aliases in spec.value_aliases.items():
+            for alias in aliases:
+                index = _alias_match_index(text, alias)
+                if index < 0:
+                    continue
+                # B-P3-2：否定词加长回溯窗口并识别多字否定词，避免“不是/并非/并未…全资子公司”误归一。
+                if _alias_is_negated(text, index):
+                    continue
+                if len(alias) > best_length:
+                    best = canonical
+                    best_length = len(alias)
+        if best:
+            return best, None
+        return text, None
+    if kind == "entity" and entity_resolver:
+        return entity_resolver.resolve(text), None
+    # 文本类兜底：默认原样返回（只去过首尾空白）；是否折叠 OCR 空白按**来源**决定——
+    # `spec.collapse_whitespace` 显式声明优先，未声明时用 `from_ocr`（该值取自 OCR 页）。
+    # 理由（§5.8 #24，2026-09-15 拍板）：汉字间空格是**识别器伪影**（chi_sim 实测
+    # "示例服务合同" → "示例  服务  合同"），且实测置信度 0.98 会被自动放行 ⇒ 交付脏值；
+    # 逐字段开关等于把"记得去开"交给用户，而默认值才是产品口径。原始值仍在 `raw_value`/原文证据里。
+    # 注意：只影响**返回值**，不影响 enum/entity 的匹配（那些走上面各自的分支）。
+    collapse = spec.collapse_whitespace if spec.collapse_whitespace is not None else from_ocr
+    if collapse:
+        return _collapse_whitespace(text), spec.target_unit
+    return text, spec.target_unit

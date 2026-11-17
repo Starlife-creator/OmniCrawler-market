@@ -1,0 +1,304 @@
+"""document_ir 解析器注册表与标准库解析器（txt/html/eml）。
+
+S1 范围：纯标准库 + 项目内 html_tools（自包含）解析，零外部 CLI。
+富文档（docx/pptx/odt/epub）解析在 S2 以懒加载方式追加注册。
+
+设计对齐 convertx 的注册表范式：``register_document_parser`` 装饰器 +
+``sniff_document_format`` 后缀推断 + 可选依赖缺失时抛 ModuleNotFoundError。
+"""
+
+from __future__ import annotations
+
+import email
+import email.header
+import re
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from ..compat.encoding import read_text_auto
+from ..compat.html_tools import MiniNode, discover_links, node_attr, node_text, parse_html, select_nodes
+from .base import DocumentIR
+
+#: 解析器签名：输入文件 + options → 统一中间表示
+DocumentParserFn = Callable[[Path, dict[str, Any]], DocumentIR]
+
+DOCUMENT_PARSERS: dict[str, DocumentParserFn] = {}
+
+# B-P2-14b：邮件整封读入内存，设大小上限（10 MiB），超限截断并在 metadata 标注。
+_EML_MAX_BYTES = 10 * 1024 * 1024
+
+
+def register_document_parser(*extensions: str) -> Callable[[DocumentParserFn], DocumentParserFn]:
+    """注册一个文档解析器（装饰器）。extensions 含前导点，如 '.txt'。"""
+
+    def _wrap(fn: DocumentParserFn) -> DocumentParserFn:
+        for ext in extensions:
+            DOCUMENT_PARSERS[ext.lower()] = fn
+        return fn
+
+    return _wrap
+
+
+def sniff_document_format(path: Path) -> str | None:
+    """按后缀推断格式（统一返回 DOCUMENT_PARSERS 中的 key）。
+
+    Alias 归一化：.htm → .html（同一解析器）。
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".htm":
+        return ".html"
+    return suffix if suffix in DOCUMENT_PARSERS else None
+
+
+def _require_file(path: Path) -> None:
+    if not isinstance(path, Path):
+        path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"document_ir: 输入文件不存在: {path}")
+    if not path.exists():
+        raise FileNotFoundError(f"document_ir: 输入文件路径无效: {path}")
+
+
+def _require_parser(kind: str, hint: str) -> None:
+    """缺可选依赖时的统一降级提示（对齐 convertx CLI 风格）。"""
+    raise ModuleNotFoundError(
+        f"缺少可选依赖 '{hint}'。该格式需要额外安装：pip install {hint}"
+        f"（或 pip install omnicrawler[document]）",
+        name=hint,
+    )
+
+
+# ── .txt ─────────────────────────────────────────────────
+@register_document_parser(".txt")
+def _parse_txt(path: Path, options: dict[str, Any]) -> DocumentIR:
+    _require_file(path)
+    fallback = str(options.get("encoding_fallback", "utf-8"))
+    text, encoding = read_text_auto(path, fallback=fallback)
+    lines = [ln.strip() for ln in text.splitlines()]
+    paragraphs: list[str] = []
+    buffer: list[str] = []
+    for ln in lines:
+        if not ln:
+            if buffer:
+                paragraphs.append("\n".join(buffer))
+                buffer = []
+            continue
+        buffer.append(ln)
+    if buffer:
+        paragraphs.append("\n".join(buffer))
+    title = paragraphs[0] if paragraphs else ""
+    # 首段通常为标题：仅当它较短（如一行）时视为标题
+    if title and "\n" not in title and len(title) <= 80:
+        paragraphs = paragraphs[1:]
+    else:
+        title = path.stem
+    return DocumentIR(
+        source=path,
+        kind=".txt",
+        title=title,
+        paragraphs=paragraphs,
+        metadata={"encoding": encoding, "line_count": len(lines)},
+    )
+
+
+# ── .html / .htm ─────────────────────────────────────────
+_HEADING_SELECTOR = "h1,h2,h3,h4,h5,h6"
+_CONTENT_SELECTOR = "p,li,blockquote,h2,h3,h4,h5,h6"
+
+# T3：正文主体抽取 —— 正文容器词典（按优先级）。
+# 命中首个非空容器后只取容器内正文，跳过导航/页脚/侧栏；全部未命中回退全页选择。
+# 覆盖常见 CMS/WordPress/Elementor 页面结构与语义化 main/article。
+_MAIN_CONTAINER_SELECTORS = (
+    "main",
+    "article",
+    "[role=main]",
+    "#content",
+    "#main",
+    ".content",
+    ".entry-content",
+    ".post-content",
+    ".article-content",
+    ".page-content",
+    ".main-content",
+)
+
+
+def _select_main_container(document: Any) -> Any | None:
+    """按正文容器词典返回首个含实质文本的容器（无命中返回 None）。"""
+    for selector in _MAIN_CONTAINER_SELECTORS:
+        for node in select_nodes(document, selector):
+            if node_text(node).strip():
+                return node
+    return None
+
+
+@register_document_parser(".html")
+def _parse_html(path: Path, options: dict[str, Any]) -> DocumentIR:
+    _require_file(path)
+    fallback = str(options.get("encoding_fallback", "utf-8"))
+    raw, encoding = read_text_auto(path, fallback=fallback)
+    document = parse_html(raw)
+    if document is None:
+        raise ValueError(f"document_ir: 无法解析 HTML: {path}")
+
+    title = ""
+    heads = select_nodes(document, "h1")
+    if heads:
+        title = node_text(heads[0])
+    if not title:
+        title_nodes = select_nodes(document, "title")
+        if title_nodes:
+            title = node_text(title_nodes[0]).strip()
+
+    # 正文主体：容器命中则限定容器内，未命中回退全页选择（向后兼容）。
+    main_node: Any = None
+    if options.get("main_content", True):
+        main_node = _select_main_container(document)
+    content_root = main_node if main_node is not None else document
+    result = DocumentIR(source=path, kind=".html", title=title)
+    _append_html_blocks(result, content_root, include_h1=True)
+
+    links: list[tuple[str, str]] = []
+    for href, text, kind in discover_links(document):
+        if kind == "link" and href:
+            links.append((text or href, href))
+
+    meta: dict[str, Any] = {"encoding": encoding}
+    if main_node is not None:
+        meta["main_container"] = True
+    description = select_nodes(document, 'meta[name="description"]')
+    if description:
+        desc = node_attr(description[0], "content")
+        if desc:
+            meta["description"] = desc
+
+    result.links = links
+    result.metadata.update(meta)
+    return result
+
+
+def _append_html_blocks(result: DocumentIR, root: Any, *, part: str = "", include_h1: bool = False) -> None:
+    # Traverse both optional BeautifulSoup and the built-in MiniNode in DOM order.
+    iterator = root.iter_descendants() if isinstance(root, MiniNode) else root.descendants
+    tags = set(_CONTENT_SELECTOR.split(",")) | {"table"}
+    if include_h1:
+        tags.add("h1")
+    for position, node in enumerate(iterator):
+        tag = getattr(node, "tag", None) or getattr(node, "name", None)
+        if tag not in tags:
+            continue
+        parent = getattr(node, "parent", None)
+        nested = False
+        while parent is not None and parent is not root:
+            parent_tag = getattr(parent, "tag", None) or getattr(parent, "name", None)
+            if parent_tag in tags:
+                nested = True
+                break
+            parent = getattr(parent, "parent", None)
+        if nested:
+            continue
+        locator = {"part": part, "dom_position": position, "tag": tag}
+        if tag == "table":
+            cells = [[node_text(cell) for cell in select_nodes(row, "th,td")]
+                     for row in select_nodes(node, "tr")]
+            if cells:
+                result.add_table(cells, locator=locator)
+        else:
+            text = node_text(node)
+            if text:
+                level = int(tag[1]) if tag.startswith("h") else 0
+                result.add_paragraph(text, locator=locator, heading_level=level)
+
+
+# ── .eml ─────────────────────────────────────────────────
+_EML_HEADERS = ("from", "to", "cc", "subject", "date", "message-id")
+
+
+def _decode_header_value(value: str) -> str:
+    """解码 RFC2047 encoded-word 头（如 '=?utf-8?B?...?='）。"""
+    try:
+        parts = email.header.decode_header(value)
+        return "".join(
+            part.decode(charset or "utf-8", errors="replace") if isinstance(part, bytes) else part
+            for part, charset in parts
+        ).strip()
+    except Exception:  # noqa: BLE001 — 畸形头直接回原值，不崩溃
+        return value
+
+
+@register_document_parser(".eml")
+def _parse_eml(path: Path, options: dict[str, Any]) -> DocumentIR:
+    _require_file(path)
+    file_size = path.stat().st_size
+    truncated = file_size > _EML_MAX_BYTES
+    with path.open("rb") as fh:
+        raw = fh.read(_EML_MAX_BYTES) if truncated else fh.read()
+    msg = email.message_from_bytes(raw)
+    headers: dict[str, str] = {}
+    for key in _EML_HEADERS:
+        value = msg.get(key, "")
+        if value:
+            headers[key] = _decode_header_value(str(value))
+    title = headers.get("subject", path.stem)
+
+    def _decode(part: Any) -> str:
+        payload = part.get_payload(decode=True)
+        if not payload:
+            return ""
+        charset = part.get_content_charset() or "utf-8"
+        if not isinstance(payload, bytes):
+            payload = str(payload).encode("utf-8", errors="replace")
+        try:
+            return payload.decode(charset, errors="replace")
+        except LookupError:
+            return payload.decode("utf-8", errors="replace")
+
+    body_parts: list[str] = []
+    html_parts: list[str] = []
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        if content_type == "text/plain":
+            body_parts.append(_decode(part))
+            continue
+        if content_type == "text/html":
+            html_parts.append(_decode(part))
+            continue
+        if content_type == "multipart/alternative":
+            continue  # 子 part 已单独遍历
+
+    body_source = "plain"
+    if not body_parts and html_parts:
+        # B-P2-14b：纯 HTML 邮件无 text/plain 时降级为 HTML 文本提取，避免正文静默为空。
+        body_source = "html_fallback"
+        for html_text in html_parts:
+            document = parse_html(html_text)
+            body_parts.append(node_text(document))
+
+    paragraphs: list[str] = []
+    for body in body_parts:
+        for block in re.split(r"\n\s*\n", body):
+            text = " ".join(block.split())
+            if text:
+                paragraphs.append(text)
+
+    return DocumentIR(
+        source=path,
+        kind=".eml",
+        title=title,
+        paragraphs=paragraphs,
+        metadata={
+            "headers": headers,
+            "body_parts": len(body_parts),
+            "body_source": body_source,
+            "truncated": truncated,
+        },
+    )
+
+
+__all__ = [
+    "DOCUMENT_PARSERS",
+    "DocumentParserFn",
+    "register_document_parser",
+    "sniff_document_format",
+]
