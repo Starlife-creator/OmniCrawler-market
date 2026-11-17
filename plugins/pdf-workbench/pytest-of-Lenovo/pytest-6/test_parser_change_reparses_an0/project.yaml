@@ -1,0 +1,26 @@
+database: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_parser_change_reparses_an0\work\state.sqlite3
+extraction:
+  workers: 1
+fields:
+- label: Invoice
+  name: invoice
+  patterns:
+  - 'Invoice: (?P<value>[A-Z0-9]+)'
+  source: content
+  type: code
+input_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_parser_change_reparses_an0\in
+llm:
+  provider: disabled
+ocr:
+  backend: none
+  workers: 1
+output_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_parser_change_reparses_an0\out
+parser:
+  min_native_chars: 5000
+  workers: 1
+project_name: processing-dependency
+retrieval:
+  fallback_pages:
+  - 1
+  top_pages: 1
+work_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_parser_change_reparses_an0\work

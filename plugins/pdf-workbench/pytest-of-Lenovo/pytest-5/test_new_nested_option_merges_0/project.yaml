@@ -1,0 +1,15 @@
+extraction:
+  engine: regex
+  workers: 3
+  cache: true
+fields:
+- label: Code
+  name: code
+  patterns:
+  - A
+input_dir: in
+ocr:
+  backend: none
+output_dir: out
+project_name: base
+work_dir: work

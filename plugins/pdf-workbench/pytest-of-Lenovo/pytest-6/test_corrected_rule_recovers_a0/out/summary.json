@@ -1,0 +1,17 @@
+{
+  "project": "dependency-proof",
+  "exported_at": "2026-11-17T08:24:46+00:00",
+  "documents": 1,
+  "records": 1,
+  "needs_review": 1,
+  "errors": 0,
+  "document_status": {
+    "extracted": 1
+  },
+  "files": {
+    "excel": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-6\\test_corrected_rule_recovers_a0\\out\\extraction_results.xlsx",
+    "results_csv": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-6\\test_corrected_rule_recovers_a0\\out\\results.csv",
+    "review_csv": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-6\\test_corrected_rule_recovers_a0\\out\\review_queue.csv",
+    "long_csv": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-6\\test_corrected_rule_recovers_a0\\out\\field_values_long.csv"
+  }
+}

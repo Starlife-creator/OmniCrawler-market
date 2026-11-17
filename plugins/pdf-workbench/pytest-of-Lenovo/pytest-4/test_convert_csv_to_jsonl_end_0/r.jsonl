@@ -1,0 +1,2 @@
+{"record_id": "r1", "source_url": "https://example.com/p1", "record_type": "product", "created_at": "2026-08-01T10:00:00Z", "title": "笔记本电脑 Pro", "price": "6999", "in_stock": "True"}
+{"record_id": "r2", "source_url": "https://example.com/p2", "record_type": "product", "created_at": "2026-08-01T11:00:00Z", "title": "无线鼠标", "price": "99.5", "in_stock": "False"}

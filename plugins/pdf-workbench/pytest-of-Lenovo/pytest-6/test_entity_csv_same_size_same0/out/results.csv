@@ -1,0 +1,2 @@
+﻿记录ID,文档ID,文件名,原始路径,记录序号,文档类型,抽取方式,记录置信度,校验状态,复核状态,校验信息,Company,Company_原始值,Company_单位,Company_页码,Company_原文证据,Company_字段置信度
+812cbe66b4f1eadeef90cf829cc4afbbcf18df1735a938e204d27e3c2212a838,48380f55d1a07118c543edae045611953aa207a41c89541547ec7a07ae6e7a0a,sample0.pdf,E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_entity_csv_same_size_same0\in\sample0.pdf,1,,rules,0.98,valid,auto_accepted,[],Other,Alias,,1,Invoice: A0 Amount: 100 Company: Alias,0.98

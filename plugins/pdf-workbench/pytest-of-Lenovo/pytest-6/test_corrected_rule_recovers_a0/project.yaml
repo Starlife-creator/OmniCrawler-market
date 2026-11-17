@@ -1,0 +1,25 @@
+database: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_corrected_rule_recovers_a0\work\state.sqlite3
+extraction:
+  workers: 1
+fields:
+- label: Unknown
+  name: invoice
+  patterns:
+  - 'Invoice: (?P<value>[A-Z0-9]+)'
+  source: content
+  type: code
+input_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_corrected_rule_recovers_a0\in
+llm:
+  provider: disabled
+ocr:
+  backend: none
+output_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_corrected_rule_recovers_a0\out
+parser:
+  min_native_chars: 5
+  workers: 1
+project_name: dependency-proof
+retrieval:
+  fallback_pages:
+  - 1
+  top_pages: 1
+work_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_corrected_rule_recovers_a0\work

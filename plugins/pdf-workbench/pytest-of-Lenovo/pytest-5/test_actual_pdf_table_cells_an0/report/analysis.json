@@ -1,0 +1,149 @@
+{
+  "format": 1,
+  "fact_stage_version": 8,
+  "documents": [
+    {
+      "id": "table",
+      "path": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-5\\test_actual_pdf_table_cells_an0\\table.pdf",
+      "sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b",
+      "source_url": "",
+      "title": "table",
+      "paragraph_count": 2,
+      "table_count": 1,
+      "warnings": [
+        "Page 1: paragraph/table reading order could not be established"
+      ],
+      "parsing_metadata": {
+        "page_count": 1,
+        "page_geometry": {
+          "1": {
+            "native_size": [
+              595.2756,
+              841.8898
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              595.2756,
+              841.8898
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              595.2756,
+              841.8898
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          }
+        },
+        "source_sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b",
+        "omitted_pages_needing_ocr": []
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "2ac3507c5b4fe8471e694f0a86bcd93190fa09ee5f213042e6636bbf92ddf3eb",
+      "source_id": "table",
+      "locator": {
+        "paragraph": 1,
+        "page": 1,
+        "page_paragraph": 1,
+        "bbox": [
+          265.7878,
+          83.07000000000005,
+          329.4878,
+          111.07000000000005
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-627935bf20670c0e43ad8850",
+        "parent_id": "",
+        "source_sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b"
+      },
+      "quote": "Item Price\nPaper 12.50"
+    },
+    {
+      "id": "a9d4d20c687f5fc8776cac9a26ff3b6b32f44997fed1eae218ffbf49d3a83275",
+      "source_id": "table",
+      "locator": {
+        "paragraph": 2,
+        "page": 1,
+        "page_paragraph": 2,
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-1a74764058eb8c98dab63f17",
+        "parent_id": "",
+        "source_sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b"
+      },
+      "quote": "[表格结构]\n| Item | Price |\n|---|---|\n| Paper | 12.50 |"
+    },
+    {
+      "id": "87acc389cb8ed9344260fdba7492a153b41755349dfe8fe2e87c5e4b8324cae8",
+      "source_id": "table",
+      "locator": {
+        "table": 1,
+        "row": 1,
+        "page": 1,
+        "node_id": "node-b984d05699450a4d6534359a",
+        "parent_id": "",
+        "source_sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          259.7878,
+          78.0,
+          335.4878,
+          114.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "source_table": 1,
+        "source_row": 1
+      },
+      "quote": "Item | Price"
+    },
+    {
+      "id": "058eec889748704596d5fe19795ceddb383a6d21ca9dc880e6f052b45ed3265a",
+      "source_id": "table",
+      "locator": {
+        "table": 1,
+        "row": 2,
+        "page": 1,
+        "node_id": "node-b984d05699450a4d6534359a",
+        "parent_id": "",
+        "source_sha256": "9ee30572cf7c05af19869add93dc3e2c92a886712d2c6648949a36d9c1580a2b",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          259.7878,
+          78.0,
+          335.4878,
+          114.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "source_table": 1,
+        "source_row": 2
+      },
+      "quote": "Paper | 12.50"
+    }
+  ],
+  "statistics": {
+    "documents": 1,
+    "paragraphs": 2,
+    "evidence_paragraphs": 4,
+    "evidence_characters": 98
+  },
+  "coverage": "bounded_excerpts; omitted paragraphs/pages are not analyzed; page unknown unless parser supplies provenance",
+  "interpretations": [],
+  "suggestions": [],
+  "requires_review": true,
+  "input_sha256": "9ae8e26aaab4544dfae1c191eb36a99debab01ad7dff3b4de9ebcdb52843d7bf",
+  "stage_sha256": "b81738eea29a569af64c182adc347bfe0f9b69b1991911bf3529e292cb444703",
+  "status": "completed_local",
+  "model": null
+}

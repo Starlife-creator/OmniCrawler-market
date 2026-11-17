@@ -321,7 +321,7 @@ def _detect_csv_encoding(path: Path, options: dict[str, Any]) -> str:
     if _file_decodes_strictly(path, utf_candidate, options):
         return utf_candidate
 
-    from ..core.encoding import detect_encoding
+    from ..compat.encoding import detect_encoding
 
     detected = detect_encoding(sample)
     candidates = dict.fromkeys((detected, "gb18030", "latin-1"))

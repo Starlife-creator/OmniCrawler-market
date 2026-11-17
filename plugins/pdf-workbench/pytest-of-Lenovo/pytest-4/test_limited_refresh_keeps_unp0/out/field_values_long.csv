@@ -1,0 +1,5 @@
+﻿记录ID,文档ID,文件名,字段名,原始值,标准化值,单位,页码,原文证据,抽取方式,字段置信度,校验状态
+320c6299b649bcfee3da76fa6a793c3026a7eccf2f1df5d547172e1592eb9afc,5e205d031afa7e31fcde6196831fb6e62738a3f35fbdd177b55e7e2d807b8868,sample0.pdf,amount,100,100,,1,Invoice: A0 Amount: 100 Company: Alias,content_rule,0.98,invalid
+320c6299b649bcfee3da76fa6a793c3026a7eccf2f1df5d547172e1592eb9afc,5e205d031afa7e31fcde6196831fb6e62738a3f35fbdd177b55e7e2d807b8868,sample0.pdf,invoice,A0,A0,,1,Invoice: A0 Amount: 100 Company: Alias,content_rule,0.98,invalid
+35a695f977fb3decbf0bb0c84628de78db1968905d78edcda509651c875baecf,31beb1a03c4172846d4070bae941cc99c9b100739fac6f233f20f6f71f69ede6,sample1.pdf,amount,100,100,,1,Invoice: A1 Amount: 100 Company: Alias,content_rule,0.98,invalid
+35a695f977fb3decbf0bb0c84628de78db1968905d78edcda509651c875baecf,31beb1a03c4172846d4070bae941cc99c9b100739fac6f233f20f6f71f69ede6,sample1.pdf,invoice,A1,A1,,1,Invoice: A1 Amount: 100 Company: Alias,content_rule,0.98,invalid

@@ -1,0 +1,2 @@
+﻿记录ID,文档ID,文件名,原始路径,记录序号,文档类型,抽取方式,记录置信度,校验状态,复核状态,校验信息,Invoice,Invoice_原始值,Invoice_单位,Invoice_页码,Invoice_原文证据,Invoice_字段置信度
+d4cd47909a81c775b7964bac87d917ecac7d6b3829d9b793dfb37525f4f0e81c,b84382c0c00bc4c2497714b394377e11b875a16db5e923adec166693082701d2,sample.pdf,E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-6\test_tesseract_traineddata_cha0\in\sample.pdf,1,,rules,0.55,invalid,needs_review,"[""字段代码不是 6 位数字：Invoice=OCR2"", ""OCR 字段置信度不足，需复核：Invoice""]",OCR2,OCR2,,1,Invoice: OCR2,0.55

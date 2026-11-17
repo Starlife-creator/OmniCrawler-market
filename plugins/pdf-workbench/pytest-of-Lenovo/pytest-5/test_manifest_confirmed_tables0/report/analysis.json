@@ -1,0 +1,368 @@
+{
+  "format": 1,
+  "fact_stage_version": 8,
+  "documents": [
+    {
+      "id": "tables",
+      "path": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-5\\test_manifest_confirmed_tables0\\tables.pdf",
+      "sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+      "source_url": "",
+      "parse_options": {
+        "confirmed_table_continuations": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      },
+      "title": "tables",
+      "paragraph_count": 6,
+      "table_count": 1,
+      "warnings": [
+        "Page 1: paragraph/table reading order could not be established",
+        "Page 2: paragraph/table reading order could not be established",
+        "Page 3: paragraph/table reading order could not be established",
+        "Cross-page table continuation candidates require review; original tables remain separate"
+      ],
+      "parsing_metadata": {
+        "page_count": 3,
+        "page_geometry": {
+          "1": {
+            "native_size": [
+              600.0,
+              800.0
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          },
+          "2": {
+            "native_size": [
+              600.0,
+              800.0
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          },
+          "3": {
+            "native_size": [
+              600.0,
+              800.0
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              600.0,
+              800.0
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          }
+        },
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+        "table_continuation_candidates": [
+          {
+            "before_table": 0,
+            "after_table": 1,
+            "pages": [
+              1,
+              2
+            ]
+          },
+          {
+            "before_table": 1,
+            "after_table": 2,
+            "pages": [
+              2,
+              3
+            ]
+          }
+        ],
+        "omitted_pages_needing_ocr": [],
+        "confirmed_table_continuations": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "c3bdcd4739ab94c6ca2ca1b8f9c2ad7d7415e0e5c508d640174719a729ba635e",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 1,
+        "page": 1,
+        "page_paragraph": 1,
+        "bbox": [
+          46.0,
+          157.07000000000005,
+          224.91,
+          197.07000000000005
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-6cf3bd0e4edebec29db0776c",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "Item FY2025 USD\nFIRST 100"
+    },
+    {
+      "id": "63764ab745f578b0c05161d51f5c8e1e85616c713ad1545478fbe2dfc8c2a5b9",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 2,
+        "page": 1,
+        "page_paragraph": 2,
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-00b6501fd5a5b2dd4656088e",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "[表格结构]\n| Item | FY2025 USD |\n|---|---|\n| FIRST | 100 |"
+    },
+    {
+      "id": "07b093bebe3cf769ec9bca18bde50c6d683589221e65f4cb5d59b7fc862820ee",
+      "source_id": "tables",
+      "locator": {
+        "table": 1,
+        "row": 1,
+        "page": 1,
+        "node_id": "node-e7315187938d82598af32b25",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          40.0,
+          140.0,
+          280.0,
+          200.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "continuation_verified": true,
+        "verification_source": "user_confirmation",
+        "source_table": 1,
+        "source_row": 1
+      },
+      "quote": "Item | FY2025 USD"
+    },
+    {
+      "id": "4fe7d22af23745c6ab47b5ab187f3fb0ffb2c60b2e49ef1af23d2618f5a1a61d",
+      "source_id": "tables",
+      "locator": {
+        "table": 1,
+        "row": 2,
+        "page": 1,
+        "node_id": "node-e7315187938d82598af32b25",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          40.0,
+          140.0,
+          280.0,
+          200.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "continuation_verified": true,
+        "verification_source": "user_confirmation",
+        "source_table": 1,
+        "source_row": 2
+      },
+      "quote": "FIRST | 100"
+    },
+    {
+      "id": "cd5003c7ef818e7ded791a0d60ce9854654dd86a401c248f9b6812fe6d46dbdf",
+      "source_id": "tables",
+      "locator": {
+        "table": 1,
+        "row": 3,
+        "page": 2,
+        "node_id": "node-57ac112862827a0d94a7b39c",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          40.0,
+          140.0,
+          280.0,
+          200.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "continuation_verified": false,
+        "verification_source": "user_confirmation",
+        "continuation_candidate_of": 0,
+        "source_table": 2,
+        "source_row": 2
+      },
+      "quote": "SECOND | 100"
+    },
+    {
+      "id": "52279082c709338db27cf45177fd7dbfb1825c93fc1ce5842a5d1e857e221482",
+      "source_id": "tables",
+      "locator": {
+        "table": 1,
+        "row": 4,
+        "page": 3,
+        "node_id": "node-aad8168e4936cc599297cbd3",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c",
+        "page_table": 1,
+        "coordinate_system": "pdf_points_top_left",
+        "bbox": [
+          40.0,
+          140.0,
+          280.0,
+          200.0
+        ],
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "continuation_verified": false,
+        "verification_source": "user_confirmation",
+        "continuation_candidate_of": 1,
+        "source_table": 3,
+        "source_row": 2
+      },
+      "quote": "THIRD | 100"
+    },
+    {
+      "id": "9291052bebe589c109f7787a2d7b0ab5ce0892019aa2a42cd10de551be7cdf2f",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 3,
+        "page": 2,
+        "page_paragraph": 1,
+        "bbox": [
+          46.0,
+          157.07000000000005,
+          224.91,
+          197.07000000000005
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-938178bc1f6f81539abfe7e8",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "Item FY2025 USD\nSECOND 100"
+    },
+    {
+      "id": "fd0de995e35eee34fb6e774d64d884c24ffb8a43f01eb81a625939aca768ad3e",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 4,
+        "page": 2,
+        "page_paragraph": 2,
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-09cc3ea670f6146b3724e6d4",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "[表格结构]\n| Item | FY2025 USD |\n|---|---|\n| SECOND | 100 |"
+    },
+    {
+      "id": "3f7113dc07392a633193f8af4b1572729d480bc61ef045be1e652b2ca1964dfa",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 5,
+        "page": 3,
+        "page_paragraph": 1,
+        "bbox": [
+          46.0,
+          157.07000000000005,
+          224.91,
+          197.07000000000005
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-bfb2f40475ae27ab4e3ee4d9",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "Item FY2025 USD\nTHIRD 100"
+    },
+    {
+      "id": "7f4d371fb249e3517ba7361cdb128d1204d51521a8b0ab6e678ff6d90618a518",
+      "source_id": "tables",
+      "locator": {
+        "paragraph": 6,
+        "page": 3,
+        "page_paragraph": 2,
+        "text_source": "native",
+        "order_source": "native_groups_unknown_reading_order",
+        "node_id": "node-eef78c41f27c271316eab8a1",
+        "parent_id": "",
+        "source_sha256": "dd2bfd5699b2c33a4f1f96ea4318cc2375763d703556281af08b2a78ecd8673c"
+      },
+      "quote": "[表格结构]\n| Item | FY2025 USD |\n|---|---|\n| THIRD | 100 |"
+    }
+  ],
+  "statistics": {
+    "documents": 1,
+    "paragraphs": 6,
+    "evidence_paragraphs": 10,
+    "evidence_characters": 290
+  },
+  "coverage": "bounded_excerpts; omitted paragraphs/pages are not analyzed; page unknown unless parser supplies provenance",
+  "interpretations": [],
+  "suggestions": [],
+  "requires_review": true,
+  "input_sha256": "d444c9f322e62cd157d9c703af5a0cf744320714fcb5758a1c125ba14a08a322",
+  "stage_sha256": "f27f03c017e5901426bbdb28c955f51d33f51cf8df2040d8d2b093d351951992",
+  "status": "completed_local",
+  "model": null
+}

@@ -1,0 +1,2 @@
+﻿记录ID,文档ID,文件名,原始路径,记录序号,文档类型,抽取方式,记录置信度,校验状态,复核状态,校验信息,Unknown,Unknown_原始值,Unknown_单位,Unknown_页码,Unknown_原文证据,Unknown_字段置信度,复核决定,复核备注
+59cc1c8af236b2c77ee729f8a1bfc72d6fe5400220356ee20aa09414ce0de83c,221cc9c2384c447f9d32aa217c1f2a6f6f09b0f5b3a987efdbe8183bb4d06062,sample0.pdf,E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-5\test_corrected_rule_recovers_a0\in\sample0.pdf,1,,rules,0.98,invalid,needs_review,"[""字段代码不是 6 位数字：Unknown=A0""]",A0,A0,,1,Invoice: A0 Amount: 100 Company: Alias,0.98

@@ -1,0 +1,128 @@
+{
+  "format": 1,
+  "fact_stage_version": 8,
+  "documents": [
+    {
+      "id": "pdf-one",
+      "path": "E:\\tool\\biancheng\\omnicrawler\\OmniCrawler-market\\plugins\\pdf-workbench\\pytest-of-Lenovo\\pytest-4\\test_real_pdf_delivery_analysi0\\selected.pdf",
+      "sha256": "42c15269fbf8db56632fb92ed6565e56b75c84a9fbd3676fc6329a16050c44cf",
+      "source_url": "",
+      "title": "selected",
+      "paragraph_count": 2,
+      "table_count": 0,
+      "warnings": [
+        "Page 1: geometric order is a heuristic; multi-column reading order is not verified",
+        "Page 2: geometric order is a heuristic; multi-column reading order is not verified"
+      ],
+      "parsing_metadata": {
+        "page_count": 2,
+        "page_geometry": {
+          "1": {
+            "native_size": [
+              400.0,
+              400.0
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              400.0,
+              400.0
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              400.0,
+              400.0
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          },
+          "2": {
+            "native_size": [
+              400.0,
+              400.0
+            ],
+            "rotation_degrees": 0,
+            "media_box_pdf": [
+              0.0,
+              0.0,
+              400.0,
+              400.0
+            ],
+            "crop_box_pdf": [
+              0.0,
+              0.0,
+              400.0,
+              400.0
+            ],
+            "boxes_coordinate_system": "pdf_points_bottom_left",
+            "text_coordinate_system": "pdfplumber_points_top_left"
+          }
+        },
+        "source_sha256": "42c15269fbf8db56632fb92ed6565e56b75c84a9fbd3676fc6329a16050c44cf",
+        "omitted_pages_needing_ocr": []
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "5f9004e97d5b35e309afb11f1a645fe39bc9a9070e21c914382c15d2d7ad8b9a",
+      "source_id": "pdf-one",
+      "locator": {
+        "paragraph": 1,
+        "page": 1,
+        "page_paragraph": 1,
+        "bbox": [
+          50.0,
+          90.48399999999998,
+          154.712,
+          102.48399999999998
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "geometric_top_left_not_verified",
+        "node_id": "node-c5b509e9b0ecc5d0734758b6",
+        "parent_id": "",
+        "source_sha256": "42c15269fbf8db56632fb92ed6565e56b75c84a9fbd3676fc6329a16050c44cf"
+      },
+      "quote": "Observed price: 12."
+    },
+    {
+      "id": "7c60d9243ed221a2c435e1d2a0574b2d3bbccce26aab1ad4180b9e9f311cc2ea",
+      "source_id": "pdf-one",
+      "locator": {
+        "paragraph": 2,
+        "page": 2,
+        "page_paragraph": 1,
+        "bbox": [
+          50.0,
+          90.48399999999998,
+          154.712,
+          102.48399999999998
+        ],
+        "coordinate_system": "pdf_points_top_left",
+        "text_source": "native",
+        "order_source": "geometric_top_left_not_verified",
+        "node_id": "node-ee8f0f6bb0b5b99e903b784f",
+        "parent_id": "",
+        "source_sha256": "42c15269fbf8db56632fb92ed6565e56b75c84a9fbd3676fc6329a16050c44cf"
+      },
+      "quote": "Observed price: 34."
+    }
+  ],
+  "statistics": {
+    "documents": 1,
+    "paragraphs": 2,
+    "evidence_paragraphs": 2,
+    "evidence_characters": 38
+  },
+  "coverage": "bounded_excerpts; omitted paragraphs/pages are not analyzed; page unknown unless parser supplies provenance",
+  "interpretations": [],
+  "suggestions": [],
+  "requires_review": true,
+  "input_sha256": "ce359a93e1c3fafe6fdf9d92d48983f127585f58adadad8df84a5f897f463096",
+  "stage_sha256": "174530f843019b3455a4a59ced90e245c460b6f2901b275d04c9b852f9df9650",
+  "status": "completed_local",
+  "model": null
+}

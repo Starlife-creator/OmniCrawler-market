@@ -1,0 +1,2 @@
+﻿记录ID,文档ID,文件名,字段名,原始值,标准化值,单位,页码,原文证据,抽取方式,字段置信度,校验状态
+f0ca4903b2c140ab52bd58577f938801738ea481007775b0fb03ac4bae449c89,9e76a7ed0aa9c635db7cb46f4d61f32126201a25a1dc2e4c1331fa6e426538a3,sample0.pdf,invoice,,MANUAL,,,,human_review,1.0,human_reviewed

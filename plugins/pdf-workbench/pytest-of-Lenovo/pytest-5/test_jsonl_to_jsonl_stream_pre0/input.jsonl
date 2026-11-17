@@ -1,0 +1,4 @@
+{"record_id": "1", "data": {"title": "甲", "details": {"score": 9}}, "evidence": {"title": {"source": "text"}}}
+not-json
+[]
+{"record_id": "2", "tail_only": "present"}

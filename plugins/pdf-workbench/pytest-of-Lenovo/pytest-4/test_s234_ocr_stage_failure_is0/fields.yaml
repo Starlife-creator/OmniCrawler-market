@@ -1,0 +1,14 @@
+project_name: test
+input_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-4\test_s234_ocr_stage_failure_is0\input
+work_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-4\test_s234_ocr_stage_failure_is0\work
+output_dir: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-4\test_s234_ocr_stage_failure_is0\output
+database: E:\tool\biancheng\omnicrawler\OmniCrawler-market\plugins\pdf-workbench\pytest-of-Lenovo\pytest-4\test_s234_ocr_stage_failure_is0\work\pipeline.sqlite3
+parser: {workers: 1, min_native_chars: 5, max_garbled_ratio: 0.1}
+ocr: {backend: none}
+retrieval: {top_pages: 2, neighbor_pages: 0, min_score: 1, fallback_pages: [1]}
+llm: {provider: disabled}
+extraction: {workers: 1, max_chars_per_page: 10000}
+normalization: {}
+validation: {auto_accept_confidence: 0.9, required_together: []}
+fields:
+  - {name: amount, label: 金额, type: amount, source: content, target_unit: 元}
