@@ -410,6 +410,30 @@ def pdf_views() -> Any:
     return pdf_workbench_views
 
 
+def convertx_module() -> Any:
+    """返回一个**具备转换 API 的对象**（供宿主 omnicrawler convert 使用）。
+
+    宿主 _handlers.py 需要 module.OutputRule 来构造输出规则。
+    直接返回本插件模块是错的——它没有 OutputRule（实测
+    AttributeError: 'module' object has no attribute 'OutputRule'）。
+
+    所以这里包一层，把宿主实际用到的符号显式暴露出来。
+    新增需要时在此追加，**不要**把插件模块本身丢给宿主——
+    那等于让宿主耦合插件的内部布局。
+    """
+    from omnicrawler_pdf.convertx import convert as _convert
+    from omnicrawler_pdf.convertx.output_rules import OutputRule as _OutputRule
+
+    class _ConvertX:
+        OutputRule = _OutputRule
+
+        @staticmethod
+        def convert(*args: Any, **kwargs: Any) -> Any:
+            return _convert(*args, **kwargs)
+
+    return _ConvertX
+
+
 def table_io() -> Any:
     """返回表格数据读写注册表（供宿主 `transform` 命令使用）。
 
