@@ -8,3 +8,12 @@ __pycache__/
 pytest-of-*/
 tmp*/
 .probe/
+
+# 测试会把模板里的相对路径 `work` / `output` / `data` 解析到模板所在目录，
+# 于是在 omnicrawler_pdf/templates/pdf/ 下生成 work/pipeline.sqlite3 之类产物。
+# 实测已被误提交两次；这些是运行产物，不属于插件包，
+# 而且 `_payload_files` 不会排除它们（只排除 __pycache__/.pytest_cache/.git），
+# 不 ignore 就会被算进 package.manifest.json 的哈希清单。
+omnicrawler_pdf/templates/**/work/
+omnicrawler_pdf/templates/**/output/
+omnicrawler_pdf/templates/**/data/
