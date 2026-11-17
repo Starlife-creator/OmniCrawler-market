@@ -467,7 +467,7 @@ class ConvertView(QWidget):
     def _auto_suggest_dst(self) -> None:
         if self._src_path is None:
             return
-        from omnicrawler.convertx import OutputRule, resolve_output_path
+        from ..convertx import OutputRule, resolve_output_path
 
         key = self._fmt_combo.currentData()
         ext = next((e for _l, k, e in self._SUPPORTED_FORMATS if k == key), ".out")
@@ -505,7 +505,7 @@ class ConvertView(QWidget):
             self._capability_hint.setVisible(False)
             return True
         try:
-            from omnicrawler.convertx.catalog import format_status
+            from ..convertx.catalog import format_status
 
             status = format_status(key)
         except Exception:  # noqa: BLE001 - 能力提示失败不得阻断转换入口

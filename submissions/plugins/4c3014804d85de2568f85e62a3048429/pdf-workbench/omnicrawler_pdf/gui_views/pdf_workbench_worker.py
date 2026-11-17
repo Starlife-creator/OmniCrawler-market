@@ -57,7 +57,7 @@ class _PdfPipelineWorker(QThread):
         # except 块直接引用会抛 NameError 掩盖原始异常，故先置 None 再守卫。
         tracker = None
         try:
-            from omnicrawler.pdfx.service import run_extraction
+            from ..pdfx.service import run_extraction
             from omnicrawler.services.progress import (
                 ProgressTracker,
                 StageSpec,

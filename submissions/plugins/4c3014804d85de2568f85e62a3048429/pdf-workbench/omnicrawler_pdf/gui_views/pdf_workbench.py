@@ -459,7 +459,7 @@ class PdfWorkbenchView(PdfResultMixin, PdfScanMixin, QWidget):
         config_path = os.path.join(self._temp_dir, "project.yaml")
 
         try:
-            from omnicrawler.pdfx.project import create_project_config
+            from ..pdfx.project import create_project_config
 
             create_project_config(
                 template_path=template_id,
