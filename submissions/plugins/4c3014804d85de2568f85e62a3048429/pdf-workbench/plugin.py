@@ -199,13 +199,39 @@ def selfcheck() -> dict[str, Any]:
         "omnicrawler_pdf.pdfx.parser",
         "omnicrawler_pdf.pdfx.service",
     ]
+    # **必须与实测导入图一致**：此前只列了 6 项，而插件实际用 24 个第三方包，
+    # 缺依赖时自检会误报"一切正常"（2026-11-23 实测：18 个包未被覆盖）。
+    #
+    # 分三档，判据是"缺了会导致什么"：
     optional = {
-        "pypdfium2": "PDF 页面渲染（OCR 需要）",
+        # ① 核心链路：缺了主流程跑不动（但会给出明确原因）
+        "yaml": "项目配置读写（必需）",
+        "pypdfium2": "PDF 页面渲染",
         "pdfplumber": "PDF 文本层提取",
+        "pypdf": "PDF 文本层（备用）",
+        "pdfminer": "PDF 版面分析",
         "openpyxl": "Excel 五表导出",
         "reportlab": "PDF 写出",
+        # ② 特定格式：只用该格式时才需要
+        "pyarrow": "Parquet 读写",
+        "duckdb": "DuckDB 读写",
+        "docx": "DOCX 表格写出",
+        "pptx": "PPTX 表格写出",
+        "PIL": "图片读写（OCR 前处理）",
+        "bs4": "HTML 解析",
+        "chardet": "编码探测（缺失则回退 UTF-8）",
+        "defusedxml": "XML 安全解析（Office 文档）",
+        "regex": "高级正则（Unicode 属性）",
+        # ③ OCR 引擎：二选一
         "paddleocr": "PaddleOCR 引擎",
+        "paddle": "PaddleOCR 运行时",
         "pytesseract": "Tesseract 引擎",
+        # ④ 宿主已提供 / GUI 才需要
+        "numpy": "数值处理（OCR 与表格）",
+        "psutil": "内存与进程信息",
+        "PySide6": "GUI 界面（仅图形界面需要）",
+        "cryptography": "凭据加密",
+        "keyring": "系统钥匙串",
     }
 
     # 用 find_spec 而不是 import_module：既回答"装没装"，又不触发
