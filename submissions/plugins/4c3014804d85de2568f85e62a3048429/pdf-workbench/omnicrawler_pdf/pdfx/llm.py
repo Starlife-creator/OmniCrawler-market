@@ -163,6 +163,9 @@ class OpenAICompatibleClient:
                 body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                 timeout_seconds=self.timeout,
                 max_response_bytes=self.max_response_bytes,
+                # 与宿主版一致：LLM 出网必须带可识别 UA（便于对端区分/联系）。
+                # 迁移时这一行被漏掉，属于**行为回退**，不是设计差异。
+                user_agent=user_agent("PDF LLM extraction"),
             )
             choices = body.get("choices") or []
             if not choices:
