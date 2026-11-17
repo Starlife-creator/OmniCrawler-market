@@ -57,3 +57,12 @@ def pytest_sessionstart(session) -> None:
     测试因此红）。这里用官方提供的显式通道指过去。
     """
     os.environ.setdefault("OMNICRAWL_PDF_PLUGIN_DIR", str(PLUGIN_ROOT))
+
+    # 必须用 `os.environ` 而不是 pytest 的 monkeypatch：
+    # 本仓有若干测试会**起子进程**跑 `omnicrawler pdf …`（CLI 位置、
+    # 转换生命周期等）。monkeypatch 只影响当前进程，子进程继承不到，
+    # 于是子进程里插件被签名闸门拒绝（实测：8 条测试因此红）。
+    #
+    # 这里声明开发模式：本仓插件是未签名的源码目录，生产仍走 strict。
+    # 差异**仅限验签**这一项；闸门本身仍会执行并调用 verify_plugin_trust。
+    os.environ.setdefault("OMNICRAWL_PLUGIN_SIGNATURE_POLICY", "developer")

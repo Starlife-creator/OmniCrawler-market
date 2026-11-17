@@ -33,6 +33,8 @@ processor.process 成功        ← 看起来正常
 
 from __future__ import annotations
 
+import importlib
+
 import json
 from pathlib import Path
 
@@ -122,9 +124,21 @@ def test_full_pipeline_extracts_real_fields(tmp_path: Path) -> None:
     assert exported.get("ok"), f"exporter.export 失败: {exported.get('error')}"
 
     files = (exported.get("summary") or {}).get("files") or {}
-    for name in ("results_csv", "review_csv", "long_csv", "excel"):
+
+    # CSV 三表是**无条件必需**（不依赖任何第三方包）。
+    for name in ("results_csv", "review_csv", "long_csv"):
         assert name in files, f"导出缺 {name}: files={sorted(files)}"
         assert Path(files[name]).is_file(), f"{name} 指向的文件不存在: {files[name]}"
+
+    # xlsx 依赖 openpyxl，缺失时 exporter **故意降级**：CSV 照常产出、
+    # 把 `excel` 键移除、并在 summary 里给出明确原因（不静默跳过）。
+    # 所以这里按实际依赖判断，不能硬断言——否则装不上 openpyxl 的环境
+    # 会把"设计好的降级"误报成缺陷。
+    if importlib.util.find_spec("openpyxl") is not None:
+        assert "excel" in files, f"openpyxl 可用但没导出 excel: files={sorted(files)}"
+        assert Path(files["excel"]).is_file(), f"excel 指向的文件不存在: {files['excel']}"
+    else:
+        assert "excel" not in files, "缺少 openpyxl 时不应给出 excel 路径（那是坏路径）"
 
     # 判据 4：抽到的值正确（这是最关键的一条——文件在 ≠ 内容对）
     results = Path(files["results_csv"]).read_text(encoding="utf-8-sig")
@@ -167,3 +181,65 @@ def test_selfcheck_reports_no_missing_required() -> None:
     report = plugin.selfcheck()
     assert report["ok"], f"插件自检失败：{json.dumps(report, ensure_ascii=False)[:500]}"
     assert report["required_missing"] == []
+
+
+def test_missing_openpyxl_degrades_to_csv_with_clear_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """缺 openpyxl 时必须降级：CSV 照常产出 + 明确原因，且不给 excel 坏路径。
+
+    这是用户会真的遇到的场景（没装 openpyxl）。设计上 exporter 故意降级
+    而不是整个失败——但"降级"必须**说出来**，不能静默少一个文件让用户去猜。
+
+    判据：
+    1. 三张 CSV 仍然产出；
+    2. `files` 里**没有** `excel` 键（给键就是坏路径）；
+    3. summary 里有可操作的原因（含 pip install 提示）。
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "openpyxl" or name.startswith("openpyxl."):
+            raise ImportError("模拟 openpyxl 缺失")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    from omnicrawler_pdf.pdfx.database import Database
+    from omnicrawler_pdf.pdfx.exporter import export_stage
+    from omnicrawler_pdf.pdfx.config import load_config
+
+    workdir = tmp_path
+    config_path = workdir / "p.yaml"
+    config_path.write_text(
+        f"""project_name: degrade
+input_dir: {workdir / 'in'}
+work_dir: {workdir / 'w'}
+output_dir: {workdir / 'out'}
+database: {workdir / 'w' / 's.sqlite3'}
+ocr: {{backend: none}}
+fields:
+  - name: a
+    label: A
+    type: text
+    patterns: ['(?P<value>x)']
+""",
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    with Database(config.database) as db:
+        summary = export_stage(config, db)
+
+    files = summary["files"]
+    for name in ("results_csv", "review_csv", "long_csv"):
+        assert name in files, f"缺 openpyxl 不该影响 CSV：files={sorted(files)}"
+    assert "excel" not in files, "缺 openpyxl 时不应给出 excel 路径（那是坏路径）"
+
+    reasons = " ".join(summary.get("warnings") or [])
+    assert "openpyxl" in reasons, f"降级原因没提到 openpyxl：{reasons!r}"
+    assert "pip install" in reasons, f"降级原因不可操作：{reasons!r}"
