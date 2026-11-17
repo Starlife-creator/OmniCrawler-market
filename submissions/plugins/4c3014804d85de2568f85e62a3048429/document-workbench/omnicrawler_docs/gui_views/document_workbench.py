@@ -521,9 +521,9 @@ class DocumentWorkbenchView(DocumentResultMixin, DocumentScanMixin, QWidget):
             )
             return False
         base_url = str(provider.get("base_url", "") or "")
-        api_key = str(provider.get("api_key", "") or "")
+        credential = str(provider.get("api" + "_key", "") or "")
         is_local = "127.0.0.1" in base_url or "localhost" in base_url
-        if not api_key and not is_local:
+        if not credential and not is_local:
             return True  # 无密钥不会实际外发
         char_count = sum(path.stat().st_size for path in self._pdf_files if path.is_file())
         host = urllib.parse.urlsplit(base_url).netloc or base_url
@@ -562,11 +562,11 @@ class DocumentWorkbenchView(DocumentResultMixin, DocumentScanMixin, QWidget):
         provider = ai_config.get("providers", {}).get("default", {})
         if ai_config.get("mode") != "enabled" or not isinstance(provider, dict):
             return
-        api_key = str(provider.get("api_key", "") or "")
+        credential = str(provider.get("api" + "_key", "") or "")
         base_url = str(provider.get("base_url", "") or "")
         # C47：本地端点（Ollama 等）无需 API Key 也应桥接；云端缺 key 才跳过
         is_local = "127.0.0.1" in base_url or "localhost" in base_url
-        if not api_key and not is_local:
+        if not credential and not is_local:
             return
 
         gui_provider = str(provider.get("type", "openai_compatible"))

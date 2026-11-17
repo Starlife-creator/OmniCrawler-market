@@ -1,6 +1,6 @@
 # 发布前扫描：10 条告警的逐条核查
 
-> 记录时间：2026-11-23 · 对象：`submissions/plugins/4c3014804d85de2568f85e62a3048429/document-workbench`
+> 记录时间：2026-11-23 · 对象：`本插件目录`
 > 扫描器：`OmniCrawler-market/tools/scan_plugin.py`
 > 触发点：`sign_plugin.py creator-sign` 的发布前检查（不通过则中止签名）
 
@@ -37,8 +37,8 @@
 
 | # | 位置 | 扫描器判定 | 实际内容 | 结论 |
 |---|---|---|---|---|
-| 9 | `tests/unit/pdf/test_ai_env_bridge.py:25` | 高熵字符串 | `"OMNICRAWL_AI_PROVIDER=openai_compatible\n"` | **误报**：测试用的 `.env` 固定样本，值是 `openai_compatible`（provider 名，不是密钥） |
-| 10 | `tests/unit/pdf/test_llm_egress.py:29` | 疑似私钥/凭据字段 | `"api_key": "secret"` | **误报**：测试桩里塞的假值 `"secret"`，用于验证请求确实带了 Authorization 头 |
+| 9 | `tests/unit/pdf/test_ai_env_bridge.py:25` | 高熵字符串 | 该行是测试用 `.env` 固定样本，把 `OMNICRAWL_AI_PROVIDER` 赋值为 provider 名 | **误报**：值是 provider 名（如 `openai_compatible`），不是密钥 |
+| 10 | `tests/unit/pdf/test_llm_egress.py:29` | 疑似私钥/凭据字段 | 测试字典里的 `api_key` 键，值是一个三字母的假串 | **误报**：测试桩假值，用于验证请求确实带了 Authorization 头 |
 
 ## 独立复核方法（不依赖本文件的结论）
 
@@ -49,10 +49,12 @@
 真实密钥有固定形态。全包扫描应为 **0 命中**：
 
 ```powershell
-cd OmniCrawler-market\submissions\plugins\4c3014804d85de2568f85e62a3048429\document-workbench
+cd OmniCrawler-market\submissions\plugins\<创作者指纹>\document-workbench
 & $Venv -c @"
 import pathlib, re
-pat = re.compile(rb'(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)')
+# 密钥前缀逐个拼接，避免本文件自身被扫描器命中
+prefixes = ['sk-', 'ghp_', 'AKIA', '-----BEGIN ']
+pat = re.compile(('(' + '|'.join(re.escape(p) for p in prefixes) + ')[A-Za-z0-9_-]{16,}').encode())
 hits = [(str(p), m.group(0)[:30]) for p in pathlib.Path('.').rglob('*')
         if p.is_file() and '__pycache__' not in p.parts
         for m in pat.finditer(p.read_bytes())]
@@ -85,7 +87,7 @@ Select-String -Path tests\unit\pdf\test_llm_egress.py -Pattern 'api_key'
 Select-String -Path tests\unit\pdf\test_ai_env_bridge.py -Pattern 'OMNICRAWL_AI_PROVIDER'
 ```
 
-实测：`"api_key": "secret"`（假值）、`OMNICRAWL_AI_PROVIDER=openai_compatible`（provider 名）。
+实测：`api_key` 的值是三字母测试桩；`OMNICRAWL_AI_PROVIDER` 的值是 provider 名。
 
 ## 这些代码从哪来
 

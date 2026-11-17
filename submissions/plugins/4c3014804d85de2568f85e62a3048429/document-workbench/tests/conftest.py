@@ -66,3 +66,39 @@ def pytest_sessionstart(session) -> None:
     # 这里声明开发模式：本仓插件是未签名的源码目录，生产仍走 strict。
     # 差异**仅限验签**这一项；闸门本身仍会执行并调用 verify_plugin_trust。
     os.environ.setdefault("OMNICRAWL_PLUGIN_SIGNATURE_POLICY", "developer")
+
+def pytest_configure(config) -> None:
+    """把 pytest 的临时根移出插件目录。
+
+    **为什么必须这么做**：本环境的 pytest 默认把 ``pytest-of-<user>/`` 建在
+    **当前工作目录**（也就是插件根）下。而插件测试里有会写 ``.env`` 的用例，
+    于是插件目录里出现 ``pytest-of-Lenovo/.../proj/.env``。
+
+    ``sign_plugin.py`` / ``package_manifest._payload_files`` **不看 .gitignore**，
+    它们扫磁盘实际文件，并把 ``.env`` 判为「疑似凭据」直接拒签
+    （实测：creator_sign 因此连续两次失败）。
+
+    所以从源头解决：把 basetemp 指到插件目录之外的系统临时区。
+    """
+    import tempfile
+
+    # \	empfile.gettempdir()\ 在本环境返回的是**仓库根**（不是系统临时区），
+    # 所以不能直接用它——否则 basetemp 仍落在仓库内。这里显式排除：
+    # 只要它落在 PLUGIN_ROOT 之内，就改用环境变量或 \LOCALAPPDATA\Temp\。
+    candidate = Path(tempfile.gettempdir()) / "omnicrawler-plugin-pytest"
+    try:
+        candidate.relative_to(PLUGIN_ROOT)
+        inside_repo = True
+    except ValueError:
+        inside_repo = False
+
+    if inside_repo:
+        fallback = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or ""
+        candidate = Path(fallback) / "omnicrawler-plugin-pytest" if fallback else candidate
+
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        config.option.basetemp = str(candidate)
+    except OSError:
+        # 不可写时退回默认（宁可留残留，也不要测试跑不起来）
+        pass

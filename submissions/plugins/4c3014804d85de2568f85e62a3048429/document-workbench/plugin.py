@@ -65,7 +65,7 @@ PLUGIN_METADATA = {
     # `yaml` 是 PDF 项目配置解析的硬依赖。
     "dependencies": [
         {"name": "omnicrawler_docs", "version": "1.0.0", "license": "Apache-2.0"},
-        {"name": "yaml", "version": ">=6", "license": "MIT"},
+        {"name": "yaml", "version": ">=6.0,<7.0", "license": "MIT"},
     ],
     "license": "Apache-2.0",
     "execution_mode": "in_process",

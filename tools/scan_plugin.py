@@ -88,9 +88,14 @@ _FINGERPRINT_VALUE_RE = re.compile(r"author_fingerprint:\s*[0-9a-f]{32}", re.IGN
 # （src/omnicrawler/core/credentials.py _SECRET_REF，形如 secret://<name>），
 # 值是密钥库条目名而非明文，不应误报为泄漏。
 # B02-017：键名允许可选双引号（JSON 引号键），值必须存在（防空值误报）。
+# 2026-11-18 增补：值形如 ``${VAR}`` / ``${VAR:-default}`` 的**环境变量占位符**
+# 同样豁免——模板里写 ``api_key: ${PDFX_LLM_API_KEY:-}`` 是让用户从环境注入，
+# 文件本身不含任何明文密钥。早先只豁免 ``secret://``，导致配置文件模板被误判，
+# 逼得作者要么改字段名（破坏配置 schema）要么不发布模板。
 _SECRET_FIELD_RE = re.compile(
     r"^\s*\"?(private_key|secret_key|api_key|apikey|access_key|access_token|"
-    r"client_secret|auth_token|password|passwd)\"?\s*[:=]\s*(?!secret://)\S+",
+    r"client_secret|auth_token|password|passwd)\"?\s*[:=]\s*"
+    r"(?!secret://)(?!\$\{[A-Za-z_][A-Za-z0-9_]*(?::-?[^}]*)?\})\S+",
     re.IGNORECASE,
 )
 
@@ -100,6 +105,11 @@ _SECRET_KEY_RE = re.compile(
     r"client_secret|auth_token|password|passwd)\"?$",
     re.IGNORECASE,
 )
+
+#: 环境变量占位符：`${VAR}` 或 `${VAR:-default}`。
+#: 模板里用它让用户从环境注入密钥，文件本身不含明文 ⇒ 不算凭据泄露。
+_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-?[^}]*)?\}$")
+
 
 # --- P2-13 静态恶意模式规则集 -------------------------------------------------
 # 硬拒（error）：宿主无法沙箱化的动态求值 / shell 命令执行 / 动态导入 / 原始套接字。
@@ -230,9 +240,15 @@ def _scan_mapping_fields(data: Any, path: Path) -> list[str]:
     problems: list[str] = []
     if isinstance(data, dict):
         for key, value in data.items():
-            # 值为 secret://<name>（主仓密钥库引用，非明文）时豁免；
-            # 与文本行路径 _SECRET_FIELD_RE 的 (?!secret://) 负向前瞻一致。
-            if _SECRET_KEY_RE.match(str(key)) and not str(value).startswith("secret://"):
+            # 值**不是明文密钥**时豁免。两种合法形态：
+            #   * `secret://<name>` —— 主仓密钥库引用；
+            #   * `${VAR}` / `${VAR:-default}` —— 环境变量占位符（模板让用户注入）。
+            # 与文本行路径 `_SECRET_FIELD_RE` 的负向前瞻保持一致。
+            text_value = str(value)
+            is_reference = text_value.startswith("secret://") or bool(
+                _PLACEHOLDER_RE.match(text_value)
+            )
+            if _SECRET_KEY_RE.match(str(key)) and not is_reference:
                 problems.append(f"{path.name}: 包含疑似私钥字段 {key}")
             problems += _scan_mapping_fields(value, path)
     elif isinstance(data, list):

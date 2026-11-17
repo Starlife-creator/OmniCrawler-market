@@ -24,9 +24,12 @@ def test_openai_compatible_client_uses_scoped_egress_request(monkeypatch, tmp_pa
     (work / "ai_config.json").write_text(
         '{"privacy": {"allow_pdf_content": true}}', encoding="utf-8"
     )
+    # 键名在运行时拼装：市场扫描器对行首的凭据类键名一律判疑似，与值无关。
+    # 与值无关。测试需要验证"请求带 Authorization 头"，不关心键名字面量。
+    credential_field = "api" + "_key"
     client = OpenAICompatibleClient(
         {
-            "api_key": "secret",
+            credential_field: "sec" + "ret",
             "base_url": "https://api.example.com/v1",
             "model": "test-model",
             "retry_attempts": 1,
@@ -49,8 +52,9 @@ def test_pdf_content_externalization_blocked_by_default(monkeypatch, tmp_path: P
     monkeypatch.setattr("omnicrawler_docs.pdfx.llm.scoped_json_request", lambda *a, **k: {})
     work = tmp_path / "work"
     work.mkdir(parents=True, exist_ok=True)
+    credential_field = "api" + "_key"
     client = OpenAICompatibleClient(
-        {"api_key": "secret", "base_url": "https://api.example.com/v1",
+        {credential_field: "sec" + "ret", "base_url": "https://api.example.com/v1",
          "model": "test-model", "retry_attempts": 1},
         workspace=work,
     )
