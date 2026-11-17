@@ -1,0 +1,42 @@
+id: document-workbench
+name: document-workbench
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 十万级 PDF 结构化数据抽取工作台——摄取、解析、OCR、字段抽取、复核与五表导出
+description_file: plugins/document-workbench/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=1.0.2'
+license: Apache-2.0
+tags:
+- pdf
+- ocr
+- extraction
+- table
+- workbench
+updated_at: '2026-11-17'
+creator_signature_file: plugins/document-workbench/creator.sig
+creator_identity_file: plugins/document-workbench/creator.identity
+package_manifest_file: plugins/document-workbench/package.manifest.json
+creator_package_signature_file: plugins/document-workbench/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/document-workbench/package.manifest.maintainer.sig
+package_manifest_sha256: a12b4eb0d56b2d1f927e7934113eb86bb694527a528e80074e51ccf6e1dde416
+plugin_file: plugins/document-workbench/plugin.py
+signature_file: plugins/document-workbench/plugin.py.sig
+permissions: []
+plugin_types:
+- processor
+- exporter
+execution_mode: in_process
+domains: []
+input_files: []
+dependencies:
+- name: omnicrawler_docs
+  version: 1.0.0
+  license: Apache-2.0
+- name: yaml
+  version: '>=6.0,<7.0'
+  license: MIT
+required_capabilities: {}
+state_schema_version: 1

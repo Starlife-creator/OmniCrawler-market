@@ -1,0 +1,1131 @@
+from __future__ import annotations
+
+import concurrent.futures
+import importlib.util
+import io
+import logging
+import math
+import os
+import re
+import shutil
+import statistics
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
+
+from . import ocr_engines
+from .concurrency import iter_bounded_futures
+from .config import ProjectConfig
+from .database import Database
+from .ocr_result import OCRRichResult as OCRRichResult
+from .parser import render_page, text_quality
+from .utils import clean_text, utcnow
+
+logger = logging.getLogger(__name__)
+
+# 温度监控开关 — 默认 85°C，超阈值自动降 worker
+_OCR_MAX_TEMP = float(os.environ.get("OMNICRAWL_OCR_MAX_TEMP", "85"))
+
+
+@runtime_checkable
+class OCRBackend(Protocol):
+    def recognize(self, png_bytes: bytes) -> tuple[str, float | None]: ...
+
+
+
+def recognize_page(backend: OCRBackend, png_bytes: bytes) -> OCRRichResult:
+    """Use engine structure when available and reject unusable page output."""
+    rich = getattr(backend, "recognize_rich", None)
+    if callable(rich):
+        result = rich(png_bytes)
+        if not isinstance(result, OCRRichResult):
+            raise ValueError("OCR rich result must be OCRRichResult")
+    else:
+        text, confidence = backend.recognize(png_bytes)
+        result = OCRRichResult(text, confidence)
+    if not isinstance(result.text, str) or not result.text.strip():
+        raise ValueError("OCR returned no usable text")
+    confidence = result.confidence
+    if confidence is not None and (type(confidence) not in (int, float)
+                                  or not math.isfinite(confidence) or not 0 <= confidence <= 1):
+        raise ValueError("OCR confidence must be between 0 and 1")
+    result.metadata.setdefault("backend", type(backend).__name__)
+    for entries in (result.words, result.blocks):
+        if not isinstance(entries, list) or len(entries) > 100000:
+            raise ValueError("OCR structure exceeds limits")
+        for item in entries:
+            if not isinstance(item, dict):
+                raise ValueError("OCR structure entry must be an object")
+            box = item.get("bbox")
+            if box is not None and (not isinstance(box, (list, tuple)) or len(box) != 4
+                                    or any(type(coord) not in (int, float) or not math.isfinite(coord) for coord in box)
+                                    or box[0] > box[2] or box[1] > box[3]):
+                raise ValueError("OCR structure has invalid geometry")
+    if png_bytes.startswith(b"\x89PNG\r\n\x1a\n") and len(png_bytes) >= 24:
+        import struct
+        result.metadata.setdefault("original_image_size", list(struct.unpack(">II", png_bytes[16:24])))
+    result.metadata.setdefault("original_mapping", "unknown")
+    return result
+
+
+class PaddleStructureBackend:
+    def __init__(self, config: dict[str, Any]):
+        try:
+            import numpy as np
+            from paddleocr import PPStructureV3
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError(
+                "缺少PaddleOCR依赖，请运行 install_all.py --ocr paddle，"
+                "或安装 pdf-data-core[ocr-paddle]"
+            ) from exc
+        self.np = np
+        self.Image = Image
+        self.transforms_enabled = bool(config.get("orientation", True)) or bool(config.get("unwarping", False))
+        # 当前 CPU oneDNN 路径实测存在未实现算子；默认采用普通推理，优化需显式启用。
+        enable_mkldnn = config.get("enable_mkldnn", False)
+        if type(enable_mkldnn) is not bool:
+            raise ValueError("enable_mkldnn 必须是布尔值")
+        self.pipeline = PPStructureV3(
+            enable_mkldnn=enable_mkldnn,
+            lang=config.get("lang", "ch"),
+            device=config.get("device", "cpu"),
+            use_doc_orientation_classify=bool(config.get("orientation", True)),
+            use_doc_unwarping=bool(config.get("unwarping", False)),
+            use_textline_orientation=bool(config.get("textline_orientation", True)),
+            use_table_recognition=bool(config.get("table_recognition", True)),
+            use_formula_recognition=bool(config.get("formula_recognition", False)),
+            use_chart_recognition=False,
+        )
+
+    def recognize(self, png_bytes: bytes) -> tuple[str, float | None]:
+        rich = self.recognize_rich(png_bytes)
+        return rich.text, rich.confidence
+
+    def recognize_rich(self, png_bytes: bytes) -> OCRRichResult:
+        image = self.Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        array = self.np.asarray(image)
+        output = list(self.pipeline.predict(array))
+        parts: list[str] = []
+        confidences: list[float | None] = []
+        pages: list[OCRRichResult] = []
+        for result in output:
+            page = _paddle_page_result(
+                getattr(result, "json", {}) or {}, getattr(result, "markdown", {}) or {}
+            )
+            pages.append(page)
+            parts.append(page.text)
+            confidences.append(page.confidence)
+        confidence = min(score for score in confidences if score is not None) if confidences and all(
+            score is not None for score in confidences
+        ) else None
+        return OCRRichResult(clean_text("\n".join(parts)), confidence,
+                             words=[item for page in pages for item in page.words],
+                             blocks=[item for page in pages for item in page.blocks],
+                             tables=[item for page in pages for item in page.tables],
+                             metadata={"backend": type(self).__name__, "pages": len(pages),
+                                       "coordinate_system": "ocr_engine_pixels_top_left",
+                                       "original_mapping": "unverified" if self.transforms_enabled else "identity",
+                                       "original_image_size": list(image.size)})
+
+
+def _paddle_page_text(result_json: dict[str, Any], markdown: dict[str, Any]) -> tuple[str, float | None]:
+    page = _paddle_page_result(result_json, markdown)
+    return page.text, page.confidence
+
+
+def _paddle_page_result(result_json: dict[str, Any], markdown: dict[str, Any]) -> OCRRichResult:
+    """Preserve OCR line boundaries inside text blocks without flattening tables."""
+    payload = result_json.get("res", result_json)
+    if not isinstance(payload, dict):
+        payload = result_json
+    overall = payload.get("overall_ocr_res", {}) or {}
+    texts = overall.get("rec_texts", []) or []
+    boxes = overall.get("rec_boxes", []) or []
+    text = str(markdown.get("markdown_texts", ""))
+    raw_scores = overall.get("rec_scores", []) or []
+    words: list[dict[str, Any]] = []
+    for index, (line, box) in enumerate(zip(texts, boxes, strict=False)):
+        if isinstance(box, (list, tuple)) and len(box) == 4:
+            try:
+                coords = [float(item) for item in box]
+            except (TypeError, ValueError):
+                continue
+            score = raw_scores[index] if index < len(raw_scores) else None
+            if not all(math.isfinite(coord) for coord in coords):
+                continue
+            words.append({"index": index, "text": str(line), "bbox": coords,
+                          "confidence": float(score) if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and 0 <= score <= 1 else None})
+    blocks: list[dict[str, Any]] = []
+    for block in payload.get("parsing_res_list", []) or []:
+        if not isinstance(block, dict) or block.get("block_label") != "text":
+            continue
+        content = str(block.get("block_content", ""))
+        bounds = block.get("block_bbox", [])
+        if not content or len(bounds) != 4 or len(boxes) != len(texts):
+            continue
+        blocks.append({"label": "text", "bbox": [float(item) for item in bounds], "text": content})
+        lines = []
+        for line, box in zip(texts, boxes, strict=True):
+            if len(box) != 4:
+                continue
+            x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            if bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]:
+                lines.append(str(line))
+        # Keep Paddle's reading order. Only replace when OCR and layout agree:
+        # a nearby column, equation or table must not contaminate this block.
+        if lines and re.sub(r"\s+", "", "".join(lines)) == re.sub(r"\s+", "", content):
+            text = text.replace(content, "\n".join(lines))
+    if not text.strip() and texts:
+        text = "\n".join(str(line) for line in texts)
+    table_htmls = []
+    for table in payload.get("table_res_list", []) or []:
+        html = table.get("pred_html", "") if isinstance(table, dict) else ""
+        if isinstance(html, str) and html.strip() and html not in table_htmls:
+            table_htmls.append(html)
+    # Older Paddle adapters expose regions as res=[{type: table, res: {html: ...}}].
+    regions = result_json.get("res", [])
+    for region in regions if isinstance(regions, list) else []:
+        if isinstance(region, dict) and str(region.get("type", "")).casefold() == "table":
+            html = region.get("res", {})
+            html = html.get("html", "") if isinstance(html, dict) else html
+            if isinstance(html, str) and html.strip() and html not in table_htmls:
+                table_htmls.append(html)
+    if table_htmls:
+        text += "\n" + _table_html_to_markdown([html for html in table_htmls if html not in text])
+    scores = []
+    tables = [{"html": html, "cells": _table_html_to_cells(html)} for html in table_htmls]
+    for score in overall.get("rec_scores", []) or []:
+        try:
+            if isinstance(score, bool):
+                raise ValueError("boolean is not an OCR score")
+            number = float(score)
+        except (TypeError, ValueError):
+            return OCRRichResult(clean_text(text), None, words=words, blocks=blocks, tables=tables)
+        if not math.isfinite(number) or not 0 <= number <= 1:
+            return OCRRichResult(clean_text(text), None, words=words, blocks=blocks, tables=tables)
+        scores.append(number)
+    # A strong line cannot hide an uncertain line on the same source page.
+    confidence = min(scores) if scores and (not texts or len(scores) == len(texts)) else None
+    return OCRRichResult(clean_text(text), confidence, words=words, blocks=blocks,
+                         tables=tables)
+
+
+def _table_html_to_cells(html: str) -> list[dict[str, Any]]:
+    """Keep spans and header semantics; Markdown is only a presentation view."""
+    import html as html_lib
+    cells: list[dict[str, Any]] = []
+    occupied: set[tuple[int, int]] = set()
+    for row_index, row_html in enumerate(re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S | re.I)):
+        column_index = 0
+        for match in re.finditer(r"<(td|th)([^>]*)>(.*?)</\1>", row_html, re.S | re.I):
+            attrs, raw = match.group(2), match.group(3)
+            row_span, column_span = _html_attr_span(attrs, "rowspan"), _html_attr_span(attrs, "colspan")
+            while any((row_index, column_index + offset) in occupied for offset in range(column_span)):
+                column_index += 1
+            value = re.sub(r"<[^>]+>", "", raw)
+            cells.append({"row": row_index, "column": column_index, "header": match.group(1).lower() == "th",
+                          "row_span": row_span, "column_span": column_span,
+                          "text": html_lib.unescape(value).replace("\n", " ").strip()})
+            occupied.update((row, column) for row in range(row_index, row_index + row_span)
+                            for column in range(column_index, column_index + column_span))
+            column_index += column_span
+    return cells
+
+
+def _html_attr_span(attrs: str, name: str) -> int:
+    found = re.search(rf"\b{name}\s*=\s*[\"']?(\d+)", attrs, re.I)
+    return min(100, max(1, int(found.group(1)))) if found else 1
+
+
+def _table_html_to_markdown(html_parts: list[str]) -> str:
+    """把表格 HTML（<table><tr><td>）转为 Markdown 表格（D10：表格结构不进最终文本时补充）。"""
+    import re as html_re
+
+    lines: list[str] = []
+    for html in html_parts:
+        rows = html_re.findall(r"<tr[^>]*>(.*?)</tr>", html, html_re.S | html_re.I)
+        if not rows:
+            continue
+        markdown_rows: list[list[str]] = []
+        for row_html in rows:
+            cells = html_re.findall(
+                r"<(?:td|th)[^>]*>(.*?)</(?:td|th)>", row_html, html_re.S | html_re.I
+            )
+            markdown_rows.append([
+                html_re.sub(r"<[^>]+>", "", cell).replace("\n", " ").strip()
+                for cell in cells
+            ])
+        if not markdown_rows:
+            continue
+        width = max(len(row) for row in markdown_rows)
+        header = markdown_rows[0]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * max(width, 1)) + "|")
+        for row in markdown_rows[1:]:
+            padded = row + [""] * (width - len(row))
+            lines.append("| " + " | ".join(padded) + " |")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+# S2.3.3：非标准 Tesseract 语言名归一（ch→chi_sim 等），避免配置 lang 不兼容静默 OCR 失败
+_LANG_ALIASES = {
+    "ch": "chi_sim",
+    "chi": "chi_sim",
+    "cn": "chi_sim",
+    "sim": "chi_sim",
+    "trad": "chi_tra",
+    "jp": "jpn",
+    "jap": "jpn",
+    "kr": "kor",
+    "kor": "kor",
+}
+
+
+# B-P2-3：自适应关闭路径也传默认 OCR 超时（秒），避免 pytesseract 子进程无超时挂死。
+_DEFAULT_OCR_TIMEOUT_SECONDS = 30.0
+# B-P2-3：OCR 并发轮次整体等待超时（秒）；超时后在途 future 取消并计 failed，释放 worker。
+_OCR_POLL_TIMEOUT_SECONDS = 120.0
+
+
+def normalize_ocr_lang(lang: str) -> str:
+    """把 ``+`` 分隔的 Tesseract 语言串归一为标准语言名（未知项原样保留）。"""
+    parts = [part.strip() for part in str(lang).split("+") if part.strip()]
+    if not parts:
+        return "chi_sim+eng"
+    return "+".join(_LANG_ALIASES.get(part.casefold(), part) for part in parts)
+
+
+class TesseractBackend:
+    def __init__(self, config: dict[str, Any]):
+        try:
+            import pytesseract
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError(
+                "缺少Tesseract依赖，请运行 install_all.py --ocr tesseract，"
+                "并按操作系统安装 Tesseract 程序和中文语言包"
+            ) from exc
+        self.pytesseract = pytesseract
+        self.Image = Image
+        from .adaptive_ocr import AdaptiveOCRPolicy
+
+        self.adaptive_policy = AdaptiveOCRPolicy.from_config(config.get("adaptive_retry"))
+        self.lang = normalize_ocr_lang(config.get("lang", "chi_sim+eng"))
+        self.image_scale = config.get("image_scale", 1)
+        self.psm = config.get("page_segmentation_mode", 3)
+        # B-P2-3：默认超时兜底；配置项非正数回退默认值。
+        configured_timeout = config.get("timeout_seconds", _DEFAULT_OCR_TIMEOUT_SECONDS)
+        try:
+            parsed_timeout = float(configured_timeout)
+        except (TypeError, ValueError):
+            parsed_timeout = _DEFAULT_OCR_TIMEOUT_SECONDS
+        self.timeout_seconds = parsed_timeout if parsed_timeout > 0 else _DEFAULT_OCR_TIMEOUT_SECONDS
+        if type(self.image_scale) is not int or not 1 <= self.image_scale <= 4:
+            raise ValueError("image_scale 必须是1到4的整数")
+        if type(self.psm) is not int or self.psm not in {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}:
+            raise ValueError("page_segmentation_mode 必须是可输出文本的Tesseract模式")
+        command = str(config.get("command") or os.environ.get("TESSERACT_CMD", "")).strip()
+        if command:
+            self.pytesseract.pytesseract.tesseract_cmd = command
+
+    def recognize(self, png_bytes: bytes) -> tuple[str, float | None]:
+        rich = self.recognize_rich(png_bytes)
+        return rich.text, rich.confidence
+
+    def recognize_rich(self, png_bytes: bytes) -> OCRRichResult:
+        if self.adaptive_policy is not None:
+            from .adaptive_ocr import recognize_adaptive
+            return recognize_adaptive(png_bytes, self._recognize_once,
+                                      (self.image_scale, self.psm), self.adaptive_policy)
+        # B-P2-3：自适应关闭路径同样携带默认超时，防止子进程无超时挂死。
+        # getattr 兜底手工构造的测试夹具（不经 __init__）。
+        timeout_seconds = getattr(self, "timeout_seconds", None) or _DEFAULT_OCR_TIMEOUT_SECONDS
+        return self._recognize_once(png_bytes, scale=self.image_scale, psm=self.psm,
+                                    timeout_seconds=timeout_seconds)
+
+    def _recognize_once(self, png_bytes: bytes, *, scale: int, psm: int,
+                        timeout_seconds: float | None = None) -> OCRRichResult:
+        source_image = self.Image.open(io.BytesIO(png_bytes))
+        if source_image.size[0] * source_image.size[1] * scale ** 2 > 20_000_000:
+            raise ValueError("OCR放大后图像超过2000万像素预算")
+        image = source_image.convert("RGB")
+        original_size = list(image.size)
+        if scale > 1:
+            image = image.resize((image.width * scale, image.height * scale),
+                                 self.Image.Resampling.LANCZOS)
+        options: dict[str, Any] = {"config": f"--psm {psm}"} if psm != 3 else {}
+        if timeout_seconds is not None:
+            options["timeout"] = timeout_seconds
+        data = self.pytesseract.image_to_data(
+            image, lang=self.lang, output_type=self.pytesseract.Output.DICT, **options
+        )
+        # D9：按 (block, par, line) 分行、left 分列重建，扫描件表格不再拍平为一行
+        lines: dict[tuple[int, int, int], list[tuple[float, float, str]]] = {}
+        words: list[dict[str, Any]] = []
+        scores: list[float] = []
+        text_list = data.get("text", [])
+        for index, text in enumerate(text_list):
+            word = str(text).strip()
+            if not word:
+                continue
+            key = (
+                int(data["block_num"][index]),
+                int(data["par_num"][index]),
+                int(data["line_num"][index]),
+            )
+            left_values = data.get("left", [])
+            top_values = data.get("top", [])
+            width_values = data.get("width", [])
+            height_values = data.get("height", [])
+            left = float(left_values[index] if index < len(left_values) else 0) / scale
+            top = float(top_values[index] if index < len(top_values) else 0) / scale
+            width = float(width_values[index] if index < len(width_values) else 0) / scale
+            height = float(height_values[index] if index < len(height_values) else 0) / scale
+            lines.setdefault(key, []).append((left, width, word))
+            conf: float | None
+            try:
+                conf = float(data["conf"][index])
+                if math.isfinite(conf) and 0 <= conf <= 100:
+                    conf /= 100
+                    scores.append(conf)
+                else:
+                    conf = None
+            except (TypeError, ValueError):
+                conf = None
+            words.append({"index": index, "text": word, "bbox": [left, top, left + width, top + height],
+                          "confidence": conf})
+        ordered = sorted(lines.items(), key=lambda item: (item[0][0], item[0][1], item[0][2]))
+        text_lines: list[str] = []
+        for _key, line_words in ordered:
+            line_words.sort(key=lambda item: item[0])  # 行内按 left 排序
+            parts: list[str] = []
+            prev_right: float | None = None
+            for left, width, word in line_words:
+                if prev_right is None:
+                    parts.append(word)
+                else:
+                    gap = left - prev_right
+                    # 列间隙大 → 多空格分隔（保留列对齐信号）
+                    if gap < 4:
+                        parts.append(" " + word)
+                    else:
+                        parts.append(" " * min(6, max(2, int(gap / 8))) + word)
+                prev_right = left + width
+            text_lines.append("".join(parts))
+        text = "\n".join(text_lines)
+        return OCRRichResult(clean_text(text, compress_ws=False), statistics.fmean(scores) if scores else None,
+                             words=words, metadata={"backend": type(self).__name__,
+                                                    "coordinate_system": "image_pixels_top_left",
+                                                    "original_image_size": original_size,
+                                                    "image_scale": scale, "page_segmentation_mode": psm,
+                                                    "original_mapping": "identity"})
+
+
+def create_backend(config: ProjectConfig) -> OCRBackend | None:
+    if config.ocr.get("component"):
+        from .component_ocr import ComponentOCRBackend
+
+        return ComponentOCRBackend(config.ocr)
+    name = str(config.ocr.get("backend", "none")).lower()
+    # 条目 2：「自动」必须在**运行期**解析，不能靠序列化时固化。
+    # 固化会把「保存配置那台机器」的后端状态写进配置，任务搬到另一台机器后失真；
+    # 而运行期解析永远反映当前机器真实可用性。
+    if name == AUTO_BACKEND:
+        name, reason = resolve_auto_ocr_backend(
+            str(config.ocr.get("_preferred_backend", "")),
+            adaptive_tesseract=config.ocr.get("adaptive_retry") is not None,
+        )
+        if name == "none":
+            mark_auto_unavailable(config, reason)
+            return None
+        config.ocr["_auto_resolved_backend"] = name
+        logger.info("OCR 自动模式解析为后端: %s", name)
+    if name == "none":
+        return None
+    # 条目 11：按注册表实例化，不再 if/else 写死。
+    # 内置的 paddle/tesseract 由模块底部注册；外部引擎走同一入口。
+    return resolve_ocr_engine(name, config.ocr)
+
+
+# ── 引擎注册与解析（条目 11）────────────────────────────────────────────
+#
+# 实现放在 `ocr_engines.py`（**叶子模块**，不导入任何 pdfx 模块）：
+# `config.validate_runtime_config` 也要查引擎名，若注册表留在本模块就会
+# 形成 `config ↔ ocr` 的循环（架构门禁的 cycle budget 会判红）。
+#
+# 这里保留同名的公开函数，作为本模块对外的稳定接口；
+# 内置引擎在模块底部注册（见文件末尾），放开注册≠拆除内置。
+
+
+def register_ocr_engine(
+    name: str,
+    factory: Callable[[dict[str, Any]], Any],
+    *,
+    available: Callable[[], bool] | None = None,
+    replace: bool = False,
+) -> None:
+    """注册一个 OCR 引擎（转调 ``ocr_engines.register_engine``）。"""
+    ocr_engines.register_engine(name, factory, available=available, replace=replace)
+
+
+def registered_ocr_engines() -> list[str]:
+    """已注册的引擎名（稳定排序）。"""
+    return ocr_engines.registered_engines()
+
+
+def is_ocr_engine_available(name: str) -> bool:
+    """该引擎在本机是否可用；未注册视为不可用。"""
+    return ocr_engines.is_available(name)
+
+
+def resolve_ocr_engine(name: str, config: dict[str, Any] | None = None) -> Any:
+    """按名字实例化引擎；未注册时抛可枚举的错误。"""
+    return ocr_engines.resolve(name, config)
+
+
+def _unregister_ocr_engine_for_tests(name: str) -> None:
+    """仅供测试清理：撤销一个注册项（不对外暴露）。"""
+    ocr_engines.unregister_for_tests(name)
+
+
+def adaptive_ocr_workers(requested: int) -> int:
+    """自适应 OCR worker 数：基于 CPU 核数和可用内存自动推荐保守值。
+
+    规则：
+    - 默认推荐不超过物理核数的一半
+    - 8GB 可用→2、16GB→4、24GB→6
+    - 上限 min(cpu_count, available_memory_gb / 2.5)
+    """
+    if requested <= 0:
+        return 1
+    try:
+        import os as _os
+        cpu = _os.cpu_count() or 4
+    except Exception:
+        cpu = 4
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        avail_gb = mem.available / (1024 ** 3)
+    except Exception:
+        avail_gb = 4  # 保守默认
+
+    # 推荐值不超过物理核数的一半（给其他进程留空间）
+    recommended = min(requested, cpu // 2)
+    # 内存约束：每个 worker 约需 2.5 GB
+    mem_limit = max(1, int(avail_gb / 2.5))
+    return max(1, min(recommended, mem_limit, cpu))
+
+
+#: ``ocr.backend`` 取该值时表示「按本机实际可用后端自动选择」。
+AUTO_BACKEND = "auto"
+
+
+def _tesseract_ready() -> bool:
+    """Tesseract 可用 = 可执行文件找得到，且任务所需语言中的英文/中文至少一个在。
+
+    与 ``core.capabilities`` 的判定口径保持一致（后者要求 eng+chi_sim 齐全）；
+    这里放宽为「至少一个」，因为 OCR 语言由配置决定，缺中文时英文仍可用。
+    """
+    command = os.environ.get("TESSERACT_CMD", "")
+    if command and Path(command).is_file():
+        return True
+    return shutil.which("tesseract") is not None
+
+
+def _paddle_ready() -> bool:
+    """Paddle 可用 = 推理包可导入（模型在首次使用时由上游按需下载）。"""
+    return all(
+        importlib.util.find_spec(name) is not None
+        for name in ("paddleocr", "paddle", "numpy", "PIL")
+    )
+
+
+def resolve_auto_ocr_backend(prefer: str = "", *, adaptive_tesseract: bool = False) -> tuple[str, str]:
+    """解析「自动」OCR 后端，返回 ``(后端, 说明)``。
+
+    **这是条目 2 的核心**：修复前 ``auto`` 在序列化时被折叠成 ``none``，
+    导致「自动」实际等于「没有 OCR」——扫描页被识别出需要 OCR 却被静默跳过。
+
+    选择顺序（确定性，不依赖随机或时间）：
+      0. ``adaptive_tesseract``（配置了 adaptive_retry）且 Tesseract 就绪 → ``tesseract``
+         ——该策略只支持本机 Tesseract，优先满足配置意图
+      1. ``prefer`` 显式给出且可用 → 用它
+      2. Paddle 就绪 → ``paddle``（结构化能力最强）
+      3. Tesseract 就绪 → ``tesseract``
+      4. 都不可用 → ``none`` + **可操作的原因**
+
+    返回的说明在 ``none`` 时**必须**给出用户能照做的下一步，
+    不允许返回空串——那是「静默失败」的另一种形式。
+
+    **条目 11：可用性判断一律走注册表**（``is_ocr_engine_available``），
+    不再直接调 ``_paddle_ready`` / ``_tesseract_ready``——否则新注册的引擎
+    永远轮不到被自动选中。
+    """
+    if adaptive_tesseract and is_ocr_engine_available("tesseract"):
+        return "tesseract", ""
+    prefer = str(prefer or "").strip().lower()
+    if prefer and prefer not in {"", AUTO_BACKEND, "none"}:
+        if is_ocr_engine_available(prefer):
+            return prefer, ""
+        known = ", ".join(registered_ocr_engines()) or "（无）"
+        return (
+            "none",
+            f"配置指定了 {prefer}，但本机未检测到该后端；"
+            f"已注册的引擎: {known}。请安装 OCR 组件或改用自动/其它后端",
+        )
+
+    # 自动挑选：按**固定优先级**遍历，只挑真正可用的。
+    # 顺序是产品决定（Paddle 结构化能力最强），不随注册顺序变化。
+    for candidate in ("paddle", "tesseract"):
+        if is_ocr_engine_available(candidate):
+            return candidate, ""
+    # 内置都不可用时，才考虑外部注册的引擎（按名字排序保证确定性）
+    for candidate in registered_ocr_engines():
+        if candidate in {"paddle", "tesseract"}:
+            continue
+        if is_ocr_engine_available(candidate):
+            return candidate, ""
+    return (
+        "none",
+        "未检测到任何 OCR 后端（PaddleOCR 或 Tesseract）。"
+        "扫描件需要 OCR 才能提取文字：请安装 OCR 组件，"
+        "或改用文字版 PDF（原生文字层无需 OCR）。",
+    )
+
+
+def mark_auto_unavailable(config: ProjectConfig, reason: str) -> None:
+    """把「自动模式下没有可用后端」记进配置，供 GUI/CLI 与摘要展示。
+
+    修复前这种情形完全是静默的：``backend is None`` 直接把页面标 ``skipped``，
+    既没有 error 也没提示，用户以为 OCR 跑过了。
+    """
+    config.ocr["_auto_ocr_unavailable"] = reason
+
+
+def auto_unavailable_reason(config: ProjectConfig) -> str:
+    """读取自动模式不可用的原因（无则空串）。"""
+    return str(config.ocr.get("_auto_ocr_unavailable", "") or "")
+
+
+def preflight_backend(config: ProjectConfig) -> bool:
+    """Check Paddle dependencies without constructing another parent-side model."""
+    if config.ocr.get("component") or str(config.ocr.get("backend", "none")).lower() != "paddle":
+        backend = create_backend(config)
+        if backend is not None:
+            config.ocr["_resolved_component_version"] = getattr(backend, "version", None)
+        return backend is not None
+    import importlib.util
+    missing = [name for name in ("paddleocr", "paddle", "numpy", "PIL") if importlib.util.find_spec(name) is None]
+    if missing:
+        raise RuntimeError("缺少PaddleOCR依赖: " + ", ".join(missing))
+    device = str(config.ocr.get("device", "cpu"))
+    if device.startswith("gpu"):
+        import paddle
+        if not paddle.is_compiled_with_cuda() or paddle.device.cuda.device_count() < 1:
+            raise RuntimeError("Paddle GPU device is unavailable")
+    return True
+
+
+def _check_temperature() -> bool:
+    """检查 CPU 温度是否超过阈值。返回 True 表示温度正常。"""
+    try:
+        import psutil
+        temps = psutil.sensors_temperatures()
+        if not temps:
+            return True
+        for name, entries in temps.items():
+            for entry in entries:
+                if entry.current and entry.current > _OCR_MAX_TEMP:
+                    logger.warning(
+                        "CPU 温度 %.1f°C 超过阈值 %.0f°C（传感器: %s），暂停新增 worker",
+                        entry.current, _OCR_MAX_TEMP, name,
+                    )
+                    return False
+    except Exception:
+        # B-P3-3：温度探测失败 fail-open，但异常类型/消息必须留痕，避免静默丢失诊断。
+        logger.debug("CPU 温度探测失败，按未超温放行: ", exc_info=True)
+    return True
+
+
+def _ocr_worker_init(ocr_config: dict[str, Any]) -> None:
+    """进程池初始化：为当前 worker 进程创建 OCR backend 实例。
+
+    ``auto`` 必须在**父进程**解析后再传入：worker 进程没有 GUI/能力探测上下文，
+    各自独立解析会得到可能不一致的结果，且失败原因无法回传。
+    """
+    global _worker_backend
+    if ocr_config.get("component"):
+        from .component_ocr import ComponentOCRBackend
+
+        _worker_backend = ComponentOCRBackend(ocr_config)
+        return
+    name = str(ocr_config.get("_auto_resolved_backend")
+               or ocr_config.get("backend", "none")).lower()
+    if name == "paddle":
+        _worker_backend = PaddleStructureBackend(ocr_config)
+    elif name == "tesseract":
+        _worker_backend = TesseractBackend(ocr_config)
+    else:
+        _worker_backend = None
+
+
+_worker_backend: OCRBackend | None = None
+# D35：worker 内复用 PDF 句柄（同文档多页不重复打开）
+_worker_document: Any | None = None
+_worker_document_path: str | None = None
+
+
+def _ocr_worker_process(
+    args: tuple[str, int, int],
+) -> tuple[str, int, str | None, float | None, int, float, str | None, str | None]:
+    """单个 worker 进程的处理函数：渲染 + OCR 识别。
+
+    Returns:
+        (doc_id, page_no, text, confidence, printable_chars, garbled_ratio, error, structure_json)
+        若失败则 text 为 None。
+    """
+    global _worker_backend, _worker_document, _worker_document_path
+    primary_path, page_no, dpi = args
+    doc_id = os.path.basename(primary_path)  # 近似 — 实际 doc_id 由调用方提供
+    try:
+        if _worker_backend is None:
+            raise RuntimeError("OCR backend 未初始化")
+
+        # D35：worker 内复用已打开的 PDF 句柄（同文档多页不再逐页打开）
+        # Phase 0（M0a）：fitz.open → parser.open_document（pypdfium2 句柄）
+        if _worker_document_path != primary_path:
+            if _worker_document is not None:
+                try:
+                    _worker_document.close()
+                except Exception:  # noqa: BLE001 - 句柄关闭失败不影响后续流程
+                    logger.debug("复用 PDF 句柄关闭失败: ", exc_info=True)
+            _worker_document = None
+        if _worker_document is None:
+            from .parser import open_document
+
+            _worker_document = open_document(primary_path)
+            _worker_document_path = primary_path
+        png = render_page(primary_path, page_no, dpi=dpi, document=_worker_document)
+        result = recognize_page(_worker_backend, png)
+        structure = result.structure_json(dpi=dpi)
+        text, confidence = result.text, result.confidence
+        printable, garbled = text_quality(text)
+        return (doc_id, page_no, text, confidence, printable, garbled, None, structure)
+    except Exception as exc:  # noqa: BLE001
+        # D15：worker 把错误信息带回主进程，主进程写 errors 表而非仅标 failed
+        return (doc_id, page_no, None, None, 0, 0.0, str(exc), None)
+
+
+def protect_reviewed_page(db: Database, conn, doc_id: str, page_no: int) -> bool:
+    """Use the atomic protection check when the database adapter supports it."""
+    if not hasattr(db, "protect_reviewed_page"):
+        return False
+    return db.protect_reviewed_page(conn, doc_id, page_no)
+
+
+def complete_ocr_dependencies(config: ProjectConfig, db: Database) -> None:
+    """Advance OCR identity only when no required page remains pending or failed."""
+    # Lightweight third-party Database adapters may not expose transactions.
+    # They cannot provide the atomic dependency audit guaranteed by Database.
+    if not all(hasattr(db, name) for name in ("fetchone", "transaction")):
+        return
+    from .dependencies import ocr_digest
+    rows = db.fetchall("SELECT DISTINCT doc_id FROM pages WHERE needs_ocr=1")
+    for row in rows:
+        doc_id = row["doc_id"]
+        if db.fetchone(
+            "SELECT 1 FROM pages WHERE doc_id=? AND needs_ocr=1 AND ocr_status!='done'", (doc_id,),
+        ):
+            continue
+        with db.transaction() as conn:
+            if conn.execute(
+                "SELECT 1 FROM records WHERE doc_id=? AND review_status IN ('human_accepted','human_rejected')",
+                (doc_id,),
+            ).fetchone():
+                continue
+            previous = conn.execute(
+                "SELECT digest FROM processing_dependencies WHERE doc_id=? AND stage='ocr'", (doc_id,),
+            ).fetchone()
+            digest = ocr_digest(config)
+            if previous is not None and previous["digest"] == digest:
+                continue
+            db.record_dependency(
+                conn, doc_id, "ocr", digest, "applied",
+                None if previous is None else previous["digest"],
+            )
+
+
+def ocr_stage(
+    config: ProjectConfig,
+    db: Database,
+    limit_pages: int | None = None,
+    *,
+    ocr_workers: int = 1,
+    should_stop: Callable[[], bool] | None = None,
+    page_numbers: list[int] | None = None,
+) -> dict[str, Any]:
+    """OCR 阶段：对缺少文字层的页面执行 OCR 识别。
+
+    Args:
+        config: 项目配置
+        db: 数据库连接
+        limit_pages: 限制处理页数（用于小规模试跑）
+        ocr_workers: OCR 并行 worker 数（默认 1 即串行；>1 使用多进程并行加速）
+    """
+    if limit_pages is not None and (type(limit_pages) is not int or limit_pages < 0):
+        raise ValueError("limit_pages 不能为负数")
+    if page_numbers is not None and (
+        not isinstance(page_numbers, list) or len(page_numbers) > 2000
+        or any(type(page) is not int or page < 1 for page in page_numbers)
+    ):
+        raise ValueError("OCR页码必须是最多2000个正整数")
+    selected_pages = sorted(set(page_numbers)) if page_numbers is not None else None
+    if selected_pages == []:
+        return {"selected": 0, "recognized": 0, "failed": 0, "skipped": 0, "page_numbers": []}
+    # A literal integer list avoids SQLite's platform-dependent bind-variable
+    # limit; every member was strictly validated before constructing SQL.
+    page_filter = "" if selected_pages is None else " AND p.page_no IN (" + ",".join(map(str, selected_pages)) + ")"
+    select_sql = """
+        SELECT p.doc_id, p.page_no, d.primary_path
+        FROM pages p JOIN documents d ON d.doc_id=p.doc_id
+        WHERE p.needs_ocr=1 AND p.ocr_status IN ('pending','failed')
+        """
+    select_sql += page_filter + " ORDER BY p.doc_id, p.page_no"
+    select_params: tuple[Any, ...] = ()
+    if hasattr(db, "iter_rows"):
+        total_row = db.fetchone(
+            """SELECT COUNT(*) AS n FROM pages p
+               WHERE p.needs_ocr=1 AND p.ocr_status IN ('pending','failed')""" + page_filter
+        )
+        selected = int(total_row["n"] if total_row else 0)
+        if limit_pages is not None:
+            selected = min(selected, limit_pages)
+            select_sql += " LIMIT ?"
+            select_params = (limit_pages,)
+        rows: Iterable[Any] = db.iter_rows(select_sql, select_params)
+    else:  # Lightweight test doubles and third-party Database adapters.
+        buffered_rows = db.fetchall(select_sql, select_params)
+        if selected_pages is not None:
+            buffered_rows = [row for row in buffered_rows if row["page_no"] in selected_pages]
+        if limit_pages is not None:
+            buffered_rows = buffered_rows[:limit_pages]
+        selected = len(buffered_rows)
+        rows = buffered_rows
+    summary: dict[str, Any] = {
+        "selected": selected, "recognized": 0, "failed": 0, "skipped": 0,
+    }
+    if selected_pages is not None:
+        summary["page_numbers"] = selected_pages
+    dpi = int(config.ocr.get("dpi", 220))
+    workers = adaptive_ocr_workers(ocr_workers)
+
+    if workers <= 1:
+        # Resolve identity even when no page is queued; an idle verification run
+        # must use the same backend identity as the run that completed OCR.
+        if not selected:
+            try:
+                preflight_backend(config)
+            except Exception as exc:  # noqa: BLE001 - optional backend must not break idle stages
+                logger.debug("空 OCR 队列的依赖身份检查失败: %s", exc)
+            return summary
+        # 串行路径：父进程创建 backend（失败按 D13 降级跳过，不中断整批）
+        try:
+            backend = create_backend(config)
+            component_version = getattr(backend, "version", None) if backend is not None else None
+            config.ocr["_resolved_component_version"] = component_version
+        except Exception as exc:  # noqa: BLE001 - missing optional OCR dependency must degrade
+            logger.error("OCR backend 初始化失败，跳过 OCR 阶段: %s", exc)
+            for row in rows:
+                db.add_error(row["doc_id"], "ocr", exc)
+                db.execute(
+                    "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                    (utcnow(), row["doc_id"], row["page_no"]),
+                )
+            summary["skipped"] = selected
+            return summary
+        if backend is None:
+            # 条目 2：没有后端时**不再静默 skipped**。
+            # 旧行为把 needs_ocr 页标 skipped 且不写 error、不提示，用户会以为 OCR 跑过了，
+            # 实际导出的文档里没有文字。现在区分两种情形：
+            #   - 配置就是 none（用户主动关闭）→ 保持 skipped，这是预期行为；
+            #   - 自动模式解析失败 → 写明确错误 + 把可操作原因写进 summary。
+            reason = auto_unavailable_reason(config)
+            summary["skipped"] = selected
+            if reason:
+                summary["reason"] = reason
+                summary["auto_unavailable"] = True
+                for row in rows:
+                    db.add_error(row["doc_id"], "ocr", RuntimeError(reason))
+                    db.execute(
+                        "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                        (utcnow(), row["doc_id"], row["page_no"]),
+                    )
+                return summary
+            for row in rows:
+                db.execute(
+                    "UPDATE pages SET ocr_status='skipped', updated_at=? WHERE doc_id=? AND page_no=?",
+                    (utcnow(), row["doc_id"], row["page_no"]),
+                )
+            return summary
+        result = _ocr_serial(
+            config, db, rows, backend, dpi, summary, should_stop=should_stop,
+        )
+        if not summary.get("stopped"):
+            complete_ocr_dependencies(config, db)
+        return result
+
+    # The parent checks dependencies/devices without constructing a Paddle model.
+    # Model initialization failures still reach the existing worker failure path.
+    try:
+        precheck_available = preflight_backend(config)
+    except Exception as exc:  # noqa: BLE001 - missing optional OCR dependency must degrade
+        logger.error("OCR 依赖缺失，跳过 OCR 阶段: %s", exc)
+        for row in rows:
+            db.add_error(row["doc_id"], "ocr", exc)
+            db.execute(
+                "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                (utcnow(), row["doc_id"], row["page_no"]),
+            )
+        summary["skipped"] = selected
+        return summary
+    if not precheck_available:
+        # 条目 2：与串行路径一致——自动模式解析失败必须**可见**，不能静默 skipped。
+        reason = auto_unavailable_reason(config)
+        summary["skipped"] = selected
+        if reason:
+            summary["reason"] = reason
+            summary["auto_unavailable"] = True
+            for row in rows:
+                db.add_error(row["doc_id"], "ocr", RuntimeError(reason))
+                db.execute(
+                    "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                    (utcnow(), row["doc_id"], row["page_no"]),
+                )
+        return summary
+
+    logger.info("OCR 阶段启动 %d 个 worker 进程", workers)
+    ocr_config = dict(config.ocr)
+    start_time = time.monotonic()
+    affected_docs: set[str] = set()
+    pending_items: set[tuple[str, int]] = set()
+    failed_submission: tuple[str, int] | None = None
+
+    def mark_failed_items(items: Iterable[tuple[str, int]], exc: Exception) -> None:
+        for doc_id, page_no in items:
+            db.add_error(doc_id, "ocr", RuntimeError(f"OCR 多进程崩溃: {exc}"[:4000]))
+            db.execute(
+                "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                (utcnow(), doc_id, page_no),
+            )
+            summary["skipped"] += 1
+
+    def iter_work_items() -> Iterator[tuple[str, int, str, int]]:
+        for index, row in enumerate(rows):
+            if index and index % 500 == 0 and not _check_temperature():
+                logger.warning("温度过高，暂停提交新 OCR 页面")
+                for _ in range(30):
+                    if should_stop is not None and should_stop():
+                        summary["stopped"] = True
+                        return
+                    time.sleep(1)
+            yield row["doc_id"], int(row["page_no"]), row["primary_path"], dpi
+
+    def mark_stopped() -> None:
+        summary["stopped"] = True
+
+    try:
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_ocr_worker_init,
+            initargs=(ocr_config,),
+        )
+    except Exception as exc:  # Pool construction failed before any row was submitted.
+        logger.error("OCR 多进程池初始化失败，%d 页标记跳过: %s", selected, exc)
+        mark_failed_items(
+            ((row["doc_id"], int(row["page_no"])) for row in rows), exc,
+        )
+    else:
+        try:
+            with executor:
+                def submit(item: tuple[str, int, str, int]):
+                    nonlocal failed_submission
+                    doc_id, page_no, path, item_dpi = item
+                    try:
+                        future = executor.submit(_ocr_worker_process, (path, page_no, item_dpi))
+                    except Exception:
+                        failed_submission = (doc_id, page_no)
+                        raise
+                    pending_items.add((doc_id, page_no))
+                    affected_docs.add(doc_id)
+                    return future
+
+                completed = iter_bounded_futures(
+                    iter_work_items(),
+                    submit,
+                    max_in_flight=max(1, workers * 2),
+                    should_stop=should_stop,
+                    on_stop=mark_stopped,
+                    future_timeout=_OCR_POLL_TIMEOUT_SECONDS,
+                )
+                for fut, item in completed:
+                    doc_id, page_no, _path, _dpi = item
+                    try:
+                        results = fut.result()
+                        text, confidence, printable, garbled = results[2], results[3], results[4], results[5]
+                    except Exception as exc:  # noqa: BLE001
+                        db.add_error(doc_id, "ocr", exc)
+                        db.execute(
+                            "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                            (utcnow(), doc_id, page_no),
+                        )
+                        summary["failed"] += 1
+                        pending_items.discard((doc_id, page_no))
+                        continue
+
+                    if text is None:
+                        # D15：错误详情写 errors 表，用户可知为何无文字
+                        worker_error = results[6] if len(results) > 6 and results[6] else "OCR 识别无输出"
+                        db.add_error(doc_id, "ocr", RuntimeError(str(worker_error)[:4000]))
+                        db.execute(
+                            "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                            (utcnow(), doc_id, page_no),
+                        )
+                        summary["failed"] += 1
+                    else:
+                        with db.transaction() if hasattr(db, "transaction") else nullcontext(db) as conn:
+                            if protect_reviewed_page(db, conn, doc_id, page_no):
+                                summary["protected_reviewed"] = summary.get("protected_reviewed", 0) + 1
+                                summary["dependency_notice"] = "人工复核在OCR期间完成；旧结果已保留，新依赖未自动应用。"
+                                pending_items.discard((doc_id, page_no))
+                                continue
+                            conn.execute(
+                                """
+                                UPDATE pages SET ocr_text=?, final_text=?, parse_method='ocr',
+                                    printable_chars=?, garbled_ratio=?, ocr_status='done',
+                                    ocr_confidence=?, ocr_structure_json=?, updated_at=? WHERE doc_id=? AND page_no=?
+                                """,
+                                (text, text, printable, garbled, confidence, results[7], utcnow(), doc_id, page_no),
+                            )
+                        summary["recognized"] += 1
+                    pending_items.discard((doc_id, page_no))
+        except Exception as exc:  # noqa: BLE001 - broken worker pool degrades without corrupting completed rows
+            uncertain = set(pending_items)
+            if failed_submission is not None:
+                uncertain.add(failed_submission)
+            logger.error("OCR 多进程池崩溃，%d 个在途页面标记跳过: %s", len(uncertain), exc)
+            mark_failed_items(uncertain, exc)
+
+    elapsed = time.monotonic() - start_time
+    logger.info(
+        "OCR 阶段完成：%d/%d 页识别成功，%d 失败，%d 跳过，耗时 %.1f 秒（%d workers）",
+        summary["recognized"], summary["selected"], summary["failed"], summary["skipped"], elapsed, workers,
+    )
+
+    # 更新文档状态
+    for doc_id in affected_docs:
+        pending_row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM pages WHERE doc_id=? AND needs_ocr=1 AND ocr_status!='done'",
+            (doc_id,),
+        )
+        done_row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM pages WHERE doc_id=? AND ocr_status='done'",
+            (doc_id,),
+        )
+        pending = int(pending_row["n"] if pending_row else 0)
+        done = int(done_row["n"] if done_row else 0)
+        status = "parsed" if pending == 0 else "parsed_partial"
+        db.execute(
+            "UPDATE documents SET status=?, ocr_page_count=?, updated_at=? WHERE doc_id=?",
+            (status, done, utcnow(), doc_id),
+        )
+    if not summary.get("stopped"):
+        complete_ocr_dependencies(config, db)
+    return summary
+
+
+def _ocr_serial(
+    config: ProjectConfig,
+    db: Database,
+    rows: Iterable[Any],
+    backend: OCRBackend,
+    dpi: int,
+    summary: dict[str, Any],
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """串行 OCR 路径 — 单进程逐页识别（默认；workers<=1 时的确定性低内存路径）。"""
+    affected_docs: set[str] = set()
+    for row in rows:
+        if should_stop is not None and should_stop():
+            summary["stopped"] = True
+            break
+        doc_id, page_no = row["doc_id"], int(row["page_no"])
+        affected_docs.add(doc_id)
+        try:
+            png = render_page(row["primary_path"], page_no, dpi=dpi)
+            result = recognize_page(backend, png)
+            structure = result.structure_json(dpi=dpi)
+            text, confidence = result.text, result.confidence
+            printable, garbled = text_quality(text)
+            with db.transaction() as conn:
+                if protect_reviewed_page(db, conn, doc_id, page_no):
+                    summary["protected_reviewed"] = summary.get("protected_reviewed", 0) + 1
+                    summary["dependency_notice"] = "人工复核在OCR期间完成；旧结果已保留，新依赖未自动应用。"
+                    continue
+                conn.execute(
+                    """
+                    UPDATE pages SET ocr_text=?, final_text=?, parse_method='ocr',
+                        printable_chars=?, garbled_ratio=?, ocr_status='done',
+                        ocr_confidence=?, ocr_structure_json=?, updated_at=? WHERE doc_id=? AND page_no=?
+                    """,
+                    (text, text, printable, garbled, confidence, structure, utcnow(), doc_id, page_no),
+                )
+            summary["recognized"] += 1
+        except Exception as exc:  # noqa: BLE001
+            db.add_error(doc_id, "ocr", exc)
+            db.execute(
+                "UPDATE pages SET ocr_status='failed', updated_at=? WHERE doc_id=? AND page_no=?",
+                (utcnow(), doc_id, page_no),
+            )
+            summary["failed"] += 1
+
+    for doc_id in affected_docs:
+        pending_row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM pages WHERE doc_id=? AND needs_ocr=1 AND ocr_status!='done'",
+            (doc_id,),
+        )
+        done_row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM pages WHERE doc_id=? AND ocr_status='done'",
+            (doc_id,),
+        )
+        pending = int(pending_row["n"] if pending_row else 0)
+        done = int(done_row["n"] if done_row else 0)
+        status = "parsed" if pending == 0 else "parsed_partial"
+        db.execute(
+            "UPDATE documents SET status=?, ocr_page_count=?, updated_at=? WHERE doc_id=?",
+            (status, done, utcnow(), doc_id),
+        )
+    return summary
+
+# ── 内置引擎注册（条目 11）──────────────────────────────────────────────
+#
+# 放在模块底部：工厂函数需要先完成定义。放开注册 ≠ 拆除内置——
+# paddle / tesseract 仍在这里注册，行为与写死时完全相同。
+# available 传 lambda 而非函数对象：`_paddle_ready` 这个名字在**调用时**才解析，
+# 因此运行期替换（如测试 monkeypatch）仍能影响探测结果。
+# （不能用"函数名字符串"，那需要 ocr_engines 反向导入本模块，会形成循环依赖。）
+register_ocr_engine(
+    "paddle",
+    lambda config: PaddleStructureBackend(config),
+    available=lambda: _paddle_ready(),
+)
+register_ocr_engine(
+    "tesseract",
+    lambda config: TesseractBackend(config),
+    available=lambda: _tesseract_ready(),
+)

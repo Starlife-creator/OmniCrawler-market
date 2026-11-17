@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, TypedDict
+
+import pypdfium2 as pdfium
+from pdfminer.layout import LAParams
+
+from .concurrency import iter_bounded_futures
+from .config import ProjectConfig
+from .database import Database
+from .ocr_result import text_quality as text_quality
+from .utils import clean_text, utcnow
+
+LOGGER = logging.getLogger(__name__)
+
+PARSER_VERSION = "native-1.1"
+
+# D16：同一文档解析失败最大次数，超过后置 parse_dead 排除
+MAX_PARSE_ATTEMPTS = 3
+
+
+class ParseOutcome(TypedDict, total=False):
+    page_count: int
+    ocr_pages: int
+    error: Exception
+    protected_review: bool
+
+# Phase 0（M0a）：pdfplumber 底层 pdfminer 的布局参数——sort 语义对齐原
+# fitz get_text(sort=True)（阅读顺序），laparams 控制词/行合并容差。
+_TEXT_LAPARAMS = LAParams(line_margin=0.3, word_margin=0.1, char_margin=2.0, boxes_flow=0.5)
+
+
+def _image_coverage_ratio(page) -> float:
+    """页面图片总面积占比（D12：纯图表格页夹带页眉页脚时强制 OCR）。
+
+    Phase 0：pdfplumber page.images（bbox 为 PDF 点坐标，与页面同坐标系）。
+    """
+    try:
+        images = page.images
+        if not images:
+            return 0.0
+        page_area = max(float(page.width) * float(page.height), 1.0)
+        covered = 0.0
+        for image in images:
+            width = float(image.get("x1", 0.0)) - float(image.get("x0", 0.0))
+            height = float(image.get("bottom", 0.0)) - float(image.get("top", 0.0))
+            covered += max(width, 0.0) * max(height, 0.0)
+        return min(covered / page_area, 1.0)
+    except Exception:  # noqa: BLE001 - 判据失败按无图处理
+        return 0.0
+
+
+def open_document(path: str):
+    """Phase 0（M0a）：打开 PDF 文档句柄（供渲染句柄复用，D35 语义保留）。
+
+    返回 pypdfium2.PdfDocument；调用方负责 close（或用 with 语义）。
+    加密检测前置：pypdfium2 打开加密文档渲染会失败，先显式拒绝保持原
+    PermissionError("PDF需要密码") 行为。
+    """
+    from pypdf import PdfReader
+
+    if PdfReader(path).is_encrypted:
+        raise PermissionError("PDF需要密码")
+    return pdfium.PdfDocument(path)
+
+
+def _iter_parsed_pages(path: str, min_chars: int, max_garbled_ratio: float, *, include_structure: bool = False):
+    """D36：逐页 yield 解析结果，避免整文档 pages 列表常驻内存（数千页大文件内存峰值受控）。
+
+    Phase 0（M0a）：fitz → pdfplumber（文本/表格/图像）+ pypdf 前置加密检测。
+    """
+    import pdfplumber
+    from pypdf import PdfReader
+
+    reader = PdfReader(path)
+    if reader.is_encrypted:
+        raise PermissionError("PDF需要密码")
+    with pdfplumber.open(path) as document:
+        for page_index, page in enumerate(document.pages):
+            raw_text = page.extract_text(layout=False, laparams=_TEXT_LAPARAMS) or ""
+            text = clean_text(raw_text, compress_ws=False)  # D11：保留原始空白（表格列对齐信号），检索时再压缩
+            printable, garbled = text_quality(text)
+            needs_ocr = printable < min_chars or garbled > max_garbled_ratio
+            if not needs_ocr and _image_coverage_ratio(page) > 0.6:
+                # D12：页面图像覆盖超 60%（纯图表格页夹带页眉页脚误判有文字层）→ 强制 OCR
+                needs_ocr = True
+            final_text = text
+            structures = _extract_table_structures(page) if include_structure and not needs_ocr else None
+            if not needs_ocr:
+                # D8：原生文字层表格结构恢复（find_tables → Markdown），期初/期末等列归属不再丢失
+                table_md = _extract_tables_markdown(page, structures=structures)
+                if table_md:
+                    final_text = f"{text}\n\n[表格结构]\n{table_md}".strip()
+            yield {
+                **({"page_geometry": {
+                    "native_size": [float(page.width), float(page.height)],
+                    "rotation_degrees": int(reader.pages[page_index].rotation),
+                    "media_box_pdf": [float(value) for value in reader.pages[page_index].mediabox],
+                    "crop_box_pdf": [float(value) for value in reader.pages[page_index].cropbox],
+                    "boxes_coordinate_system": "pdf_points_bottom_left",
+                    "text_coordinate_system": "pdfplumber_points_top_left",
+                }} if include_structure else {}),
+                **({"words": page.extract_words(), "tables": structures or []} if include_structure and not needs_ocr else {}),
+                "page_no": page_index + 1,
+                "width": float(page.width),
+                "height": float(page.height),
+                "native_text": text,
+                "final_text": final_text,
+                "parse_method": "native",
+                "printable_chars": printable,
+                "garbled_ratio": garbled,
+                "needs_ocr": int(needs_ocr),
+                "ocr_status": "pending" if needs_ocr else "not_needed",
+            }
+
+
+def parse_document(path: str, min_chars: int, max_garbled_ratio: float) -> dict[str, Any]:
+    """兼容封装：收集逐页结果（单文档调用方使用；批处理走 parse_stage 的流式路径）。"""
+    pages = list(_iter_parsed_pages(path, min_chars, max_garbled_ratio))
+    return {"page_count": len(pages), "pages": pages}
+
+
+def _extract_table_structures(page) -> list[dict[str, Any]]:
+    try:
+        tables = page.find_tables()
+    except Exception:  # noqa: BLE001 - optional table detection
+        return []
+    structures = []
+    for table in tables:
+        data = table.extract()
+        if data:
+            rows = [[str(cell).replace("\r", " ").replace("\n", " ").strip() if cell is not None else "" for cell in row] for row in data]
+            structures.append({"cells": rows, **({"bbox": list(table.bbox)} if hasattr(table, "bbox") else {})})
+    return structures
+
+
+def _extract_tables_markdown(page, *, structures: list[dict[str, Any]] | None = None) -> str:
+    tables = _extract_table_structures(page) if structures is None else structures
+    parts = []
+    for table in tables:
+        rows = table["cells"]
+        width = max(len(row) for row in rows)
+        def render(row, width=width):
+            padded = row + [""] * (width - len(row))
+            return "| " + " | ".join(cell.replace("|", "\\|") for cell in padded) + " |"
+        parts.append(render(rows[0]))
+        parts.append("|" + "|".join(["---"] * max(width, 1)) + "|")
+        parts.extend(render(row) for row in rows[1:])
+        parts.append("")
+    return "\n".join(parts).strip()
+
+
+def parse_stage(
+    config: ProjectConfig,
+    db: Database,
+    limit: int | None = None,
+    workers: int | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    if limit is not None and limit < 0:
+        raise ValueError("limit 不能为负数")
+    parser_config = config.parser
+    min_chars = int(parser_config.get("min_native_chars", 40))
+    max_garbled = float(parser_config.get("max_garbled_ratio", 0.03))
+    workers = int(parser_config.get("workers", 4)) if workers is None else workers
+    if not 1 <= workers <= 64:
+        raise ValueError("workers 必须在1到64之间")
+    select_sql = (
+        "SELECT doc_id, primary_path, attempt_count FROM documents "
+        "WHERE status IN ('ingested','parse_failed') AND attempt_count < ? "
+        "ORDER BY filename, doc_id"
+    )
+    select_params: tuple[Any, ...] = (MAX_PARSE_ATTEMPTS,)
+    if hasattr(db, "iter_rows"):
+        total_row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM documents "
+            "WHERE status IN ('ingested','parse_failed') AND attempt_count < ?",
+            (MAX_PARSE_ATTEMPTS,),
+        )
+        selected = int(total_row["n"] if total_row else 0)
+        if limit is not None:
+            selected = min(selected, limit)
+            select_sql += " LIMIT ?"
+            select_params += (limit,)
+        rows = db.iter_rows(select_sql, select_params)
+    else:  # Lightweight test doubles and third-party Database adapters.
+        buffered_rows = db.fetchall(select_sql, select_params)
+        if limit is not None:
+            buffered_rows = buffered_rows[:limit]
+        selected = len(buffered_rows)
+        rows = iter(buffered_rows)
+    summary: dict[str, Any] = {
+        "selected": selected, "parsed": 0, "failed": 0, "ocr_pages": 0,
+    }
+    if not selected:
+        return summary
+
+    # S1.5.1：每线程复用独立数据库连接（参照 extraction.py 每线程 DB 模式），
+    # 避免多线程共享单连接并发写导致 "cannot start a transaction within a transaction" / SQLITE_BUSY
+    _thread_db = threading.local()
+    _thread_connections: list[Database] = []
+
+    def work(row):
+        worker_db = getattr(_thread_db, "db", None)
+        if worker_db is None:
+            worker_db = Database(config.database)
+            _thread_db.db = worker_db
+            _thread_connections.append(worker_db)  # GIL 下 list.append 线程安全
+        return _parse_and_store(config, worker_db, row, min_chars, max_garbled)
+
+    def mark_stopped() -> None:
+        summary["stopped"] = True
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            completed = iter_bounded_futures(
+                rows,
+                lambda row: pool.submit(work, row),
+                max_in_flight=max(1, workers * 4),
+                should_stop=should_stop,
+                on_stop=mark_stopped,
+            )
+            for future, row in completed:
+                doc_id = row["doc_id"]
+                try:
+                    outcome = future.result()
+                    if outcome.get("protected_review"):
+                        summary["protected_reviewed"] = summary.get("protected_reviewed", 0) + 1
+                        summary["dependency_notice"] = "人工复核在解析期间完成；旧结果已保留，新依赖未自动应用。"
+                        continue
+                    if "error" in outcome:
+                        raise outcome["error"]
+                    summary["parsed"] += 1
+                    summary["ocr_pages"] += outcome["ocr_pages"]
+                    status = "parsed" if outcome["ocr_pages"] == 0 else "parsed_native"
+                    from .dependencies import ocr_digest, parser_digest
+                    with db.transaction() as conn:
+                        if conn.execute(
+                            "SELECT 1 FROM records WHERE doc_id=? AND review_status IN ('human_accepted','human_rejected')",
+                            (doc_id,),
+                        ).fetchone():
+                            summary["protected_reviewed"] = summary.get("protected_reviewed", 0) + 1
+                            summary["dependency_notice"] = "人工复核在解析期间完成；旧结果已保留，新依赖未自动应用。"
+                            continue
+                        conn.execute(
+                            """
+                            UPDATE documents SET page_count=?, status=?, text_page_count=?,
+                                ocr_page_count=0, error=NULL, parser_version=?, updated_at=?
+                            WHERE doc_id=?
+                            """,
+                            (outcome["page_count"], status,
+                             outcome["page_count"] - outcome["ocr_pages"], PARSER_VERSION, utcnow(), doc_id),
+                        )
+                        db.record_dependency(conn, doc_id, "parse", parser_digest(config, PARSER_VERSION), "applied")
+                        if outcome["ocr_pages"] == 0:
+                            db.record_dependency(conn, doc_id, "ocr", ocr_digest(config), "applied")
+                except Exception as exc:  # noqa: BLE001 - per-file isolation is intentional
+                    summary["failed"] += 1
+                    db.add_error(doc_id, "parse", exc)
+                    # D16：失败计数累加，超阈值置 parse_dead 排除（防永久损坏 PDF 无限重试）
+                    attempts = int(row["attempt_count"] or 0)
+                    db.execute(
+                        """
+                        UPDATE documents SET status=?, error=?, attempt_count=attempt_count+1,
+                            updated_at=? WHERE doc_id=?
+                        """,
+                        (
+                            "parse_dead" if attempts + 1 >= MAX_PARSE_ATTEMPTS else "parse_failed",
+                            str(exc)[:4000], utcnow(), doc_id,
+                        ),
+                    )
+    finally:
+        for worker_db in _thread_connections:
+            try:
+                worker_db.close()
+            except Exception:  # noqa: BLE001 - 线程连接关闭失败不应影响调用方
+                # B-P3-3：关闭失败留痕（debug + exc_info），不再静默吞掉。
+                LOGGER.debug("线程数据库连接关闭失败: ", exc_info=True)
+    return summary
+
+
+def _parse_and_store(
+    config: ProjectConfig,
+    db: Database,
+    row,
+    min_chars: int,
+    max_garbled: float,
+) -> ParseOutcome:
+    """流式解析页面并在单事务内分批 executemany（S1.5.1 短事务批写；B-P2-8 不再整文档入内存列表）。
+
+    长事务覆盖整个解析会与其他线程互相阻塞；改为把解析（纯内存，无锁）与
+    写库（单次 BEGIN IMMEDIATE 短事务）分离，避免 SQLITE_BUSY / 嵌套事务；
+    页面元组仅在 500 条批次缓冲内驻留，内存峰值不再随整文档页数线性增长。
+    """
+    doc_id = row["doc_id"]
+    try:
+        now = utcnow()
+        page_count = 0
+        ocr_pages = 0
+        insert_sql = """
+            INSERT INTO pages(
+                doc_id, page_no, width, height, native_text, final_text,
+                parse_method, printable_chars, garbled_ratio, needs_ocr,
+                ocr_status, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        """
+        with db.transaction() as conn:
+            if conn.execute(
+                "SELECT 1 FROM records WHERE doc_id=? AND review_status IN ('human_accepted','human_rejected')",
+                (doc_id,),
+            ).fetchone():
+                return {"error": RuntimeError("人工复核在处理期间完成，保留原页面和记录"), "protected_review": True}
+            conn.execute("DELETE FROM pages WHERE doc_id=?", (doc_id,))
+            batch: list[tuple] = []
+            for page in _iter_parsed_pages(row["primary_path"], min_chars, max_garbled):
+                batch.append((
+                    doc_id, page["page_no"], page["width"], page["height"],
+                    page["native_text"], page["final_text"], page["parse_method"],
+                    page["printable_chars"], page["garbled_ratio"],
+                    page["needs_ocr"], page["ocr_status"], now,
+                ))
+                page_count += 1
+                ocr_pages += page["needs_ocr"]
+                if len(batch) >= 500:
+                    conn.executemany(insert_sql, batch)
+                    batch.clear()
+            if batch:
+                conn.executemany(insert_sql, batch)
+        return {"page_count": page_count, "ocr_pages": ocr_pages}
+    except Exception as exc:  # noqa: BLE001 - 由调用方按文档隔离处理
+        return {"error": exc}
+
+
+def _render_to_png(page, dpi: int) -> bytes:
+    """Phase 0（M0a）：pypdfium2 单页渲染为 PNG 字节（BGRA→PIL，方案优化点）。"""
+    import io
+
+    bitmap = page.render(scale=dpi / 72)
+    pil = bitmap.to_pil()
+    buffer = io.BytesIO()
+    pil.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def render_page(path: str, page_no: int, dpi: int = 220, document: Any | None = None) -> bytes:
+    """渲染指定页为 PNG。D35：传入已打开的 Document 时复用句柄，避免逐页重复打开 PDF。
+
+    Phase 0（M0a）：fitz get_pixmap → pypdfium2 render（scale=dpi/72，语义等价）。
+    """
+    if document is not None:
+        page = document[page_no - 1]
+        return _render_to_png(page, dpi)
+    with pdfium.PdfDocument(path) as document:
+        page = document[page_no - 1]
+        return _render_to_png(page, dpi)
