@@ -426,6 +426,6 @@ def format_eta(seconds: float) -> str:
 
 def _(text: str) -> str:
     """Translate without depending on the GUI delivery layer."""
-    from ..i18n import _ as __translate
+    from .i18n import _ as __translate
 
     return __translate(text)

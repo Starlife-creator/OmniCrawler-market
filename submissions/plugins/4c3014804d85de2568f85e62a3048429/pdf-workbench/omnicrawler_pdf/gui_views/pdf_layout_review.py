@@ -43,7 +43,7 @@ class PdfLayoutWorker(QThread):
     def run(self) -> None:
         try:
             from ..document_ir import parse_document
-            from ...pdfx.parser import render_page
+            from ..pdfx.parser import render_page
 
             document = parse_document(self.path, self.options)
             if not self.isInterruptionRequested():

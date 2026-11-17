@@ -110,7 +110,7 @@ class PdfWorkbenchView(PdfResultMixin, PdfScanMixin, QWidget):
             return "paddle", "", ""
 
         # 3) 宿主已装 Tesseract（可执行文件在即可）
-        from ...pdfx.ocr import _tesseract_ready
+        from ..pdfx.ocr import _tesseract_ready
 
         if _tesseract_ready():
             return "tesseract", "", ""

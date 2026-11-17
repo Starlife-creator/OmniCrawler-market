@@ -20,7 +20,7 @@ from __future__ import annotations
 
 def main() -> None:
     """转发到主 CLI（惰性导入，避免把 CLI 绑进 pdfx 的依赖闭包）。"""
-    from ..cli import main as cli_main
+    from .cli import main as cli_main
 
     cli_main()
 

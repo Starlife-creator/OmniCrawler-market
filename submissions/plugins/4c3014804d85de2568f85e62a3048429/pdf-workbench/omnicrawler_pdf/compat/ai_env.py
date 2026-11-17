@@ -340,7 +340,9 @@ def require_ai_privacy(
     Raises:
         AIPrivacyBlockedError: 对应 privacy 开关未显式开启。
     """
-    from .errors import AIPrivacyBlockedError
+    # compat/errors.py 在迁移时未搬（插件里没有该模块）。
+    # 该异常类定义在宿主 core/errors.py——契约 1 允许插件导入宿主模块。
+    from omnicrawler.core.errors import AIPrivacyBlockedError
 
     if not load_ai_privacy(project_root).get(content_kind, False):
         raise AIPrivacyBlockedError(
