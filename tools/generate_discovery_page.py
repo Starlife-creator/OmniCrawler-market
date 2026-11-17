@@ -728,7 +728,7 @@ def _detail_page(
         doc_html = markdown_to_html(listing_markdown)
 
     install_hint = (
-        "<p>在 OmniCrawler 客户端的「插件市场」面板中按名称或 ID 找到该条目并安装。</p>"
+        "<p>在 OmniCrawler 客户端的「OmniCrawler 市场」面板中按名称或 ID 找到该条目并安装。</p>"
         if kind == "plugin"
         else "<p>在 OmniCrawler 客户端的市场面板中按名称或 ID 找到该条目并安装。</p>"
     )
