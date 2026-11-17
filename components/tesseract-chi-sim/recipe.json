@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "name": "tesseract-chi-sim",
+  "version": "1.0.0",
+  "description": "Tesseract 中文简体语言包——字节从上游拉取，本仓只托管声明",
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin"
+  ],
+  "architectures": [
+    "x86_64",
+    "arm64"
+  ],
+  "python_abi": [],
+  "artifacts": [
+    {
+      "url": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 2567886,
+      "extract_to": "tessdata",
+      "include": [
+        "chi_sim.traineddata"
+      ]
+    }
+  ],
+  "entry": {
+    "path": "tessdata/chi_sim.traineddata",
+    "protocol": "ocr-file-v1",
+    "engine": "tesseract"
+  }
+}

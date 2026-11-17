@@ -35,6 +35,15 @@ _AUTHORS_DIR = "authors"
 
 _TEMPLATES_DIR = "templates"
 
+#: 组件 recipe 目录（2026-11-18 新增第三分支）。
+#:
+#: **与 plugins/templates 的关键差别：这里托管的是几十 KB 的 recipe 声明，
+#: 不是组件字节本身。** 维护者定的分工是「下载从上游拉，需要组装就在本地
+#: 组装，本项目只维护组装方式」（`OmniCrawler/src/omnicrawler/services/
+#: component_recipe.py`）——所以市场仓不托管模型/二进制，只托管
+#: "从哪个 URL 拉、哈希是多少、怎么拼"。
+_COMPONENTS_DIR = "components"
+
 _ENTRY_KEYS = [
     "id",
     "name",

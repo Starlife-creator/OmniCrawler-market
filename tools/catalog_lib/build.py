@@ -17,6 +17,102 @@ from .signing import *
 from .tombstones import *
 
 
+def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
+    """把 ``components/<id>/recipe.json`` 转成 catalog 组件条目。
+
+    与插件/模板条目的差别：**这里不托管字节**，所以没有 package 文件、
+    没有包哈希；有的是 recipe 自身的摘要（客户端据此判断"装的是不是
+    审查过的那份声明"）与上游构件清单。
+    """
+    import hashlib
+    import json
+
+    directory = recipe_path.parent
+    try:
+        recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"组件 recipe 无法解析 {recipe_path}: {exc}") from exc
+    if not isinstance(recipe, dict):
+        raise ValueError(f"组件 recipe 必须是 JSON 对象: {recipe_path}")
+
+    component_id = str(directory.name)
+    for key in ("name", "version", "platforms", "architectures", "artifacts", "entry"):
+        if key not in recipe:
+            raise ValueError(f"组件 {component_id} 的 recipe 缺少 {key}")
+
+    artifacts = recipe.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError(f"组件 {component_id} 的 recipe 需要至少一个 artifact")
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            raise ValueError(f"组件 {component_id} 的 artifact #{index} 必须是对象")
+        # 没有 sha256 就无法校验来源——与宿主侧同一条纪律，逐条强制。
+        digest = artifact.get("sha256")
+        if not (isinstance(digest, str) and len(digest) == 64):
+            raise ValueError(
+                f"组件 {component_id} 的 artifact #{index} 缺少合法 sha256"
+            )
+
+    # recipe 摘要：稳定排序后哈希，客户端据此核对
+    canonical = json.dumps(recipe, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    recipe_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    relative = recipe_path.relative_to(recipe_path.parents[2])
+    entry: dict[str, Any] = {
+        "id": component_id,
+        "name": str(recipe.get("description") or component_id),
+        "version": str(recipe["version"]),
+        "publisher": _component_publisher(directory),
+        "recipe_file": str(relative).replace("\\", "/"),
+        "recipe_digest": recipe_digest,
+        "platforms": list(recipe["platforms"]),
+        "architectures": list(recipe["architectures"]),
+        "entry": dict(recipe["entry"]),
+        "artifacts": [
+            {
+                "url": str(item["url"]),
+                "sha256": str(item["sha256"]),
+                "size": item.get("size"),
+            }
+            for item in artifacts
+        ],
+        # 声明总大小：让客户端在**下载前**展示"要拉多少"，而不是装到一半才发现
+        "declared_total_bytes": sum(int(item.get("size") or 0) for item in artifacts),
+    }
+    listing = directory / "listing.md"
+    if listing.is_file():
+        entry["description_file"] = str(
+            listing.relative_to(recipe_path.parents[2])
+        ).replace("\\", "/")
+    signature = directory / "recipe.json.sig"
+    if signature.is_file():
+        entry["recipe_signature_file"] = str(
+            signature.relative_to(recipe_path.parents[2])
+        ).replace("\\", "/")
+    identity = directory / "creator.identity"
+    if identity.is_file():
+        entry["creator_identity_file"] = str(
+            identity.relative_to(recipe_path.parents[2])
+        ).replace("\\", "/")
+    return entry
+
+
+def _component_publisher(directory: Path) -> str:
+    """组件发布者：优先读 ``creator.identity``，缺失则记 ``unknown``。"""
+    import json
+
+    identity = directory / "creator.identity"
+    if identity.is_file():
+        try:
+            data = json.loads(identity.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "unknown"
+        if isinstance(data, dict):
+            username = str(data.get("username") or data.get("name") or "").strip()
+            if username:
+                return username
+    return "unknown"
+
 def _existing_sequence(registry: Path) -> int:
     """读取持久化 catalog.json 的单调序列号；缺失/损坏/非法时回落 0（P3-2）。"""
     path = registry / "catalog.json"
@@ -61,6 +157,20 @@ def build_catalog(
         if publisher and publisher not in publishers:
             publishers.append(publisher)
 
+    # 组件 recipe（第三分支）。**空目录不报错**——向后兼容：没有 components/
+    # 的旧 registry 仍能生成 catalog，只是该列表为空。
+    component_entries: list[dict[str, Any]] = []
+    components_dir = registry / _COMPONENTS_DIR
+    if components_dir.is_dir():
+        seen_component_ids: set[str] = set()
+        for recipe_path in sorted(components_dir.glob("*/recipe.json")):
+            entry = _entry_from_component_recipe(recipe_path)
+            cid = str(entry["id"])
+            if cid in seen_component_ids:
+                raise ValueError(f"组件 ID 重复: {cid}")
+            seen_component_ids.add(cid)
+            component_entries.append(entry)
+        component_entries.sort(key=lambda item: str(item["id"]))
     template_entries: list[dict[str, Any]] = []
     template_markets: dict[str, dict[str, Any]] = {}
     seen_template_ids: set[str] = set()
@@ -191,6 +301,7 @@ def build_catalog(
         "trust_public_key_ref": TRUST_KEY_REF,
         "plugins": entries,
         "templates": template_entries,
+        "components": component_entries,
     }
     tombstones = _load_tombstones(registry)
     if tombstones:
