@@ -308,7 +308,9 @@ def run_operation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             return get_preset(payload["name"], payload.get("path"))
 
         if operation == "review.compare":
-            from omnicrawler_pdf.review.run_compare import compare_runs
+            # review 属**宿主侧**能力（运行对比用于记录删除/变更审计，被
+            # services/record_deletions.py 使用），未随 PDF 工作台迁出。
+            from omnicrawler.review.run_compare import compare_runs
 
             return compare_runs(*payload.get("args", []), **payload.get("kwargs", {}))
 
