@@ -242,6 +242,71 @@ def run_operation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         if operation == "exporter.export":
             return PDFWorkbenchExporter().export(payload)
 
+        # ── 宿主 facade 兼容操作（2026-11-17）──────────────────────────
+        # 宿主侧 `services/document_facade.py` 保留了一组同名入口
+        # （load_pdf_config / create_project_config / run_pdf_extraction …），
+        # 这些是既有挂点（workbench / pdf_integration / preflight / cli）用的。
+        # 插件必须能应答，否则宿主一调就失败。
+
+        if operation == "pdf.load_config":
+            from omnicrawler_pdf.pdfx.config import load_config
+
+            return load_config(payload["config_path"])
+
+        if operation == "pdf.create_project":
+            from omnicrawler_pdf.pdfx.project import create_project_config
+
+            return create_project_config(*payload.get("args", []), **payload.get("kwargs", {}))
+
+        if operation == "pdf.extract":
+            from omnicrawler_pdf.pdfx.service import run_extraction
+
+            return run_extraction(*payload.get("args", []), **payload.get("kwargs", {}))
+
+        if operation == "pdf.database_status":
+            from omnicrawler_pdf.pdfx.service import database_status
+
+            return database_status(payload["database"])
+
+        if operation == "pdf.cli":
+            import sys
+
+            from omnicrawler_pdf.pdfx.cli import main as pdf_cli_main
+
+            argv = list(payload.get("argv") or [])
+            old = sys.argv
+            try:
+                sys.argv = ["omnicrawler pdf", *argv]
+                pdf_cli_main()
+            finally:
+                sys.argv = old
+            return {"ok": True}
+
+        if operation == "pdf.processor":
+            from omnicrawler_pdf.apps import pdf_processor
+
+            return pdf_processor.main(list(payload.get("argv") or []))
+
+        if operation == "pdf.field_extractor":
+            from omnicrawler_pdf.apps import field_extractor
+
+            return field_extractor.main(list(payload.get("argv") or []))
+
+        if operation == "convertx.convert":
+            from omnicrawler_pdf.convertx import convert as convertx_convert
+
+            return convertx_convert(*payload.get("args", []), **payload.get("kwargs", {}))
+
+        if operation == "convertx.preset":
+            from omnicrawler_pdf.convertx.presets import get_preset
+
+            return get_preset(payload["name"], payload.get("path"))
+
+        if operation == "review.compare":
+            from omnicrawler_pdf.review.run_compare import compare_runs
+
+            return compare_runs(*payload.get("args", []), **payload.get("kwargs", {}))
+
         return {
             "ok": False,
             "error": {"code": "unsupported_operation", "message": operation},
@@ -255,3 +320,79 @@ def run_operation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "message": f"{type(exc).__name__}: {exc}",
             },
         }
+
+
+# ── 模块级辅助（供宿主 facade 直接调用）──────────────────────────────────
+
+
+def open_pdf_database(path: str) -> Any:
+    """打开 PDF 项目数据库，返回 Database 实例（调用方负责关闭）。"""
+    from omnicrawler_pdf.pdfx.database import Database
+
+    return Database(path)
+
+
+def component_ocr_backend_class() -> Any:
+    """返回组件式 OCR 后端类。
+
+    宿主 `plugins.plugin_broker_host` 的 `component.ocr.recognize` 能力用它：
+    插件请求宿主代调 OCR 组件时，宿主需要拿到这个类。
+    """
+    from omnicrawler_pdf.pdfx.component_ocr import ComponentOCRBackend
+
+    return ComponentOCRBackend
+
+
+def pdf_views() -> Any:
+    """返回 PDF 工作台的 GUI 视图模块（供宿主 `central_area` 按需加载）。
+
+    返回的是**模块**而不是类：`PdfWorkbenchView` 与 `ConvertView` 都在其中，
+    它们的内部依赖（result / scan / worker）也都在插件内，宿主无需知道。
+    """
+    import importlib
+
+    return importlib.import_module("omnicrawler_pdf.gui_views.pdf_workbench_views")
+
+
+def table_io() -> Any:
+    """返回表格数据读写注册表（供宿主 `transform` 命令使用）。
+
+    返回对象需具备 `READERS` / `WRITERS` / `sniff_format` 三个属性。
+
+    ⚠ 类体里不能写 `READERS = READERS`：类作用域在赋值右侧求值时
+    会把左侧的名字当成局部，抛 `NameError`（实测踩到）。所以用别名。
+    """
+    from omnicrawler_pdf.convertx import READERS as _readers
+    from omnicrawler_pdf.convertx import WRITERS as _writers
+    from omnicrawler_pdf.convertx import sniff_format as _sniff
+
+    class _TableIO:
+        READERS = _readers
+        WRITERS = _writers
+
+        @staticmethod
+        def sniff_format(path: Any) -> Any:
+            return _sniff(path)
+
+    return _TableIO
+
+
+def pdf_region_selector() -> Any:
+    """返回 PDF 区域选择对话框类（供宿主 gui/main.py 按需加载）。"""
+    from omnicrawler_pdf.gui_views.pdf_region_selector import PdfRegionSelectorDialog
+
+    return PdfRegionSelectorDialog
+
+
+def parse_document(*args: Any, **kwargs: Any) -> Any:
+    """解析文档为 IR（宿主 archive_analysis / doc_extractors 经 facade 调用）。"""
+    from omnicrawler_pdf.document_ir import parse_document as _parse
+
+    return _parse(*args, **kwargs)
+
+
+def document_block_class() -> Any:
+    """返回 `DocumentBlock` 类。"""
+    from omnicrawler_pdf.document_ir.base import DocumentBlock
+
+    return DocumentBlock
