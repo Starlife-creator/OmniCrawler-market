@@ -109,15 +109,21 @@ def test_modern_ux_search_shortcut_reset_filter_and_theme_switcher_present() -> 
     )
     list_html = pages["catalog.html"]
 
-    # 搜索框按 / 聚焦与重置筛选按钮、URL 状态同步
+    # 搜索框按 / 聚焦与内嵌键帽、分段胶囊分支切换、重置筛选按钮、URL 状态同步
     assert 'placeholder="按 / 搜索名称、标签、ID…"' in list_html
+    assert '<kbd class="search-kbd" aria-hidden="true">/</kbd>' in list_html
+    for branch in ("all", "plugin", "template", "component"):
+        assert f'data-kind-tab="{branch}"' in list_html
+    assert "syncTabs(k)" in list_html
     assert 'id="reset-filters"' in list_html
     assert "history.replaceState" in list_html
     assert "ev.key==='/'" in list_html
+    assert "prefers-reduced-motion:no-preference" in list_html
 
-    # 浅色 / 深色 / 跟随系统 主题切换按钮与 CSS data-theme 变量支持
+    # 浅色 / 深色 / 跟随系统 主题切换按钮、毛玻璃顶栏与 CSS data-theme 变量支持
     for name, html_text in pages.items():
         assert 'id="theme-toggle"' in html_text, f"{name} 缺少主题切换按钮"
+        assert "backdrop-filter:blur(14px)" in html_text
         assert 'html[data-theme="dark"]' in html_text
         assert 'html[data-theme="light"]' in html_text
         assert html_text.count("<script") == 1, f"{name} 应保持单内联脚本块契约"
