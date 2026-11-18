@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-18T16:24:44+00:00",
-  "sequence": 1791080200,
+  "generated_at": "2026-11-18T16:28:59+00:00",
+  "sequence": 1791080201,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -988,7 +988,7 @@
       "id": "ocr-paddle",
       "name": "PaddleOCR 重型运行时（Wheel-Pack）——wheel 从上游拉，模型另行直拉，本仓只托管配方",
       "version": "1.0.0",
-      "publisher": "unknown",
+      "publisher": "starlife",
       "recipe_file": "components/ocr-paddle/recipe.json",
       "recipe_digest": "49e400fa17b42ef89bd482e83765287611000eda9e86d38d6d646544016a2995",
       "platforms": [
@@ -1018,7 +1018,11 @@
           "size": 146750
         }
       ],
-      "declared_total_bytes": 104941280
+      "declared_total_bytes": 104941280,
+      "package_manifest_file": "components/ocr-paddle/package.manifest.json",
+      "creator_package_signature_file": "components/ocr-paddle/package.manifest.creator.sig",
+      "creator_identity_file": "components/ocr-paddle/creator.identity",
+      "creator_signature_file": "components/ocr-paddle/creator.sig"
     },
     {
       "id": "tesseract-chi-sim",
