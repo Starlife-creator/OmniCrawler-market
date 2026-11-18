@@ -67,6 +67,9 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
         "recipe_digest": recipe_digest,
         "platforms": list(recipe["platforms"]),
         "architectures": list(recipe["architectures"]),
+        # ABI 声明必须进 catalog：重型 C 扩展与解释器版本强耦合，
+        # 客户端据此在**下载前**就判断"这台机器装不了"，而不是拉到一半才失败。
+        "python_abi": list(recipe.get("python_abi") or []),
         "entry": dict(recipe["entry"]),
         "artifacts": [
             {

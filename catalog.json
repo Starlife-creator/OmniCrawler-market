@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-18T16:08:37+00:00",
-  "sequence": 1791080198,
+  "generated_at": "2026-11-18T16:24:44+00:00",
+  "sequence": 1791080200,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -985,6 +985,42 @@
   ],
   "components": [
     {
+      "id": "ocr-paddle",
+      "name": "PaddleOCR 重型运行时（Wheel-Pack）——wheel 从上游拉，模型另行直拉，本仓只托管配方",
+      "version": "1.0.0",
+      "publisher": "unknown",
+      "recipe_file": "components/ocr-paddle/recipe.json",
+      "recipe_digest": "49e400fa17b42ef89bd482e83765287611000eda9e86d38d6d646544016a2995",
+      "platforms": [
+        "windows"
+      ],
+      "architectures": [
+        "x86_64"
+      ],
+      "python_abi": [
+        "cp313"
+      ],
+      "entry": {
+        "path": "entry.json",
+        "protocol": "ocr-file-v1",
+        "engine": "paddle",
+        "runner": "worker-wheelpack"
+      },
+      "artifacts": [
+        {
+          "url": "https://files.pythonhosted.org/packages/f4/c8/408b9e94ac2e10a55c1122b787359f7a6f79ef894ee1d57d78c5cca838d0/paddlepaddle-3.3.1-cp313-cp313-win_amd64.whl",
+          "sha256": "1203e2e1114b49e73a8440b68837ce5c93fdab51fe4838c5e5874ab40f58f747",
+          "size": 104794530
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/d2/79/2ade66cf72074a3d2a013e2ba1f256d6116fec797b908fc1b4f9c320d8c4/paddleocr-3.7.0-py3-none-any.whl",
+          "sha256": "c0f0a81ad4112727f30c6fcf986ac0ef6a120d31ee0991a01fae0357ee32d338",
+          "size": 146750
+        }
+      ],
+      "declared_total_bytes": 104941280
+    },
+    {
       "id": "tesseract-chi-sim",
       "name": "Tesseract 中文简体语言包——字节从上游拉取，本仓只托管声明",
       "version": "1.0.0",
@@ -1000,6 +1036,7 @@
         "x86_64",
         "arm64"
       ],
+      "python_abi": [],
       "entry": {
         "path": "tessdata/chi_sim.traineddata",
         "protocol": "ocr-file-v1",
