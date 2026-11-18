@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-18T16:02:49+00:00",
-  "sequence": 1791080196,
+  "generated_at": "2026-11-18T16:08:37+00:00",
+  "sequence": 1791080198,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -988,7 +988,7 @@
       "id": "tesseract-chi-sim",
       "name": "Tesseract 中文简体语言包——字节从上游拉取，本仓只托管声明",
       "version": "1.0.0",
-      "publisher": "unknown",
+      "publisher": "starlife",
       "recipe_file": "components/tesseract-chi-sim/recipe.json",
       "recipe_digest": "3c5b24d2cda5e6030c2d2b993e6a7817accca664dbf13e2595f47dcb239fd3e3",
       "platforms": [
@@ -1013,7 +1013,11 @@
         }
       ],
       "declared_total_bytes": 2469156,
-      "description_file": "components/tesseract-chi-sim/listing.md"
+      "description_file": "components/tesseract-chi-sim/listing.md",
+      "package_manifest_file": "components/tesseract-chi-sim/package.manifest.json",
+      "creator_package_signature_file": "components/tesseract-chi-sim/package.manifest.creator.sig",
+      "creator_identity_file": "components/tesseract-chi-sim/creator.identity",
+      "creator_signature_file": "components/tesseract-chi-sim/creator.sig"
     }
   ]
 }

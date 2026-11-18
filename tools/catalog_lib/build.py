@@ -84,16 +84,23 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
         entry["description_file"] = str(
             listing.relative_to(recipe_path.parents[2])
         ).replace("\\", "/")
-    signature = directory / "recipe.json.sig"
-    if signature.is_file():
-        entry["recipe_signature_file"] = str(
-            signature.relative_to(recipe_path.parents[2])
-        ).replace("\\", "/")
-    identity = directory / "creator.identity"
-    if identity.is_file():
-        entry["creator_identity_file"] = str(
-            identity.relative_to(recipe_path.parents[2])
-        ).replace("\\", "/")
+
+    # 签名轨：**与插件/模板用同一组契约键名**，不另造一套。
+    # 早先这里只找 `recipe.json.sig`（单文件签名轨），而 `creator-sign`
+    # 实际产出的是整包清单签名 `package.manifest.creator.sig` ——
+    # 结果 `recipe_signature_file` 恒为 None，签名在 catalog 里不可见（实测）。
+    for key, filename in (
+        ("package_manifest_file", "package.manifest.json"),
+        ("creator_package_signature_file", "package.manifest.creator.sig"),
+        ("creator_identity_file", "creator.identity"),
+        # 兼容轨：单文件签名（旧版本工具可能产出），存在就一并记录
+        ("creator_signature_file", "creator.sig"),
+    ):
+        candidate = directory / filename
+        if candidate.is_file():
+            entry[key] = str(
+                candidate.relative_to(recipe_path.parents[2])
+            ).replace("\\", "/")
     return entry
 
 
