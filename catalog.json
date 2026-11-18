@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-17T16:39:40+00:00",
-  "sequence": 1791080195,
+  "generated_at": "2026-11-18T16:02:49+00:00",
+  "sequence": 1791080196,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -990,7 +990,7 @@
       "version": "1.0.0",
       "publisher": "unknown",
       "recipe_file": "components/tesseract-chi-sim/recipe.json",
-      "recipe_digest": "0a5600691185cae34f08f154ed0d0837c4695aa207f41ffa9e80f11830a8b6cf",
+      "recipe_digest": "3c5b24d2cda5e6030c2d2b993e6a7817accca664dbf13e2595f47dcb239fd3e3",
       "platforms": [
         "windows",
         "linux",
@@ -1008,11 +1008,11 @@
       "artifacts": [
         {
           "url": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-          "size": 2567886
+          "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+          "size": 2469156
         }
       ],
-      "declared_total_bytes": 2567886,
+      "declared_total_bytes": 2469156,
       "description_file": "components/tesseract-chi-sim/listing.md"
     }
   ]
