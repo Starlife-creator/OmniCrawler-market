@@ -9,6 +9,8 @@
   已审核＝维护者复签文件存在；**权限风险分级与高权限判定 = 客户端同一判据**
   （`omnicrawler/gui/views/plugin_market_logic.py::_permission_risk` / `_badges`）
   —— 站点与客户端不得各说一套。
+- **三类市场分支完整呈现**：插件（`plugins`）、模板（`templates`）与组件（`components`）；
+  组件分支明确标识「只托管配方声明 · 字节从上游拉取」。
 - **站点不做验签结论**（§10.12.5）：页面只**陈述生成方式**，不出现「已通过验签」式结论，
   也不提供安装动作；安装与最终验签在客户端完成，文案沿用客户端的安装须知口径。
 - **目录字段一律 HTML 转义**（含 `listing.md`）：签名只证明「这些字节被认领」，
@@ -83,6 +85,7 @@ _MEDIUM_RISK_PERMISSIONS = {
 }
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_/-]*$")  # 与 catalog_lib.schema 的 id 约束同域
+_COMPONENT_BADGE_TEXT = "只托管配方声明 · 字节从上游拉取"
 
 
 # --------------------------------------------------------------------------- 基础工具
@@ -143,6 +146,36 @@ def _version_key(version: object) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", str(version)))
 
 
+def _format_bytes(raw: object) -> str:
+    """将字节计数格式化为可读大小（保留精确字节数便于核对）。"""
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
+        return ""
+    if raw >= 1024 * 1024:
+        return f"{raw / (1024 * 1024):.2f} MB（{raw:,} 字节）"
+    if raw >= 1024:
+        return f"{raw / 1024:.1f} KB（{raw:,} 字节）"
+    return f"{raw:,} 字节"
+
+
+def _component_category(entry: dict) -> str:
+    """提取组件分类（优先显式 category，否则取 entry.engine 或回落 component）。"""
+    explicit = str(entry.get("category") or "").strip()
+    if explicit:
+        return explicit
+    entry_spec = entry.get("entry")
+    if isinstance(entry_spec, dict):
+        engine = str(entry_spec.get("engine") or "").strip()
+        if engine:
+            return f"component/{engine}"
+    return "component"
+
+
+def _entry_category(entry: dict, kind: str) -> str:
+    if kind == "component":
+        return _component_category(entry)
+    return str(entry.get("category") or "")
+
+
 def _repo_link(repo: str, path: str, label: str) -> str:
     """指向仓库内某个文件的链接（路径按段转义，防目录内容构造出站外链接）。"""
     if not repo or not path:
@@ -198,9 +231,11 @@ def _official(entry: dict, official: set[str]) -> bool:
     return bool(publisher) and publisher in official
 
 
-def _badges(entry: dict, official: set[str]) -> str:
-    """徽章（M5：官方＝作者身份、已审核＝流程状态、高权限＝权限风险，三者非互斥）。"""
+def _badges(entry: dict, official: set[str], *, kind: str = "") -> str:
+    """徽章（M5：官方＝作者身份、已审核＝流程状态、高权限＝权限风险，组件额外标注只托管配方声明）。"""
     badges = []
+    if kind == "component":
+        badges.append(f'<span class="b b-recipe">{_esc(_COMPONENT_BADGE_TEXT)}</span>')
     if _official(entry, official):
         badges.append('<span class="b b-official">官方</span>')
     if _reviewed(entry):
@@ -343,7 +378,7 @@ def markdown_to_html(source: str) -> str:
 # ---------------------------------------------------------------------------- 页面骨架
 
 def _inline_logo(assets_root: Path) -> str:
-    """内联品牌字标（浅/深两版，随 prefers-color-scheme 切换），保持零外部请求。"""
+    """内联品牌字标（浅/深两版，随 prefers-color-scheme 或 data-theme 切换），保持零外部请求。"""
     variants = []
     for cls, filename in (("wm-light", "omnicrawler-wordmark.svg"), ("wm-dark", "omnicrawler-wordmark-dark.svg")):
         path = assets_root / _LOGO_DIR / filename
@@ -399,11 +434,17 @@ def _shell(
     repo: str,
     web_assets: Path | None,
     site_root_url: str,
-    script: str = "",
+    page_js: str = "",
 ) -> str:
     rel = _rel_prefix(path)
     snippet = _head_snippet(web_assets, rel, site_root_url)
-    nav = f'<nav class="site-nav"><a href="{rel}{_INDEX}">首页</a><a href="{rel}{_LIST}">全部条目</a></nav>'
+    nav = (
+        f'<nav class="site-nav"><a href="{rel}{_INDEX}">首页</a>'
+        f'<a href="{rel}{_LIST}">全部条目</a>'
+        '<button type="button" class="theme-btn" id="theme-toggle"'
+        ' aria-label="切换配色主题（跟随系统、浅色或深色）">主题：跟随系统</button></nav>'
+    )
+    combined_js = (_JS_THEME.strip() + "\n" + page_js.strip()).strip()
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -430,13 +471,13 @@ def _shell(
 {body}
 </main>
 <footer>
-<p class="note">许可：仓库根元数据与目录为 CC0-1.0，<code>tools/</code> 为 MIT，各插件与模板以包内 SPDX 声明为准。</p>
-<p class="note">信任模型：创作者签名只证明包来自某把创作者密钥，维护者复签只证明市场审核过这些固定字节——两者都不能证明第三方服务永远安全、合法或可用。</p>
+<p class="note">许可：仓库根元数据与目录为 CC0-1.0，<code>tools/</code> 为 MIT，各插件、模板与组件配方以条目或上游 SPDX 声明为准。</p>
+<p class="note">信任模型：创作者签名只证明包来自某把创作者密钥，维护者复签只证明市场审核过这些固定字节；组件分支只托管配方声明、字节从上游拉取并校验哈希——均不能证明第三方服务永远安全、合法或可用。</p>
 <p class="note">{_repo_link(repo, "README.md", "市场仓库说明")} · {_repo_link(repo, "CATALOG_SCHEMA.md", "目录字段规范")} · {_repo_link(repo, "catalog.json", "catalog.json")} · {_repo_link(repo, _SIG_NAME, _SIG_NAME)}</p>
 <p class="note">本页由脚本从已签名的市场目录生成；安装与最终验签在 OmniCrawler 客户端完成。</p>
 </footer>
 </div>
-{script}
+<script>{combined_js}</script>
 </body>
 </html>
 """
@@ -448,34 +489,69 @@ def _card(entry: dict, *, kind: str, official: set[str], order: int) -> str:
     id_ = str(entry.get("id") or "")
     name = str(entry.get("name") or id_)
     version = str(entry.get("version") or "")
-    category = str(entry.get("category") or "")
+    category = _entry_category(entry, kind)
     summary = str(entry.get("summary") or "")
     updated = str(entry.get("updated_at") or "")
     license_ = str(entry.get("license") or "")
     core = str(entry.get("compatible_core") or "")
     tags = [str(tag) for tag in (entry.get("tags") or [])]
     types = [str(item) for item in (entry.get("plugin_types") or [])]
-    risk_level, risk_label = _permission_risk(entry)
 
-    meta_bits = [
-        f'<span class="k">{_esc(category or "—")}</span>',
-        f'<span class="k">核心 {_esc(core or "—")}</span>',
-        f'<span class="k">{_esc(license_ or "—")}</span>',
-        f'<span class="k">更新 {_esc(updated or "—")}</span>',
-    ]
+    if kind == "component":
+        platforms = [str(p) for p in (entry.get("platforms") or [])]
+        architectures = [str(a) for a in (entry.get("architectures") or [])]
+        entry_spec = entry.get("entry") if isinstance(entry.get("entry"), dict) else {}
+        engine = str(entry_spec.get("engine") or "")
+        protocol = str(entry_spec.get("protocol") or "")
+        size_text = _format_bytes(entry.get("declared_total_bytes"))
+        if not summary:
+            summary = f"组件配方声明（引擎 {engine or '—'} · 协议 {protocol or '—'}），构件字节由客户端按 SHA-256 从上游拉取。"
+        meta_bits = [
+            f'<span class="k">{_esc(category or "—")}</span>',
+            f'<span class="k">下载量 {_esc(size_text or "—")}</span>',
+            f'<span class="k">{_esc(license_ or "上游许可")}</span>',
+        ]
+        if updated:
+            meta_bits.append(f'<span class="k">更新 {_esc(updated)}</span>')
+        chip_html = " ".join(
+            part
+            for part in (
+                _chips(platforms, "tag"),
+                _chips(architectures, "chip", "arch"),
+                _chips([x for x in (engine, protocol) if x], "chip", "type"),
+                _chips(tags, "tag"),
+            )
+            if part
+        )
+        risk_badge = '<span class="b b-risk b-risk-low">纯数据配方</span>'
+        search_attr = _search_blob(
+            id_, name, summary, str(entry.get("publisher") or ""),
+            category, tags, platforms, architectures, engine, protocol, "component", "组件", "recipe",
+        )
+    else:
+        risk_level, risk_label = _permission_risk(entry)
+        risk_badge = f'<span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span>'
+        meta_bits = [
+            f'<span class="k">{_esc(category or "—")}</span>',
+            f'<span class="k">核心 {_esc(core or "—")}</span>',
+            f'<span class="k">{_esc(license_ or "—")}</span>',
+            f'<span class="k">更新 {_esc(updated or "—")}</span>',
+        ]
+        chip_html = f'{_chips(tags, "tag")} {_chips(types, "chip", "type")}'
+        search_attr = _search_blob(id_, name, summary, str(entry.get("publisher") or ""), category, tags, types)
+
     return (
         f'<article class="card" data-kind="{_esc(kind)}" data-category="{_esc(category)}"'
         f' data-version="{_esc(version)}" data-updated="{_esc(updated)}" data-order="{order}"'
-        f' data-search="{_search_blob(id_, name, summary, str(entry.get("publisher") or ""), category, tags, types)}">'
+        f' data-search="{search_attr}">'
         '<div class="card-head">'
         f'<h3><a href="{_esc(id_)}.html">{_esc(name)}</a></h3>'
         f'<span class="ver" title="版本">v{_esc(version)}</span>'
         "</div>"
         f'<p class="card-id"><code>{_esc(id_)}</code></p>'
-        f'<p class="badges">{_badges(entry, official)}'
-        f'<span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span></p>'
+        f'<p class="badges">{_badges(entry, official, kind=kind)}{risk_badge}</p>'
         f'<p class="summary">{_esc(summary)}</p>'
-        f'<p class="tags">{_chips(tags, "tag")} {_chips(types, "chip", "type")}</p>'
+        f'<p class="tags">{chip_html}</p>'
         f'<p class="meta">{"".join(meta_bits)}</p>'
         "</article>"
     )
@@ -496,37 +572,44 @@ def _index_page(
 ) -> str:
     plugins = sorted(catalog.get("plugins") or [], key=lambda e: str(e.get("id")))
     templates = sorted(catalog.get("templates") or [], key=lambda e: str(e.get("id")))
-    entries = plugins + templates
+    components = sorted(catalog.get("components") or [], key=lambda e: str(e.get("id")))
+    tagged_entries: list[tuple[str, dict]] = (
+        [("plugin", e) for e in plugins]
+        + [("template", e) for e in templates]
+        + [("component", e) for e in components]
+    )
+    entries = [e for _k, e in tagged_entries]
     reviewed = sum(1 for entry in entries if _reviewed(entry))
-    high_risk = sum(1 for entry in entries if _permission_risk(entry)[0] == "high")
-    latest = sorted(entries, key=lambda e: str(e.get("updated_at") or ""), reverse=True)[:6]
+    high_risk = sum(1 for _k, entry in tagged_entries if _k != "component" and _permission_risk(entry)[0] == "high")
+    latest = sorted(tagged_entries, key=lambda pair: str(pair[1].get("updated_at") or ""), reverse=True)[:6]
     certified = sorted(
-        [entry for entry in entries if _official(entry, official) and _reviewed(entry)],
-        key=lambda e: str(e.get("updated_at") or ""),
+        [(k, entry) for k, entry in tagged_entries if _official(entry, official) and _reviewed(entry)],
+        key=lambda pair: str(pair[1].get("updated_at") or ""),
         reverse=True,
     )[:6]
 
-    def _category_links(entries_: list[dict], label: str) -> str:
+    def _category_links(entries_: list[dict], kind_key: str, label: str) -> str:
         counts: dict[str, int] = {}
         for entry in entries_:
-            category = str(entry.get("category") or "")
+            category = _entry_category(entry, kind_key)
             counts[category] = counts.get(category, 0) + 1
         items = "".join(
-            f'<li><a href="{_LIST}?cat={_esc(category)}">{_esc(category or "—")}'
+            f'<li><a href="{_LIST}?kind={_esc(kind_key)}&amp;cat={_esc(category)}">{_esc(category or "—")}'
             f'<span class="count">{count}</span></a></li>'
             for category, count in sorted(counts.items())
         )
         return f"<h3>{_esc(label)}</h3><ul class=\"cat-list\">{items}</ul>" if items else ""
 
-    def _mini_cards(entries_: list[dict], kind: str) -> str:
+    def _mini_cards(pairs: list[tuple[str, dict]], list_kind: str) -> str:
         cards = "".join(
             f'<li><a href="{_esc(str(entry.get("id")))}.html">'
             f'<span class="mini-name">{_esc(entry.get("name") or entry.get("id"))}</span>'
-            f'<span class="mini-meta">v{_esc(entry.get("version"))} · {_esc(entry.get("updated_at") or "")}</span>'
-            f'<span class="mini-badges">{_badges(entry, official)}</span></a></li>'
-            for entry in entries_
+            f'<span class="mini-meta">v{_esc(entry.get("version"))}'
+            f'{" · " + _esc(entry.get("updated_at")) if entry.get("updated_at") else ""}</span>'
+            f'<span class="mini-badges">{_badges(entry, official, kind=entry_kind)}</span></a></li>'
+            for entry_kind, entry in pairs
         )
-        return f'<ul class="mini-list" data-kind="{kind}">{cards}</ul>'
+        return f'<ul class="mini-list" data-kind="{list_kind}">{cards}</ul>'
 
     officials = "、".join(str(x) for x in catalog.get("official_publishers") or []) or "—"
     verify_rows = [
@@ -551,13 +634,23 @@ def _index_page(
             f'<ul class="tomb-list">{rows}</ul></section>'
         )
 
+    comp_home_html = ""
+    if components:
+        comp_home_html = (
+            '<section class="panel"><h2>组件配方声明'
+            f'<span class="hint">{_esc(_COMPONENT_BADGE_TEXT)}</span></h2>'
+            f'{_mini_cards([("component", c) for c in components[:6]], "component")}'
+            "</section>"
+        )
+
     body = f"""
 <section class="hero">
 <h1>OmniCrawler 市场</h1>
-<p class="lede">本页由市场目录在构建时生成：目录经维护者 Ed25519 签名，<strong>验签先于渲染且 fail-closed</strong>——验签失败则本页永不产出。安装与最终验签在 OmniCrawler 客户端完成，这里只作展示。</p>
+<p class="lede">本页由市场目录在构建时生成：目录经维护者 Ed25519 签名，<strong>验签先于渲染且 fail-closed</strong>——验签失败则本页永不产出。涵盖插件、模板与组件配方声明；安装与最终验签在 OmniCrawler 客户端完成，这里只作展示。</p>
 <dl class="stats">
 <div><dt>插件</dt><dd>{len(plugins)}</dd></div>
 <div><dt>模板</dt><dd>{len(templates)}</dd></div>
+<div><dt>组件</dt><dd>{len(components)}</dd></div>
 <div><dt>官方作者条目</dt><dd>{sum(1 for e in entries if _official(e, official))}</dd></div>
 <div><dt>维护者已复签</dt><dd>{reviewed}</dd></div>
 <div><dt>高权限条目</dt><dd>{high_risk}</dd></div>
@@ -565,12 +658,13 @@ def _index_page(
 </dl>
 <p class="cta"><a class="btn" href="{_LIST}">浏览全部 {len(entries)} 个条目</a>
 <a class="btn btn-ghost" href="{_LIST}?kind=plugin">只看插件</a>
-<a class="btn btn-ghost" href="{_LIST}?kind=template">只看模板</a></p>
+<a class="btn btn-ghost" href="{_LIST}?kind=template">只看模板</a>
+<a class="btn btn-ghost" href="{_LIST}?kind=component">只看组件</a></p>
 </section>
 
 <section class="panel">
 <h2>本页如何生成</h2>
-<p class="note"><code>catalog.json</code> 必须被 <code>{_esc(_SIG_NAME)}</code> 覆盖（算法 ed25519），验签在渲染之前进行且 fail-closed——验签失败则本页不产出。★ 安装与最终验签在 OmniCrawler 客户端完成，本页只作展示，不提供安装动作、也不给出验签结论。</p>
+<p class="note"><code>catalog.json</code> 必须被 <code>{_esc(_SIG_NAME)}</code> 覆盖（算法 ed25519），验签在渲染之前进行且 fail-closed——验签失败则本页不产出。组件分支只托管配方声明（<code>recipe.json</code>），构件字节由客户端从上游拉取并逐项核对 SHA-256。★ 安装与最终验签在 OmniCrawler 客户端完成，本页只作展示，不提供安装动作、也不给出验签结论。</p>
 <details><summary>本页渲染所依据的字节（SHA-256）与目录元数据</summary>
 {_facts(verify_rows)}
 </details>
@@ -578,8 +672,9 @@ def _index_page(
 
 <section class="grid-2">
 <section class="panel"><h2>分类入口</h2>
-{_category_links(plugins, "插件类别")}
-{_category_links(templates, "模板类别")}
+{_category_links(plugins, "plugin", "插件类别")}
+{_category_links(templates, "template", "模板类别")}
+{_category_links(components, "component", "组件类别")}
 </section>
 <section class="panel"><h2>最近更新</h2>
 {_mini_cards(latest, "mixed")}
@@ -589,18 +684,19 @@ def _index_page(
 <section class="panel"><h2>官方作者 ∧ 维护者已复签<span class="hint">按更新时间取前 6（判据全部来自已签名目录，不含任何人工排序）</span></h2>
 {_mini_cards(certified, "certified")}
 </section>
+{comp_home_html}
 {tomb_html}
 """
     return _shell(
         path=_INDEX,
-        title="OmniCrawler 插件与模板市场",
-        description="OmniCrawler 插件与模板市场：由已签名的市场目录在构建时生成，验签 fail-closed。",
+        title="OmniCrawler 插件、模板与组件市场",
+        description="OmniCrawler 插件、模板与组件市场：由已签名的市场目录在构建时生成，验签 fail-closed。",
         body=body,
         logo=logo,
         repo=repo,
         web_assets=web_assets,
         site_root_url=site_root_url,
-        script=f"<script>{_JS_LIST}</script>",
+        page_js=_JS_LIST,
     )
 
 
@@ -615,35 +711,48 @@ def _list_page(
 ) -> str:
     plugins = sorted(catalog.get("plugins") or [], key=lambda e: str(e.get("id")))
     templates = sorted(catalog.get("templates") or [], key=lambda e: str(e.get("id")))
-    total = len(plugins) + len(templates)
-    plugin_cards = "".join(_card(entry, kind="plugin", official=official, order=index) for index, entry in enumerate(plugins))
+    components = sorted(catalog.get("components") or [], key=lambda e: str(e.get("id")))
+    total = len(plugins) + len(templates) + len(components)
+    plugin_cards = "".join(
+        _card(entry, kind="plugin", official=official, order=index)
+        for index, entry in enumerate(plugins)
+    )
     template_cards = "".join(
         _card(entry, kind="template", official=official, order=len(plugins) + index)
         for index, entry in enumerate(templates)
     )
+    component_cards = "".join(
+        _card(entry, kind="component", official=official, order=len(plugins) + len(templates) + index)
+        for index, entry in enumerate(components)
+    )
 
-    def _options(entries: list[dict]) -> str:
-        seen = sorted({str(e.get("category") or "") for e in entries if str(e.get("category") or "")})
+    def _options(entries: list[dict], kind_key: str) -> str:
+        seen = sorted({_entry_category(e, kind_key) for e in entries if _entry_category(e, kind_key)})
         return "".join(f'<option value="{_esc(item)}">{_esc(item)}</option>' for item in seen)
 
     category_groups = ""
-    for label, entries in (("插件类别", plugins), ("模板类别", templates)):
-        options = _options(entries)
+    for label, kind_key, entries in (
+        ("插件类别", "plugin", plugins),
+        ("模板类别", "template", templates),
+        ("组件类别", "component", components),
+    ):
+        options = _options(entries, kind_key)
         if options:
             category_groups += f'<optgroup label="{_esc(label)}">{options}</optgroup>'
 
     body = f"""
 <h1 class="page-title">全部条目 <span class="count">{total}</span></h1>
-<p class="lede">搜索与筛选只作用于本页展示；点进任意条目查看权限、域名、版本与信任信息。</p>
+<p class="lede">搜索与筛选只作用于本页展示；按 <kbd>/</kbd> 可快速聚焦搜索框，点进任意条目查看权限、配方声明、版本与信任信息。</p>
 <form class="toolbar" role="search" onsubmit="return false">
 <label class="field"><span class="lbl">搜索</span>
-<input id="q" type="search" placeholder="名称 / ID / 简介 / 标签" autocomplete="off"></label>
+<input id="q" type="search" placeholder="按 / 搜索名称、标签、ID…" autocomplete="off"></label>
 <label class="field"><span class="lbl">范围</span>
-<select id="kind"><option value="all">全部</option><option value="plugin">仅插件</option><option value="template">仅模板</option></select></label>
+<select id="kind"><option value="all">全部</option><option value="plugin">仅插件</option><option value="template">仅模板</option><option value="component">仅组件</option></select></label>
 <label class="field"><span class="lbl">类别</span>
 <select id="cat"><option value="all">全部类别</option>{category_groups}</select></label>
 <label class="field"><span class="lbl">排序</span>
 <select id="sort"><option value="order">目录顺序</option><option value="updated">最近更新</option><option value="version">版本最高</option></select></label>
+<button type="button" class="btn-reset" id="reset-filters" hidden>重置筛选</button>
 <p class="live" id="live" role="status" aria-live="polite">共 {total} 个条目</p>
 </form>
 <section class="group" data-kind="plugin" id="plugins">
@@ -654,19 +763,103 @@ def _list_page(
 <h2>模板 <span class="count">{len(templates)}</span></h2>
 <div class="grid">{template_cards}</div>
 </section>
-<p class="nomatch" id="nomatch" hidden>没有匹配的条目，试着换个关键词或把「范围」调回「全部」。</p>
+<section class="group" data-kind="component" id="components">
+<h2>组件 <span class="count">{len(components)}</span></h2>
+<div class="grid">{component_cards}</div>
+</section>
+<p class="nomatch" id="nomatch" hidden>没有匹配的条目，试着换个关键词或点击「重置筛选」。</p>
 """
     return _shell(
         path=_LIST,
-        title="全部条目 — OmniCrawler 插件与模板市场",
-        description=f"OmniCrawler 市场全部条目（插件 {len(plugins)} · 模板 {len(templates)}），含信任徽章与权限风险分级。",
+        title="全部条目 — OmniCrawler 插件、模板与组件市场",
+        description=(
+            f"OmniCrawler 市场全部条目（插件 {len(plugins)} · 模板 {len(templates)} · 组件 {len(components)}），"
+            "含信任徽章、配方声明与权限风险分级。"
+        ),
         body=body,
         logo=logo,
         repo=repo,
         web_assets=web_assets,
         site_root_url=site_root_url,
-        script=f"<script>{_JS_LIST}</script>",
+        page_js=_JS_LIST,
     )
+
+
+def _component_sections(entry: dict, *, repo: str, doc_path: str) -> tuple[str, str, list[tuple[str, str]]]:
+    """渲染组件专属的（安装指引面板、配方与上游构件面板、信任事实行）。"""
+    recipe_file = str(entry.get("recipe_file") or "")
+    recipe_digest = str(entry.get("recipe_digest") or "")
+    platforms = [str(p) for p in (entry.get("platforms") or [])]
+    architectures = [str(a) for a in (entry.get("architectures") or [])]
+    entry_spec = entry.get("entry") if isinstance(entry.get("entry"), dict) else {}
+    entry_engine = str(entry_spec.get("engine") or "")
+    entry_protocol = str(entry_spec.get("protocol") or "")
+    entry_path = str(entry_spec.get("path") or "")
+    size_text = _format_bytes(entry.get("declared_total_bytes"))
+    license_ = str(entry.get("license") or "")
+
+    links = " · ".join(
+        link
+        for link in (
+            _repo_link(repo, recipe_file, "该组件的配方文件 (recipe.json)"),
+            _repo_link(repo, doc_path, "说明文档源文件"),
+        )
+        if link
+    )
+    install_panel = f"""<section class="panel">
+<h2>安装指引（配方拉取）</h2>
+<p>在 OmniCrawler 客户端或 CLI 中按组件 ID 预览并拉取：<code>omnicrawler components inspect-recipe</code>（仅预览声明，零下载）或显式带 <code>--download</code> 执行拉取与本地 SHA-256 核验。</p>
+<p class="note"><strong>{_esc(_COMPONENT_BADGE_TEXT)}</strong>：市场仓库不托管大型二进制或模型字节；下载经客户端受控出站完成，任一构件 SHA-256 不匹配即拒绝装配。</p>
+<p class="note">{links}</p>
+</section>"""
+
+    artifact_items: list[str] = []
+    for idx, artifact in enumerate(entry.get("artifacts") or [], 1):
+        if not isinstance(artifact, dict):
+            continue
+        art_url = str(artifact.get("url") or "")
+        art_sha = str(artifact.get("sha256") or "")
+        art_size = _format_bytes(artifact.get("size"))
+        size_part = f' <span class="k">（{_esc(art_size)}）</span>' if art_size else ""
+        artifact_items.append(
+            f"<li><strong>构件 #{idx}</strong>{size_part}<br>"
+            f"上游地址：<code>{_esc(art_url or '—')}</code><br>"
+            f'SHA-256：<code class="hash">{_esc(art_sha or "—")}</code></li>'
+        )
+    artifacts_html = (
+        f'<ul class="artifact-list">{"".join(artifact_items)}</ul>'
+        if artifact_items
+        else '<p class="note">未声明上游构件。</p>'
+    )
+
+    recipe_rows: list[tuple[str, str]] = [
+        ("托管边界", f'<span class="b b-recipe">{_esc(_COMPONENT_BADGE_TEXT)}</span>'),
+        ("支持平台", _chips(platforms, "chip", "plat")),
+        ("支持架构", _chips(architectures, "chip", "arch")),
+        ("目标引擎", f"<code>{_esc(entry_engine)}</code>" if entry_engine else ""),
+        ("入口协议", f"<code>{_esc(entry_protocol)}</code>" if entry_protocol else ""),
+        ("装配路径", f"<code>{_esc(entry_path)}</code>" if entry_path else ""),
+        ("声明总大小", _esc(size_text)),
+        ("许可声明", _esc(license_ or "以上游构件各自的许可证为准")),
+        ("配方 SHA-256", f'<code class="hash">{_esc(recipe_digest)}</code>' if recipe_digest else ""),
+    ]
+
+    recipe_panel = f"""<section class="panel">
+<h2>配方声明与上游构件</h2>
+{_facts(recipe_rows)}
+<h3>上游构件清单</h3>
+{artifacts_html}
+<p class="note">配方是纯数据声明而非可执行脚本（禁止安装钩子与路径穿越）；本页只展示上游声明地址，不发起任何外部请求。</p>
+</section>"""
+
+    trust_rows: list[tuple[str, str]] = [
+        ("条目类型", "组件配方（<code>components</code>）"),
+        ("配方文件", _repo_link(repo, recipe_file, "recipe.json")),
+        ("配方摘要", f'<code class="hash">{_esc(recipe_digest)}</code>' if recipe_digest else ""),
+        ("配方签名", _repo_link(repo, str(entry.get("recipe_signature_file") or ""), "recipe.json.sig")),
+        ("创作者身份", _repo_link(repo, str(entry.get("creator_identity_file") or ""), "creator.identity")),
+    ]
+    return install_panel, recipe_panel, trust_rows
 
 
 def _detail_page(
@@ -684,7 +877,7 @@ def _detail_page(
     id_ = str(entry.get("id") or "")
     name = str(entry.get("name") or id_)
     version = str(entry.get("version") or "")
-    category = str(entry.get("category") or "")
+    category = _entry_category(entry, kind)
     summary = str(entry.get("summary") or "")
     updated = str(entry.get("updated_at") or "")
     license_ = str(entry.get("license") or "")
@@ -692,32 +885,9 @@ def _detail_page(
     publisher = str(entry.get("publisher") or "")
     tags = [str(tag) for tag in (entry.get("tags") or [])]
     types = [str(item) for item in (entry.get("plugin_types") or [])]
-    risk_level, risk_label = _permission_risk(entry)
-    kind_label = "插件" if kind == "plugin" else "模板"
+    kind_labels = {"plugin": "插件", "template": "模板", "component": "组件"}
+    kind_label = kind_labels.get(kind, "条目")
     rel = _rel_prefix(f"{id_}.html")
-
-    permission_rows: list[tuple[str, str]] = [
-        ("权限", _chips([str(p) for p in (entry.get("permissions") or [])], "chip", "perm")),
-        ("访问域名", _chips([str(d) for d in (entry.get("domains") or [])], "chip", "domain")),
-        ("运行模式", f'<code>{_esc(entry.get("execution_mode"))}</code>' if entry.get("execution_mode") else ""),
-        ("需求能力", _chips(_pairs(entry.get("required_capabilities")), "chip", "cap")),
-        ("输入文件", _chips([str(f) for f in (entry.get("input_files") or [])], "chip", "file")),
-        ("依赖", _chips(_pairs(entry.get("dependencies")), "chip", "dep")),
-    ]
-
-    version_rows: list[tuple[str, str]] = []
-    versions = entry.get("versions")
-    if isinstance(versions, dict) and versions:
-        ordered = sorted(versions, key=_version_key, reverse=True)
-        version_rows.append((f"已发布版本（{len(ordered)}）", _chips([f"v{v}" for v in ordered], "chip", "ver")))
-        for item in ordered:
-            payload = versions.get(item)
-            digest = str(payload.get("sha256") or "") if isinstance(payload, dict) else ""
-            if digest:
-                version_rows.append((f"v{_esc(item)} 包 SHA-256", f'<code class="hash">{_esc(digest)}</code>'))
-    manifest_sha = str(entry.get("package_manifest_sha256") or "")
-    if manifest_sha:
-        version_rows.append(("包清单 SHA-256", f'<code class="hash">{_esc(manifest_sha)}</code>'))
 
     doc_path = str(entry.get("description_file") or "")
     if listing_markdown is None:
@@ -726,12 +896,6 @@ def _detail_page(
         doc_html = '<p class="empty-doc">该条目尚未提供说明文档（<code>listing.md</code> 为空）。</p>'
     else:
         doc_html = markdown_to_html(listing_markdown)
-
-    install_hint = (
-        "<p>在 OmniCrawler 客户端的「OmniCrawler 市场」面板中按名称或 ID 找到该条目并安装。</p>"
-        if kind == "plugin"
-        else "<p>在 OmniCrawler 客户端的市场面板中按名称或 ID 找到该条目并安装。</p>"
-    )
 
     sibling_html = ""
     if siblings:
@@ -742,34 +906,108 @@ def _detail_page(
         )
         sibling_html = f'<section class="panel"><h2>同类条目</h2><ul class="cat-list">{items}</ul></section>'
 
+    if kind == "component":
+        platforms = [str(p) for p in (entry.get("platforms") or [])]
+        architectures = [str(a) for a in (entry.get("architectures") or [])]
+        size_text = _format_bytes(entry.get("declared_total_bytes"))
+        if not summary:
+            summary = f"{name}（{_COMPONENT_BADGE_TEXT}）"
+        install_panel, middle_panel, comp_trust_rows = _component_sections(
+            entry, repo=repo, doc_path=doc_path
+        )
+        comp_trust_rows.insert(1, ("官方认证作者", "是" if _official(entry, official) else "否"))
+        comp_trust_rows.insert(2, ("维护者复签", "有（已审核）" if _reviewed(entry) else "无"))
+        version_rows: list[tuple[str, str]] = [
+            ("当前配方版本", f"<code>v{_esc(version)}</code>" if version else ""),
+            ("配方 SHA-256", f'<code class="hash">{_esc(entry.get("recipe_digest"))}</code>' if entry.get("recipe_digest") else ""),
+            ("声明总字节数", _esc(size_text)),
+        ]
+        risk_badge = '<span class="b b-risk b-risk-low">纯数据配方</span>'
+        head_tags = f'{_chips(platforms, "tag")} {_chips(architectures, "chip", "arch")} {_chips(tags, "tag")}'
+        meta_line = (
+            f'<span class="k">版本 v{_esc(version)}</span>'
+            f'<span class="k">下载量 {_esc(size_text or "—")}</span>'
+            f'<span class="k">{_esc(license_ or "上游许可")}</span>'
+            f'<span class="k">发布者 {_esc(publisher or "—")}</span>'
+        )
+        trust_facts_html = _facts(comp_trust_rows)
+    else:
+        risk_level, risk_label = _permission_risk(entry)
+        risk_badge = f'<span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span>'
+        head_tags = f'{_chips(tags, "tag")} {_chips(types, "chip", "type")}'
+        meta_line = (
+            f'<span class="k">版本 v{_esc(version)}</span><span class="k">核心 {_esc(core or "—")}</span>'
+            f'<span class="k">{_esc(license_ or "—")}</span><span class="k">更新 {_esc(updated or "—")}</span>'
+            f'<span class="k">发布者 {_esc(publisher or "—")}</span>'
+        )
+        permission_rows: list[tuple[str, str]] = [
+            ("权限", _chips([str(p) for p in (entry.get("permissions") or [])], "chip", "perm")),
+            ("访问域名", _chips([str(d) for d in (entry.get("domains") or [])], "chip", "domain")),
+            ("运行模式", f'<code>{_esc(entry.get("execution_mode"))}</code>' if entry.get("execution_mode") else ""),
+            ("需求能力", _chips(_pairs(entry.get("required_capabilities")), "chip", "cap")),
+            ("输入文件", _chips([str(f) for f in (entry.get("input_files") or [])], "chip", "file")),
+            ("依赖", _chips(_pairs(entry.get("dependencies")), "chip", "dep")),
+        ]
+        version_rows = []
+        versions = entry.get("versions")
+        if isinstance(versions, dict) and versions:
+            ordered = sorted(versions, key=_version_key, reverse=True)
+            version_rows.append((f"已发布版本（{len(ordered)}）", _chips([f"v{v}" for v in ordered], "chip", "ver")))
+            for item in ordered:
+                payload = versions.get(item)
+                digest = str(payload.get("sha256") or "") if isinstance(payload, dict) else ""
+                if digest:
+                    version_rows.append((f"v{_esc(item)} 包 SHA-256", f'<code class="hash">{_esc(digest)}</code>'))
+        manifest_sha = str(entry.get("package_manifest_sha256") or "")
+        if manifest_sha:
+            version_rows.append(("包清单 SHA-256", f'<code class="hash">{_esc(manifest_sha)}</code>'))
+
+        install_hint = (
+            "<p>在 OmniCrawler 客户端的「OmniCrawler 市场」面板中按名称或 ID 找到该条目并安装。</p>"
+            if kind == "plugin"
+            else "<p>在 OmniCrawler 客户端的市场面板中按名称或 ID 找到该条目并安装。</p>"
+        )
+        install_panel = f"""<section class="panel">
+<h2>安装指引</h2>
+{install_hint}
+<p class="note">安装仅下载并验签；启用这些权限时仍需在项目插件管理中逐项批准（与客户端一致的须知）。本页不代安装，也不给出验签结论；最终验签在客户端完成。</p>
+<p class="note">{_repo_link(repo, str(entry.get("plugin_file") or entry.get("template_file") or ""), "该条目的包内文件")}
+· {_repo_link(repo, doc_path, "说明文档源文件")}</p>
+</section>"""
+        middle_panel = f"""<section class="panel">
+<h2>权限与域名</h2>
+<p class="risk-line"><span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span> <span class="note">{_esc(_risk_reason(entry))}</span></p>
+{_facts(permission_rows)}
+<p class="note">风险分级判据与客户端同一套（进程内执行，或请求 <code>secrets:read</code> / <code>responses:payload</code> / <code>render:scripted</code> ⇒ 高风险）。</p>
+</section>"""
+        trust_facts_html = _facts([
+            ("签名算法", f'<code>{_esc(entry.get("signature_algorithm"))}</code>'),
+            ("官方认证作者", "是" if _official(entry, official) else "否"),
+            ("维护者复签", "有（已审核）" if _reviewed(entry) else "无"),
+            ("包清单", _repo_link(repo, str(entry.get("package_manifest_file") or ""), "package.manifest.json")),
+            ("创作者包签名", _repo_link(repo, str(entry.get("creator_package_signature_file") or ""), "creator 签名")),
+            ("维护者包签名", _repo_link(repo, str(entry.get("maintainer_package_signature_file") or ""), "maintainer 签名")),
+            ("条目签名", _repo_link(repo, str(entry.get("signature_file") or ""), "签名文件")),
+            ("创作者身份", _repo_link(repo, str(entry.get("creator_identity_file") or ""), "creator.identity")),
+            ("兼容核心", f'<code>{_esc(core)}</code>' if core else ""),
+            ("状态 schema", f'<code>v{_esc(entry.get("state_schema_version"))}</code>' if entry.get("state_schema_version") is not None else ""),
+        ])
+
     body = f"""
 <p class="crumbs"><a href="{rel}{_LIST}">← 全部条目</a> <span>{_esc(kind_label)}</span> <span>{_esc(category or "—")}</span></p>
 <header class="detail-head">
 <h1>{_esc(name)}</h1>
 <p class="card-id"><code id="entry-id">{_esc(id_)}</code>
 <button type="button" class="copy" data-copy="{_esc(id_)}">复制 ID</button></p>
-<p class="badges">{_badges(entry, official)}<span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span></p>
+<p class="badges">{_badges(entry, official, kind=kind)}{risk_badge}</p>
 <p class="summary">{_esc(summary)}</p>
-<p class="meta"><span class="k">版本 v{_esc(version)}</span><span class="k">核心 {_esc(core or "—")}</span>
-<span class="k">{_esc(license_ or "—")}</span><span class="k">更新 {_esc(updated or "—")}</span>
-<span class="k">发布者 {_esc(publisher or "—")}</span></p>
-<p class="tags">{_chips(tags, "tag")} {_chips(types, "chip", "type")}</p>
+<p class="meta">{meta_line}</p>
+<p class="tags">{head_tags}</p>
 </header>
 
-<section class="panel">
-<h2>安装指引</h2>
-{install_hint}
-<p class="note">安装仅下载并验签；启用这些权限时仍需在项目插件管理中逐项批准（与客户端一致的须知）。本页不代安装，也不给出验签结论；最终验签在客户端完成。</p>
-<p class="note">{_repo_link(repo, str(entry.get("plugin_file") or entry.get("template_file") or ""), "该条目的包内文件")}
-· {_repo_link(repo, doc_path, "说明文档源文件")}</p>
-</section>
+{install_panel}
 
-<section class="panel">
-<h2>权限与域名</h2>
-<p class="risk-line"><span class="b b-risk b-risk-{risk_level}">{_esc(risk_label)}</span> <span class="note">{_esc(_risk_reason(entry))}</span></p>
-{_facts(permission_rows)}
-<p class="note">风险分级判据与客户端同一套（进程内执行，或请求 <code>secrets:read</code> / <code>responses:payload</code> / <code>render:scripted</code> ⇒ 高风险）。</p>
-</section>
+{middle_panel}
 
 <section class="panel">
 <h2>说明</h2>
@@ -783,18 +1021,7 @@ def _detail_page(
 
 <details class="panel">
 <summary>信任信息（默认折叠）</summary>
-{_facts([
-        ("签名算法", f'<code>{_esc(entry.get("signature_algorithm"))}</code>'),
-        ("官方认证作者", "是" if _official(entry, official) else "否"),
-        ("维护者复签", "有（已审核）" if _reviewed(entry) else "无"),
-        ("包清单", _repo_link(repo, str(entry.get("package_manifest_file") or ""), "package.manifest.json")),
-        ("创作者包签名", _repo_link(repo, str(entry.get("creator_package_signature_file") or ""), "creator 签名")),
-        ("维护者包签名", _repo_link(repo, str(entry.get("maintainer_package_signature_file") or ""), "maintainer 签名")),
-        ("条目签名", _repo_link(repo, str(entry.get("signature_file") or ""), "签名文件")),
-        ("创作者身份", _repo_link(repo, str(entry.get("creator_identity_file") or ""), "creator.identity")),
-        ("兼容核心", f'<code>{_esc(core)}</code>' if core else ""),
-        ("状态 schema", f'<code>v{_esc(entry.get("state_schema_version"))}</code>' if entry.get("state_schema_version") is not None else ""),
-    ])}
+{trust_facts_html}
 </details>
 
 {sibling_html}
@@ -808,7 +1035,7 @@ def _detail_page(
         repo=repo,
         web_assets=web_assets,
         site_root_url=site_root_url,
-        script=f"<script>{_JS_DETAIL}</script>",
+        page_js=_JS_DETAIL,
     )
 
 
@@ -841,6 +1068,7 @@ def build_site(
 
     plugins = sorted(catalog.get("plugins") or [], key=lambda e: str(e.get("id")))
     templates = sorted(catalog.get("templates") or [], key=lambda e: str(e.get("id")))
+    components = sorted(catalog.get("components") or [], key=lambda e: str(e.get("id")))
     reader = listing_reader or (lambda path: _REGISTRY / path)
 
     pages: dict[str, str] = {
@@ -864,12 +1092,12 @@ def build_site(
         ),
     }
 
-    for kind, entries in (("plugin", plugins), ("template", templates)):
+    for kind, entries in (("plugin", plugins), ("template", templates), ("component", components)):
         for entry in entries:
             siblings = [
                 item
                 for item in entries
-                if item is not entry and str(item.get("category") or "") == str(entry.get("category") or "")
+                if item is not entry and _entry_category(item, kind) == _entry_category(entry, kind)
             ][:6]
             listing: str | None = None
             if entry.get("description_file"):
@@ -963,26 +1191,40 @@ def main(argv: list[str] | None = None) -> int:
 
 _CSS = """
 *,*::before,*::after{box-sizing:border-box}
-:root{
+:root,html[data-theme="light"]{
 --bg:#f4f8f6;--panel:#fff;--panel-2:#eef4f0;--text:#11211a;--muted:#5c6f67;
 --line:#dce6e0;--accent:#127a58;--accent-soft:#dff7e4;--brand:#0F3D2E;
---official:#186c33;--reviewed:#0b60c4;--high:#b54708;--medium:#8a6d00;--low:#5c6f67;
+--official:#186c33;--reviewed:#0b60c4;--recipe:#5b3fa8;--recipe-soft:#eeeafb;
+--high:#b54708;--medium:#8a6d00;--low:#5c6f67;
 --toolbar-bg:rgba(244,248,246,.9);
 --shadow:0 1px 2px rgba(15,61,46,.06),0 10px 28px rgba(15,61,46,.06);
+color-scheme:light;
 }
-@media (prefers-color-scheme:dark){:root{
+html[data-theme="dark"]{
 --bg:#0b1310;--panel:#131f1a;--panel-2:#182a23;--text:#e6f2eb;--muted:#9cb2a7;
 --line:#25362e;--accent:#5DCAA5;--accent-soft:#16342a;--brand:#DFF7E4;
---official:#2ea043;--reviewed:#4493f8;--high:#e3813a;--medium:#d4b03a;--low:#9cb2a7;
+--official:#2ea043;--reviewed:#4493f8;--recipe:#b59dff;--recipe-soft:#251f3a;
+--high:#e3813a;--medium:#d4b03a;--low:#9cb2a7;
 --toolbar-bg:rgba(11,19,16,.88);
 --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35);
+color-scheme:dark;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#0b1310;--panel:#131f1a;--panel-2:#182a23;--text:#e6f2eb;--muted:#9cb2a7;
+--line:#25362e;--accent:#5DCAA5;--accent-soft:#16342a;--brand:#DFF7E4;
+--official:#2ea043;--reviewed:#4493f8;--recipe:#b59dff;--recipe-soft:#251f3a;
+--high:#e3813a;--medium:#d4b03a;--low:#9cb2a7;
+--toolbar-bg:rgba(11,19,16,.88);
+--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35);
+color-scheme:dark;
 }}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;color:var(--text);background:radial-gradient(1100px 420px at 8% -12%,var(--accent-soft),transparent 68%),var(--bg);
 font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:.86em}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:.86em}
+kbd{display:inline-block;padding:.05rem .4rem;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:.8em}
 .wrap{max-width:1140px;margin:0 auto;padding:1.4rem 1.15rem 3.2rem}
 .skip{position:absolute;left:-9999px}
 .skip:focus{left:1rem;top:1rem;background:var(--panel);color:var(--text);padding:.55rem .9rem;border-radius:10px;z-index:9}
@@ -990,21 +1232,28 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",mo
 .site-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;padding:.4rem 0 1rem}
 .logo svg{display:block;width:min(240px,52vw);height:auto}
 .logo .wm-dark{display:none}
-@media (prefers-color-scheme:dark){.logo .wm-light{display:none}.logo .wm-dark{display:block}}
-.site-nav{display:flex;gap:1rem;font-size:.94rem}
+html[data-theme="dark"] .logo .wm-light{display:none}
+html[data-theme="dark"] .logo .wm-dark{display:block}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .logo .wm-light{display:none}:root:not([data-theme="light"]) .logo .wm-dark{display:block}}
+.site-nav{display:flex;align-items:center;gap:1rem;font-size:.94rem;flex-wrap:wrap}
+.theme-btn{font:inherit;font-size:.82rem;color:var(--text);background:var(--panel);border:1px solid var(--line);
+border-radius:999px;padding:.24rem .7rem;cursor:pointer;transition:border-color .15s}
+.theme-btn:hover{border-color:var(--accent)}
 h1{margin:.1rem 0 .55rem;font-size:clamp(1.55rem,2.6vw,2.15rem);letter-spacing:-.015em}
 h2{margin:0 0 .9rem;font-size:1.02rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+h3{margin:.9rem 0 .45rem;font-size:.95rem}
 .page-title{margin-top:.2rem}
 .lede{margin:0;max-width:74ch;color:var(--muted)}
 .lede strong{color:var(--text)}
 .hero{padding:.4rem 0 0}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;margin:1.5rem 0 0;padding:0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin:1.5rem 0 0;padding:0}
 .stats>div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:.6rem .85rem;box-shadow:var(--shadow)}
 .stats dt{color:var(--muted);font-size:.76rem;letter-spacing:.04em}
 .stats dd{margin:.2rem 0 0;font-weight:600;font-size:1.02rem;word-break:break-all}
 .cta{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.2rem 0 0}
 .btn{display:inline-block;background:var(--brand);color:#fff;border:1px solid var(--brand);border-radius:10px;padding:.45rem .9rem;font-size:.92rem}
-@media (prefers-color-scheme:dark){.btn{background:var(--accent-soft);color:var(--text);border-color:var(--line)}}
+html[data-theme="dark"] .btn{background:var(--accent-soft);color:var(--text);border-color:var(--line)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn{background:var(--accent-soft);color:var(--text);border-color:var(--line)}}
 .btn-ghost{background:var(--panel);color:var(--text);border-color:var(--line)}
 .btn:hover{text-decoration:none;filter:brightness(1.06)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:1rem 1.15rem;margin:1.2rem 0;box-shadow:var(--shadow)}
@@ -1021,8 +1270,11 @@ padding:.9rem 0 .85rem;margin:1.2rem 0 1.4rem}
 .field{display:flex;flex-direction:column;gap:.3rem}
 .lbl{font-size:.76rem;letter-spacing:.03em;color:var(--muted)}
 input,select{font:inherit;font-size:.92rem;color:var(--text);background:var(--panel);border:1px solid var(--line);
-border-radius:10px;padding:.45rem .6rem;min-width:12rem;max-width:100%}
+border-radius:10px;padding:.45rem .6rem;min-width:11rem;max-width:100%}
 input[type=search]{min-width:16rem}
+.btn-reset{font:inherit;font-size:.86rem;color:var(--accent);background:var(--panel);border:1px solid var(--accent);
+border-radius:10px;padding:.45rem .75rem;cursor:pointer}
+.btn-reset:hover{background:var(--accent-soft)}
 .live{margin:0 0 .35rem auto;color:var(--muted);font-size:.86rem;font-variant-numeric:tabular-nums}
 .group{margin:0 0 2rem}
 .count{background:var(--panel-2);color:var(--muted);border-radius:999px;padding:.06rem .55rem;font-size:.8rem;font-weight:500}
@@ -1033,12 +1285,14 @@ border-radius:14px;padding:.95rem 1rem 1rem;box-shadow:var(--shadow);break-insid
 .card h3{margin:0;font-size:1.02rem;line-height:1.35;word-break:break-word}
 .ver{flex:none;font-size:.78rem;color:var(--brand);background:var(--accent-soft);border:1px solid var(--line);
 border-radius:999px;padding:.08rem .5rem;font-variant-numeric:tabular-nums}
-@media (prefers-color-scheme:dark){.ver{color:var(--text)}}
+html[data-theme="dark"] .ver{color:var(--text)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ver{color:var(--text)}}
 .card-id{margin:0;color:var(--muted);font-size:.82rem;word-break:break-all;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
 .badges{margin:0;display:flex;flex-wrap:wrap;gap:.35rem;align-items:center}
 .b{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.76rem;line-height:1.5;white-space:nowrap}
 .b-official{background:var(--official);color:#fff}
 .b-reviewed{background:var(--reviewed);color:#fff}
+.b-recipe{background:var(--recipe-soft);color:var(--recipe);border:1px solid var(--recipe);font-weight:500}
 .b-high{background:var(--high);color:#fff}
 .b-pub{background:var(--panel-2);color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .b-risk{background:var(--panel-2);border:1px solid var(--line)}
@@ -1056,6 +1310,8 @@ border-radius:999px;padding:.08rem .5rem;font-variant-numeric:tabular-nums}
 .facts dt{color:var(--muted);white-space:nowrap}
 .facts dd{margin:0;display:flex;flex-wrap:wrap;gap:.3rem;align-items:baseline;word-break:break-word}
 .hash{word-break:break-all;font-size:.76rem;color:var(--muted)}
+.artifact-list{list-style:none;margin:.3rem 0 .6rem;padding:0;display:grid;gap:.5rem}
+.artifact-list li{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:.55rem .8rem;font-size:.84rem;word-break:break-all}
 .crumbs{margin:.2rem 0 1rem;color:var(--muted);font-size:.88rem;display:flex;gap:.6rem;flex-wrap:wrap}
 .crumbs span::before{content:"/";margin-right:.6rem;color:var(--line)}
 .detail-head{margin:0 0 1.2rem}
@@ -1100,10 +1356,33 @@ footer{border-top:1px solid var(--line);margin-top:1.6rem;padding-top:1rem}
 @media print{.toolbar,.copy,.site-nav{display:none}.card{box-shadow:none}}
 """
 
+_JS_THEME = """
+(function(){
+  var key='oc-market-theme',modes=['system','light','dark'];
+  var labels={system:'主题：跟随系统',light:'主题：浅色',dark:'主题：深色'};
+  var root=document.documentElement,btn=document.getElementById('theme-toggle');
+  function read(){try{var v=localStorage.getItem(key);return modes.indexOf(v)>=0?v:'system';}catch(_e){return 'system';}}
+  function write(m){try{if(m==='system'){localStorage.removeItem(key);}else{localStorage.setItem(key,m);}}catch(_e){}}
+  function sync(m){
+    if(m==='light'||m==='dark'){root.setAttribute('data-theme',m);}
+    else{root.removeAttribute('data-theme');}
+    if(btn){btn.textContent=labels[m]||labels.system;}
+  }
+  var cur=read();sync(cur);
+  if(btn){
+    btn.addEventListener('click',function(){
+      cur=modes[(modes.indexOf(cur)+1)%modes.length];
+      write(cur);sync(cur);
+    });
+  }
+})();
+"""
+
 _JS_LIST = """
 (function(){
   var q=document.getElementById('q'),kind=document.getElementById('kind'),
       cat=document.getElementById('cat'),sort=document.getElementById('sort'),
+      resetBtn=document.getElementById('reset-filters'),
       live=document.getElementById('live'),nomatch=document.getElementById('nomatch');
   if(!q||!live){return;}
   var cards=[].slice.call(document.querySelectorAll('article.card'));
@@ -1127,6 +1406,17 @@ _JS_LIST = """
     items.forEach(function(el){list.appendChild(el);});
     return items;
   }
+  function syncUrl(needle,k,c,s){
+    if(!window.history||!history.replaceState){return;}
+    var sp=new URLSearchParams();
+    if(needle){sp.set('q',q.value.trim());}
+    if(k&&k!=='all'){sp.set('kind',k);}
+    if(c&&c!=='all'){sp.set('cat',c);}
+    if(s&&s!=='order'){sp.set('sort',s);}
+    var qs=sp.toString();
+    var next=location.pathname+(qs?('?'+qs):'')+location.hash;
+    try{history.replaceState(null,'',next);}catch(_e){}
+  }
   function apply(){
     var needle=q.value.trim().toLowerCase(),k=kind.value,c=cat.value,s=sort.value,shown=0;
     groups.forEach(function(g){
@@ -1146,6 +1436,9 @@ _JS_LIST = """
       if(badge){badge.textContent=String(n);}
       shown+=n;
     });
+    var dirty=Boolean(needle||k!=='all'||c!=='all'||s!=='order');
+    if(resetBtn){resetBtn.hidden=!dirty;}
+    syncUrl(needle,k,c,s);
     live.textContent='显示 '+shown+' / '+total;
     nomatch.hidden=(shown!==0);
   }
@@ -1153,10 +1446,26 @@ _JS_LIST = """
     el.addEventListener('input',apply);
     el.addEventListener('change',apply);
   });
+  if(resetBtn){
+    resetBtn.addEventListener('click',function(){
+      q.value='';kind.value='all';cat.value='all';sort.value='order';
+      apply();q.focus();
+    });
+  }
+  document.addEventListener('keydown',function(ev){
+    if(ev.key==='/'&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){
+      var active=document.activeElement;
+      var tag=active&&active.tagName?active.tagName.toUpperCase():'';
+      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(active&&active.isContentEditable)){return;}
+      ev.preventDefault();q.focus();if(q.select){q.select();}
+    }else if(ev.key==='Escape'&&document.activeElement===q&&q.value){
+      q.value='';apply();
+    }
+  });
   var params=new URLSearchParams(location.search);
   ['q','kind','cat','sort'].forEach(function(key){
     var value=params.get(key);
-    if(value){document.getElementById(key).value=value;}
+    if(value&&document.getElementById(key)){document.getElementById(key).value=value;}
   });
   apply();
 })();

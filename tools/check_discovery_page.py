@@ -117,6 +117,32 @@ _HOSTILE = {
             "description_file": "templates/evil/listing.md",
         }
     ],
+    "components": [
+        {
+            "id": "evil-component",
+            "name": '组件 <script>alert(11)</script>',
+            "version": "1.0.0",
+            "publisher": 'unknown"><svg/onload=alert(12)>',
+            "recipe_file": "components/evil-component/recipe.json",
+            "recipe_digest": "c" * 64,
+            "platforms": ["windows", "<script>alert(13)</script>"],
+            "architectures": ["x86_64"],
+            "entry": {
+                "path": "tessdata/evil.traineddata",
+                "protocol": "ocr-file-v1",
+                "engine": '<img src=x onerror=alert(14)>',
+            },
+            "artifacts": [
+                {
+                    "url": 'https://evil.example/a"><script>alert(15)</script>',
+                    "sha256": "d" * 64,
+                    "size": 1024,
+                }
+            ],
+            "declared_total_bytes": 1024,
+            "description_file": "components/evil-component/listing.md",
+        }
+    ],
     "tombstones": [
         {"id": "<script>alert(9)</script>", "removed_at": "2026-01-01", "reason": "<img src=x onerror=alert(10)>"}
     ],
@@ -198,7 +224,10 @@ def check_structure(catalog: dict, pages: dict[str, str]) -> list[str]:
     problems = []
     plugins = catalog.get("plugins") or []
     templates = catalog.get("templates") or []
-    expected = {"index.html", "catalog.html"} | {f"{entry['id']}.html" for entry in plugins + templates}
+    components = catalog.get("components") or []
+    expected = {"index.html", "catalog.html"} | {
+        f"{entry['id']}.html" for entry in plugins + templates + components
+    }
     missing = sorted(expected - set(pages))
     unexpected = sorted(set(pages) - expected)
     if missing:
@@ -206,7 +235,7 @@ def check_structure(catalog: dict, pages: dict[str, str]) -> list[str]:
     if unexpected:
         problems.append(f"多出预期外的页面：{unexpected}")
     list_page = pages.get("catalog.html", "")
-    for kind, entries in (("plugin", plugins), ("template", templates)):
+    for kind, entries in (("plugin", plugins), ("template", templates), ("component", components)):
         actual = list_page.count(f'<article class="card" data-kind="{kind}"')
         if actual != len(entries):
             problems.append(f"列表页 {kind} 卡片数 {actual} != 目录条目数 {len(entries)}")
@@ -386,7 +415,9 @@ def main() -> int:
         return 1
     print(
         "OK discovery page: 转义/结构/链接/零外部子资源/站点资产/确定性/M5 语义/id 路径/fail-closed 全部通过"
-        f"（{len(pages)} 页；插件 {len(catalog.get('plugins') or [])}，模板 {len(catalog.get('templates') or [])}）"
+        f"（{len(pages)} 页；插件 {len(catalog.get('plugins') or [])}，"
+        f"模板 {len(catalog.get('templates') or [])}，"
+        f"组件 {len(catalog.get('components') or [])}）"
     )
     return 0
 
