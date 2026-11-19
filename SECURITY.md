@@ -51,5 +51,5 @@
 签名、目录、审核工具或市场基础设施漏洞请使用 GitHub Private Vulnerability Reporting：
 https://github.com/Starlife-creator/OmniCrawler-market/security/advisories/new
 
-若不可用，请联系 `zqx666666@tutamail.com`。报告请包含影响版本、复现步骤、样本哈希和
+若不可用，请联系 `starlife_creator@zohomail.com`。报告请包含影响版本、复现步骤、样本哈希和
 建议缓解措施；不要在公开 Issue 中附真实密钥或可利用细节。

@@ -11,7 +11,7 @@ blocked，而它们一个字符都没碰投稿面。
 判定有三条，都可独立生效，且**跳过必须可见**（逐条打印原因）：
 
 1. `--author`（PR 发起人登录）是机器账号 ⇒ 整份 PR 不适用。
-   实测：dependabot 的提交 `%an` 是**人**（`starlife <zqx579683@outlook.com>`）、
+   实测：dependabot 的提交 `%an` 是**人**（`starlife <starlife_creator@zohomail.com>`）、
    committer 是 `GitHub`，只有 PR 的 `user.login` 是 `dependabot[bot]`
    ⇒ 机器判据必须取 PR 发起人，不能取提交作者。
 2. 单个提交的作者是机器账号 ⇒ 该提交不适用（保住「人类 PR 里夹了一个
