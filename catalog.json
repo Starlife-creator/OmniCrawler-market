@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T16:16:54+00:00",
-  "sequence": 1791080204,
+  "generated_at": "2026-11-19T16:19:33+00:00",
+  "sequence": 1791080205,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -990,7 +990,7 @@
       "version": "1.0.0",
       "publisher": "starlife",
       "recipe_file": "components/ocr-paddle/recipe.json",
-      "recipe_digest": "7156e52910f2f710b353c60222b775c4894e4c9b538ac4f03a753af3a8010b80",
+      "recipe_digest": "d65c14d8074399157ee1716b9be280f8998c10acf9a425fc3520307d12493fab",
       "platforms": [
         "windows",
         "linux",
@@ -1125,9 +1125,59 @@
           "url": "https://files.pythonhosted.org/packages/e0/a9/023730ba63db1e494a271cb018dcd361bd2c917ba7004c3e49d5daf795a2/py_cpuinfo-9.0.0-py3-none-any.whl",
           "sha256": "859625bc251f64e21f077d099d4162689c762b5d6a4c3c97553d56241c9674d5",
           "size": 22335
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+          "size": 73075
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/68/30/173960c42b05a6c59f7558e4b12a4b0d9ba376cf6aa9bde7f9e08a30ca8d/aiohttp-3.14.5-py3-none-any.whl",
+          "sha256": "efc21a454892828368b11c2c780de0ff8bc991f73f6b99c6b66e56205470929b",
+          "size": 279517
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+          "size": 45571
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/8a/8c/824a686c4ba815ddb0722f9e66272088bccd4e1ae1d2f7015375e4a4fc7f/pydantic-2.14.4-py3-none-any.whl",
+          "sha256": "653a2ad9f6d8858529c77c72717d0ea991d6c6837fe683246b2f4b2bbfc3fadc",
+          "size": 494865
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/97/c9/39d5b874e8b28845e4ec2202b5da735d0199dbe5b8fb85f91398814a9a46/pyyaml-6.0.3-cp313-cp313-win_amd64.whl",
+          "sha256": "79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c",
+          "size": 154090
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/74/27/e5b8f34d02d9995b80abcef563ea1f8b56d20134d8f4e5e81733b1feceb2/pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6",
+          "size": 801626
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/d1/11/0fd08f8192109f7169db964b5707a2f1e8b745d4e239b784a5a1dd80d1db/pyyaml-6.0.3-cp313-cp313-macosx_10_13_x86_64.whl",
+          "sha256": "8da9669d359f02c0b91ccc01cac4a67f16afec0dac22c2ad09f46bee0697eba8",
+          "size": 181669
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/38/ef/15b6a24451e75f2d48931062f73a5ebbd00d86394d750699dbd8d6b159b6/pandas-3.1.1-cp313-cp313-win_amd64.whl",
+          "sha256": "6d84760cc1bd799440a66b4df2ceb7a508870f3b8b4d8dda21befd62779cd3b4",
+          "size": 10732758
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/79/c2/c8bc972d6dcba13910fc92b622420704a2f655dd6b01ed54269a1bf7c2d2/pandas-3.1.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "645fa00fd85cfced2d2c09dc116d3694f578501b1ce4899153fbe64788ecda98",
+          "size": 11978871
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/f6/ee/2f6c4419fa2bf476ba2776c0fbae91e8bf6ab15c6b3e038d66da4d7824da/pandas-3.1.1-cp313-cp313-macosx_10_13_x86_64.whl",
+          "sha256": "01bd1d4c5fc999324382d55499cef0f9cc7c1b09d91ae6dabe82f0237e43b3a0",
+          "size": 11612513
         }
       ],
-      "declared_total_bytes": 607073948,
+      "declared_total_bytes": 643428503,
       "package_manifest_file": "components/ocr-paddle/package.manifest.json",
       "creator_package_signature_file": "components/ocr-paddle/package.manifest.creator.sig",
       "creator_identity_file": "components/ocr-paddle/creator.identity",
