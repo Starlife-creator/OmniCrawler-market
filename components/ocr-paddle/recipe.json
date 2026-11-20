@@ -982,5 +982,6 @@
   },
   "provides": [
     "ocr.paddle"
-  ]
+  ],
+  "kind": "wheel-pack"
 }
