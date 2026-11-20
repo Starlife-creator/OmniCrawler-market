@@ -162,6 +162,7 @@ def check_recipe(recipe_path: Path) -> list[str]:
     wheels = _wheel_names(recipe)
     haystack = " ".join(wheels)
     kind = component_kind(recipe)
+    problems.extend(_check_provides(recipe_path, recipe))
 
     # **纯数据组件**（如 Tesseract 语言包）与平台/架构无关：
     # 字节是通用数据文件，文件名里不会有 `win_amd64` / `manylinux` 这类标记。
@@ -299,6 +300,35 @@ def _check_data_recipe(recipe_path: Path, recipe: dict) -> list[str]:
                 f"{name}: 构件 {artifact['url'].rsplit('/', 1)[-1]} 没声明 size"
                 f" —— 用户看不到下载量"
             )
+    return problems
+
+
+def _check_provides(recipe_path, recipe):
+    """`provides` 是插件与组件对上的唯一凭据，不能缺。
+
+    插件用 `required_capabilities` 声明「我需要 ocr.paddle」，
+    组件必须声明「我提供 ocr.paddle」—— 否则两者只能靠人脑对应。
+    """
+    problems = []
+    name = recipe_path.parent.name
+    provides = recipe.get("provides")
+    if not provides:
+        problems.append(f"{name}: 没有声明 provides —— 插件无法与之对接")
+        return problems
+    if not isinstance(provides, list):
+        problems.append(f"{name}: provides 必须是列表")
+        return problems
+    normalized = []
+    for item in provides:
+        if not isinstance(item, str) or not item.strip():
+            problems.append(f"{name}: provides 含非字符串项")
+            continue
+        value = item.strip().lower()
+        if not all(ch.isalnum() or ch in "._-" for ch in value):
+            problems.append(f"{name}: 能力名只允许字母/数字/._-：{item!r}")
+        normalized.append(value)
+    if len(set(normalized)) != len(normalized):
+        problems.append(f"{name}: provides 含重复项 {normalized}")
     return problems
 
 

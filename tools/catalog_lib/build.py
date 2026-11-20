@@ -70,6 +70,17 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
         # ABI 声明必须进 catalog：重型 C 扩展与解释器版本强耦合，
         # 客户端据此在**下载前**就判断"这台机器装不了"，而不是拉到一半才失败。
         "python_abi": list(recipe.get("python_abi") or []),
+        # 组件种类：`wheel-pack` / `data` / `native`。
+        # 显式声明后，客户端不必靠「有没有 entry.runner」推断类型
+        # （v1.0.14 曾把纯数据组件误当 Wheel-Pack 去 run）。
+        "kind": str(recipe.get("kind") or "wheel-pack"),
+        # 该组件**提供**哪些能力。插件用 `required_capabilities` 声明需要什么，
+        # 两者对上才能判断「装了没装」—— 此前组件侧完全没有这个字段，
+        # 插件与组件是两条平行的线，只能靠人脑对应。
+        "provides": list(recipe.get("provides") or []),
+        # 平台 × 架构：全局 `architectures` 表达不了「某平台只支持部分架构」
+        # （实测 paddlepaddle 的 macOS 轮子只有 arm64）。
+        "platform_architectures": dict(recipe.get("platform_architectures") or {}),
         "entry": dict(recipe["entry"]),
         "artifacts": [
             {
