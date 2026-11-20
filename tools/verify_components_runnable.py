@@ -159,12 +159,12 @@ def verify_all(root: Path) -> VerifyReport:
                     "components",
                     "install-recipe",
                     "--recipe",
-                    str(recipe_path),
+                    str(recipe_path.resolve()),
                     "--download",
                     "--component-root",
                     str(work / "components"),
                 ],
-                recipe_path.parent,
+                root.resolve().parent,
                 timeout=1800,
             )
             if installed.returncode != 0:
@@ -201,7 +201,7 @@ def verify_all(root: Path) -> VerifyReport:
                     "--payload",
                     json.dumps(payload, ensure_ascii=False),
                 ],
-                recipe_path.parent,
+                root.resolve().parent,
                 timeout=timeout,
             )
             if ran.returncode != 0:
