@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         require_fresh=args.require_fresh,
     )
     for finding in findings:
-        print(f"[{'WARN' if finding.startswith('warning: ') else 'FAIL'}] {finding[9:] if finding.startswith('warning: ') else finding}")
+        print(f"[{'WARN' if finding.startswith('warning: ') else 'FAIL'}] {finding.removeprefix('warning: ')}")
     if ok:
         print(f"[OK] 快照签名有效（{len(findings)} 条告警）")
         return 0

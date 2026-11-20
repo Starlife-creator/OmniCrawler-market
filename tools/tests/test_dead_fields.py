@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.common import _ENTRY_KEYS
 from catalog_lib.schema import _entry_from_yaml
 

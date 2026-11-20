@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from scan_plugin import scan_code_patterns, scan_plugin_dir
 
 

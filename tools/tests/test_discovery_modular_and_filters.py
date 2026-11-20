@@ -194,7 +194,7 @@ def test_sort_control_accessibility_options_and_card_sort_datasets() -> None:
     catalog = _multi_entry_catalog(with_tags=True, hostile=False)
     list_html = discovery.render(catalog, assets_root=_REGISTRY)
 
-    sort_match = re.search(r'<select id="sort"[^>]*>(.*?)</select>', list_html, flags=re.S)
+    sort_match = re.search(r'<select id="sort"[^>]*>(.*?)</select>', list_html, flags=re.DOTALL)
     assert sort_match is not None, "缺少 #sort 下拉控件"
     sort_block = sort_match.group(0)
     assert 'aria-label="排序方式"' in sort_block

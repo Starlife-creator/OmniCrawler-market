@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from generate_discovery_page import _esc
 
 

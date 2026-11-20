@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from catalog_lib.contract import (
     classify_files,
     compare_overlay_payload,
@@ -10,7 +9,8 @@ from catalog_lib.contract import (
     is_runtime_file,
     security_field_expansion,
 )
-from validate_submission import is_runtime_file as _validator_runtime, non_runtime_files
+from validate_submission import is_runtime_file as _validator_runtime
+from validate_submission import non_runtime_files
 
 # P3-10：投稿器自包含镜像规则必须与共享分类模块逐文件一致（策略锁对齐）。
 _CLASSIFICATION_CORPUS = [

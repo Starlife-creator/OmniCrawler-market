@@ -12,7 +12,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 # --- P3-10 运行必需文件分类 ---------------------------------------------------
 NON_RUNTIME_DIR_PARTS = {"tests", "test", "docs", "examples", "example"}

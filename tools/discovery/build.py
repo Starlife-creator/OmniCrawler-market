@@ -17,9 +17,9 @@ _REGISTRY = _TOOLS_DIR.parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
-from catalog_lib.signing import _verify_catalog_signature  # noqa: E402
+from catalog_lib.signing import _verify_catalog_signature
 
-from ._pages import (  # noqa: E402
+from ._pages import (
     _FALLBACK_REPO,
     _ID_RE,
     _INDEX,

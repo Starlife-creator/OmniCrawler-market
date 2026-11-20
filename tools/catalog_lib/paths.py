@@ -56,10 +56,10 @@ def template_id_to_dir_name(package_id: str) -> str:
 
 
 __all__ = [
+    "DOMAIN_RE",
     "PLUGIN_ID_RE",
     "TEMPLATE_ID_RE",
     "USERNAME_RE",
-    "DOMAIN_RE",
     "safe_relative_path",
     "template_dir_name_to_id",
     "template_id_to_dir_name",

@@ -15,7 +15,6 @@ from typing import Any
 from .common import *
 from .signing import *
 
-
 _HANDLE_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
 # P2-4：作者密钥生命周期状态与代际字段口径。
 _AUTHOR_STATUSES = {"active", "revoked"}

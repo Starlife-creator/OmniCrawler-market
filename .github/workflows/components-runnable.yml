@@ -1,0 +1,96 @@
+name: components-runnable
+
+# 组件「能跑」闸门（§15.7）——市场侧最大的架构缺口。
+#
+# 背景：`validate.yml` 只验**结构 + 签名**，**从不 import** 任何组件。
+# 后果是市场可以发布一个永远跑不起来的配方 —— `ocr-paddle` 就曾长期处在
+# 「能发布、跑不起来」的状态（v1.0.13→v1.0.29，17 个 tag 才逼近真相）。
+#
+# 本工作流做三件事（全部在云端，不占维护者开发机）：
+#   1. 静态：配方声明必须能从构件字节推导（复用主仓的 check_component_recipes.py）
+#   2. 装配：真实 `install-recipe --download`（从上游拉字节）
+#   3. 运行：照组件自己的 `smoke` 声明执行并核对 `expect`
+#
+# ★ 触发面刻意**只含 components/** 与 tools/**：
+#   组件配方改动才需要重跑；插件/模板改走 validate.yml 已足够。
+#   同时支持 workflow_dispatch 手动触发（改完配方即可验证）。
+#
+# ★ 为什么单独一个工作流而不是并进 validate.yml：
+#   - validate.yml 用 Python 3.12，而组件要求 cp313（ABI 必须匹配）；
+#   - 本工作流需要下载数百 MB 构件，不该拖慢每次插件 PR 的校验。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "components/**"
+      - "tools/**"
+      - ".github/workflows/components-runnable.yml"
+  pull_request:
+    paths:
+      - "components/**"
+      - "tools/**"
+      - ".github/workflows/components-runnable.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: components-runnable-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 组件要求 cp313；与主仓 BUILD_PYTHON_VERSION 保持一致。
+  COMPONENT_PYTHON: "3.13"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  runnable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "${{ env.COMPONENT_PYTHON }}"
+
+      # ── 1) 静态：声明可推导 ────────────────────────────────────────────
+      #
+      # 这一层零网络、零下载，卡在最早，失败最快。
+      # 它校验的是「配方说的话和构件的字节能对上」：平台 / 架构 / ABI /
+      # 依赖闭包 / 入口路径。这些缺陷早先只能到发布时才发现。
+      - name: 校验配方声明可从构件字节推导
+        run: |
+          # 从主仓取同一份校验器，避免两处各写一套判据。
+          # 主仓 `OmniCrawler/tools/gates/check_component_recipes.py` 是唯一真源。
+          python -m pip install --upgrade pip
+          python -m pip install "PyYAML==6.0.2"
+          echo "::group::配方自洽校验"
+          python tools/check_component_recipes.py --root components || {
+            echo "::error::配方声明与构件字节不一致（详见上方输出）"
+            exit 1
+          }
+          echo "::endgroup::"
+
+      # ── 2) 装配 + 3) 运行：真实装、真实跑 ─────────────────────────────
+      #
+      # 需要主仓的 `omnicrawler` CLI。这里用 git+https 装当前主仓 main，
+      # **不用固定版本**：组件验证要跟着主仓最新实现走，而不是某个发版快照。
+      - name: 安装主仓 CLI（组件装配与运行器）
+        run: |
+          python -m pip install "git+https://github.com/Starlife-creator/omnicrawler.git@main"
+
+      - name: 逐个组件：装配 → 照 smoke 执行 → 核对 expect
+        run: python tools/verify_components_runnable.py --root components
+
+      - name: 上传验证报告
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4.6.2
+        with:
+          name: components-runnable-report
+          path: components-runnable-report.json
+          if-no-files-found: warn

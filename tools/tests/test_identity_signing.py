@@ -5,9 +5,6 @@ import base64
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 from catalog_lib.identity import (
     CreatorIdentity,
     FingerprintMismatchError,
@@ -15,6 +12,8 @@ from catalog_lib.identity import (
     derive_fingerprint,
 )
 from catalog_lib.signing import sign_bytes, sign_file, verify_plugin
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 REGISTRY = Path(__file__).resolve().parents[2]
 TOOLS = REGISTRY / "tools"

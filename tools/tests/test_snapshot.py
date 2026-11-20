@@ -5,12 +5,10 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 from catalog_lib.signing import sign_bytes
 from catalog_lib.snapshot import export_snapshot, is_snapshot_fresh, verify_snapshot
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def _make_root(tmp_path: Path, *, generated_at: datetime) -> tuple[Path, Ed25519PrivateKey]:

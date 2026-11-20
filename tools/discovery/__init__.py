@@ -73,17 +73,17 @@ from .build import (
 )
 
 __all__ = [
-    "_CSS",
-    "_JS_DETAIL",
-    "_JS_LIST",
-    "_JS_THEME",
     "_COMPONENT_BADGE_TEXT",
+    "_CSS",
     "_FACTS_LIMIT",
     "_FALLBACK_REPO",
     "_HIGH_RISK_PERMISSIONS",
     "_HOME_TAG_LIMIT",
     "_ID_RE",
     "_INDEX",
+    "_JS_DETAIL",
+    "_JS_LIST",
+    "_JS_THEME",
     "_KIND_LABELS",
     "_LIST",
     "_LOGO_DIR",

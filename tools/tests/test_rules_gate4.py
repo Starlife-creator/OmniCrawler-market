@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.rules import _check_version_rules, _parse_version
 
 

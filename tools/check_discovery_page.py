@@ -36,8 +36,9 @@ from pathlib import Path
 _REGISTRY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REGISTRY / "tools"))
 
-import generate_discovery_page as page  # noqa: E402
-from generate_discovery_page import build_site, main as generate_main, markdown_to_html  # noqa: E402
+import generate_discovery_page as page
+from generate_discovery_page import build_site, markdown_to_html
+from generate_discovery_page import main as generate_main
 
 _TRUST_ROOT = _REGISTRY / "keys" / "plugin_trust.pub.pem"
 

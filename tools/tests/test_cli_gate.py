@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.cli import _existing_catalog_sequence, check, main, publish_check
 
 

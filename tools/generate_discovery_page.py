@@ -23,7 +23,7 @@ _TOOLS_DIR = Path(__file__).resolve().parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
-from discovery import (  # noqa: E402,F401
+from discovery import (  # noqa: F401
     _COMPONENT_BADGE_TEXT,
     _CSS,
     _FACTS_LIMIT,

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.build import _existing_sequence
 from catalog_lib.rules import _check_consistency
 

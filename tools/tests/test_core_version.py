@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from catalog_lib.core_version import (
     CoreRange,
     SemVer,

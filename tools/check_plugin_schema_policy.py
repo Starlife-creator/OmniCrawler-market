@@ -17,12 +17,24 @@ from catalog_lib.common import (
 )
 from validate_submission import (
     ALLOWED_CAPABILITIES as SUBMISSION_CAPABILITIES,
+)
+from validate_submission import (
     ALLOWED_PLUGIN_PERMISSIONS as SUBMISSION_PERMISSIONS,
-    LICENSE_ALLOWLIST as SUBMISSION_LICENSES,
-    PLUGIN_ID_RE as SUBMISSION_PLUGIN_ID_RE,
-    TEMPLATE_ID_RE as SUBMISSION_TEMPLATE_ID_RE,
-    USERNAME_RE as SUBMISSION_USERNAME_RE,
+)
+from validate_submission import (
     DOMAIN_RE as SUBMISSION_DOMAIN_RE,
+)
+from validate_submission import (
+    LICENSE_ALLOWLIST as SUBMISSION_LICENSES,
+)
+from validate_submission import (
+    PLUGIN_ID_RE as SUBMISSION_PLUGIN_ID_RE,
+)
+from validate_submission import (
+    TEMPLATE_ID_RE as SUBMISSION_TEMPLATE_ID_RE,
+)
+from validate_submission import (
+    USERNAME_RE as SUBMISSION_USERNAME_RE,
 )
 
 DECLARATIVE_TYPES = {"resource_provider", "view"}

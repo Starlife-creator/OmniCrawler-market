@@ -269,9 +269,7 @@ def _scan_allowlist(plugin_dir: Path, manifest_path: Path | None) -> tuple[list[
         return warnings, errors
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     allowed = manifest.get("files") if isinstance(manifest, dict) else None
-    if isinstance(allowed, dict):
-        allowed_set = {str(item) for item in allowed}
-    elif isinstance(allowed, list):
+    if isinstance(allowed, dict) or isinstance(allowed, list):
         allowed_set = {str(item) for item in allowed}
     else:
         # B02-018：模板（template.yaml）schema 无 files 字段属预期，不强制；

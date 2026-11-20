@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import finalize_submission as finalize
 import pytest
 import yaml
-
-import finalize_submission as finalize
 
 
 # --- SemVer 单调键 -------------------------------------------------------------

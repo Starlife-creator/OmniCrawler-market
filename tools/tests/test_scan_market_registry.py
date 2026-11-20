@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from scan_market import scan_market
 
 

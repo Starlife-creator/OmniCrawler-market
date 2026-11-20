@@ -66,7 +66,7 @@ class CreatorIdentity:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CreatorIdentity":
+    def from_dict(cls, data: dict[str, Any]) -> CreatorIdentity:
         """从 ``creator.identity`` 还原身份；自称指纹只用于比对，绝不用于信任判定。"""
         try:
             public_key = base64.b64decode(str(data["public_key"]), validate=True)
@@ -83,10 +83,10 @@ class CreatorIdentity:
 
 
 __all__ = [
-    "IdentityError",
-    "FingerprintMismatchError",
-    "FINGERPRINT_ALGORITHM",
     "ED25519_PUBLIC_KEY_SIZE",
-    "derive_fingerprint",
+    "FINGERPRINT_ALGORITHM",
     "CreatorIdentity",
+    "FingerprintMismatchError",
+    "IdentityError",
+    "derive_fingerprint",
 ]

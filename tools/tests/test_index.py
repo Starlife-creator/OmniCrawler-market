@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from catalog_lib.index import build_index, resolve_entry
 
 

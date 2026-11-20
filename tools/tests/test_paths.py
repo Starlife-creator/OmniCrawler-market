@@ -1,10 +1,7 @@
 """P2-7：市场仓自包含路径安全与 ID 正则共享实现负样例回归。"""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-
 from catalog_lib import paths
 from validate_submission import safe_rel
 

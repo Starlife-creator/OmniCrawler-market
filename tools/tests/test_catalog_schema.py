@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.common import ALLOWED_CAPABILITIES, _require_contained
 from catalog_lib.schema import _entry_from_yaml
 from catalog_lib.tombstones import _load_tombstones

@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from catalog_lib.authors import _check_author, load_authors
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-from catalog_lib.authors import _check_author, load_authors
 
 
 def _write(registry: Path, handle: str, record: dict) -> None:

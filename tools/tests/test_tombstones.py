@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.tombstones import _load_tombstones
 
 

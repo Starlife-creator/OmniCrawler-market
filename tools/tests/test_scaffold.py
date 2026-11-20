@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import new_submission
+import pytest
 
 
 def test_plugin_scaffold_generated_and_self_checked(tmp_path: Path) -> None:

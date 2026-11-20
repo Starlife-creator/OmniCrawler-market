@@ -195,12 +195,12 @@ def last_v2_entry(path: Path) -> dict[str, Any] | None:
 
 __all__ = [
     "PATH_FIELDS",
+    "REVIEW_DECISIONS",
+    "build_v2_entry",
     "canonicalize_entry",
-    "migrate_transparency_log",
     "check_transparency_log",
     "entry_hash",
-    "build_v2_entry",
-    "verify_transparency_chain",
     "last_v2_entry",
-    "REVIEW_DECISIONS",
+    "migrate_transparency_log",
+    "verify_transparency_chain",
 ]

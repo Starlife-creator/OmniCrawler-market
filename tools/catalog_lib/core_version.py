@@ -30,7 +30,7 @@ class SemVer:
     pre: str = ""
 
     @classmethod
-    def parse(cls, text: str) -> "SemVer":
+    def parse(cls, text: str) -> SemVer:
         match = _VERSION_RE.fullmatch(str(text).strip())
         if not match:
             raise ValueError(f"非法 semver 版本号: {text!r}（期望 major.minor.patch）")

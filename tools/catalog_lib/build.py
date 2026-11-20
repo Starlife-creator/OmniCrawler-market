@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .authors import *
-from .common import *  # noqa: F401,F403 —— OFFICIAL_PUBLISHERS 亦经此导入
+from .common import *
 from .schema import *
 from .signing import *
 from .tombstones import *

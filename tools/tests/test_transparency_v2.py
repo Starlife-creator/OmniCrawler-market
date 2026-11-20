@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from catalog_lib.transparency import (
     REVIEW_DECISIONS,
     build_v2_entry,

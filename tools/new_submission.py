@@ -27,18 +27,17 @@ if str(REGISTRY / "tools") not in sys.path:
     sys.path.insert(0, str(REGISTRY / "tools"))
 
 import yaml
-
 from catalog_lib.common import (
+    _ENTRY_KEYS,
+    _TOP_LEVEL_EXTRA,
     ALLOWED_PLUGIN_PERMISSIONS,
     LICENSE_ALLOWLIST,
     OFFICIAL_PLUGIN_TYPES,
-    _ENTRY_KEYS,
-    _TOP_LEVEL_EXTRA,
 )
 from validate_submission import (
+    _COMPATIBLE_CORE_RE,
     PLUGIN_ID_RE,
     TEMPLATE_ID_RE,
-    _COMPATIBLE_CORE_RE,
     gate1_declaration_consistency,
     gate3_dependencies_consistency,
 )
@@ -55,10 +54,7 @@ def _read_plugin_metadata(source: str) -> dict[str, Any]:
         value = None
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "PLUGIN_METADATA" for t in node.targets
-        ):
-            target = "PLUGIN_METADATA"
-            value = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+        ) or isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
                 and node.target.id == "PLUGIN_METADATA":
             target = "PLUGIN_METADATA"
             value = node.value

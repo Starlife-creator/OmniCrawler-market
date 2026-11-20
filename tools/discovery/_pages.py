@@ -420,8 +420,8 @@ def _inline_logo(assets_root: Path) -> str:
         if not path.is_file():
             continue
         svg = path.read_text(encoding="utf-8")
-        svg = re.sub(r"<title\b[^>]*>.*?</title>", "", svg, flags=re.S)
-        svg = re.sub(r"<desc\b[^>]*>.*?</desc>", "", svg, flags=re.S)
+        svg = re.sub(r"<title\b[^>]*>.*?</title>", "", svg, flags=re.DOTALL)
+        svg = re.sub(r"<desc\b[^>]*>.*?</desc>", "", svg, flags=re.DOTALL)
         # 去掉 role/aria-*/id：字标是装饰性的（标题已给出页面名），且两份内联会撞 id
         svg = re.sub(r'\s(?:role|aria-labelledby|aria-describedby|id)="[^"]*"', "", svg)
         svg = svg.replace("<svg ", f'<svg class="{cls}" aria-hidden="true" focusable="false" ', 1)

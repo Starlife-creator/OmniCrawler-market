@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
 import yaml
+from catalog_lib.build import build_catalog
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-from catalog_lib.build import build_catalog
 
 
 def _fixture(
