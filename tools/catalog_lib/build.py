@@ -88,8 +88,16 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
         "platform_architectures": dict(recipe.get("platform_architectures") or {}),
         "entry": dict(recipe["entry"]),
         "artifacts": [
+            # 内置构件（`source: builtin`）**没有 url**，只有 `builtin_path`。
+            # 早先这里硬取 `item["url"]`，遇到内置构件会 KeyError ——
+            # 而 catalog 生成失败会让整条市场链路停摆。
             {
-                "url": str(item["url"]),
+                "source": str(item.get("source") or "remote"),
+                **(
+                    {"builtin_path": str(item.get("builtin_path") or "")}
+                    if str(item.get("source") or "remote").lower() == "builtin"
+                    else {"url": str(item["url"])}
+                ),
                 "sha256": str(item["sha256"]),
                 "size": item.get("size"),
             }

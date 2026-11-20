@@ -85,7 +85,16 @@ def load_recipe(path: Path) -> dict:
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             raise RecipeError("artifact 必须是对象")
-        if not str(artifact.get("url") or "").startswith(("https://", "http://")):
+        # 内置构件（`source: builtin`）字节随包发布，**不写 url**，
+        # 改为 `builtin_path`（相对安装根）。sha256 仍然必填 ——
+        # 「内置」不等于「免校验」。与宿主侧 component_recipe 同一判据。
+        source = str(artifact.get("source") or "remote").lower()
+        if source == "builtin":
+            if artifact.get("url"):
+                raise RecipeError("source=builtin 的 artifact 不能写 url")
+            if not str(artifact.get("builtin_path") or "").strip():
+                raise RecipeError("source=builtin 的 artifact 必须写 builtin_path")
+        elif not str(artifact.get("url") or "").startswith(("https://", "http://")):
             raise RecipeError("artifact 的 url 必须是 http(s) 地址")
         digest = str(artifact.get("sha256") or "")
         if len(digest) != 64:
@@ -149,6 +158,57 @@ def _abi_from_filename(filename: str) -> str:
     return match.group(0) if match else "?"
 
 
+def _check_builtin_recipe(recipe_path: Path, recipe: dict) -> list[str]:
+    """内置构件的专用判据。
+
+    内置构件是「字节随包、但也要被组件体系管理」的东西。
+    它不适用按文件名反推平台/架构，但**有更严格的替代判据**：
+    必须有一份逐文件哈希清单，且清单里的文件数与字节数要和声明对得上。
+    """
+    problems: list[str] = []
+    name = recipe_path.parent.name
+
+    lock_path = recipe_path.parent / "files.lock.json"
+    if not lock_path.is_file():
+        problems.append(
+            f"{name}: 内置组件缺少 files.lock.json —— "
+            "内置不等于免校验，逐文件哈希必须随配方一起签名"
+        )
+        return problems
+
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        problems.append(f"{name}: files.lock.json 无法解析 —— {exc}")
+        return problems
+
+    files = lock.get("files")
+    if not isinstance(files, dict) or not files:
+        problems.append(f"{name}: files.lock.json 的 files 为空 —— 空清单会让校验恒真")
+        return problems
+
+    # 声明的 size 必须等于清单总和（防两处漂移）
+    declared_size = sum(int(a.get("size") or 0) for a in recipe["artifacts"])
+    actual_size = sum(int(v.get("size") or 0) for v in files.values() if isinstance(v, dict))
+    if declared_size != actual_size:
+        problems.append(
+            f"{name}: 构件 size 合计 {declared_size} 与 files.lock.json 的 "
+            f"{actual_size} 不一致"
+        )
+
+    # 每个文件都要有合法 sha256
+    missing_hash = [
+        path
+        for path, meta in files.items()
+        if not (isinstance(meta, dict) and len(str(meta.get("sha256") or "")) == 64)
+    ]
+    if missing_hash:
+        problems.append(
+            f"{name}: files.lock.json 里有 {len(missing_hash)} 个文件缺少合法 sha256"
+        )
+    return problems
+
+
 def check_recipe(recipe_path: Path) -> list[str]:
     """返回发现的问题（空列表 = 通过）。"""
     problems: list[str] = []
@@ -169,6 +229,18 @@ def check_recipe(recipe_path: Path) -> list[str]:
     # 对它套用「每个平台都要有平台标记构件」是**判据过严**，会逼出假阳性。
     if kind == "data":
         return _check_data_recipe(recipe_path, recipe)
+
+    # **内置构件**（`source: builtin`）不适用「按文件名反推平台/架构」：
+    # 它是一整个目录（浏览器内核 310 个文件），文件名里不会有
+    # `win_amd64` / `manylinux` 这类标记。它的推导依据是**逐文件哈希清单**
+    # （`files.lock.json`），比文件名更精确 —— 所以跳过反推，不跳过校验：
+    # 清单与真实字节的一致性由 `--check` 单独验（见 gen_builtin_browser_lock）。
+    if recipe.get("artifacts") and all(
+        str(a.get("source") or "remote").lower() == "builtin"
+        for a in recipe["artifacts"]
+    ):
+        problems.extend(_check_builtin_recipe(recipe_path, recipe))
+        return problems
 
     # ── 1) platforms：每个声明平台都要有该平台的构件 ──────────────────────
     for platform in recipe["platforms"]:
