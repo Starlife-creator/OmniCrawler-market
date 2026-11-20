@@ -347,7 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"目录不存在：{root}", file=sys.stderr)
         return 2
 
-    recipes = sorted(root.glob("*/recipe.json"))
+    # 组件按**分类子目录**组织：`components/<分类>/<id>/recipe.json`。
+    # rglob 同时兼容扁平布局，新增分类时不需要再改这里。
+    recipes = sorted(root.rglob("recipe.json"))
     if not recipes:
         # **空集合必须判红**：没有可检查的配方不等于通过
         print(f"未找到任何组件配方（{root}/ */recipe.json）", file=sys.stderr)

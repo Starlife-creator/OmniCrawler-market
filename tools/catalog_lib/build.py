@@ -57,7 +57,12 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
     canonical = json.dumps(recipe, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     recipe_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    relative = recipe_path.relative_to(recipe_path.parents[2])
+    # ★ **不能再用 `parents[2]`**：它假设 `components/<id>/recipe.json` 这个
+    # 固定深度。改成分类子目录（`components/<分类>/<id>/recipe.json`）后，
+    # `parents[2]` 指向 `components/` 而不是仓库根 ——
+    # 而且**不报错**，只是算出错误路径（静默失效）。
+    # 改为显式从 registry 根推导。
+    relative = recipe_path.relative_to(_registry_root(recipe_path))
     entry: dict[str, Any] = {
         "id": component_id,
         "name": str(recipe.get("description") or component_id),
@@ -96,7 +101,7 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
     listing = directory / "listing.md"
     if listing.is_file():
         entry["description_file"] = str(
-            listing.relative_to(recipe_path.parents[2])
+            listing.relative_to(_registry_root(recipe_path))
         ).replace("\\", "/")
 
     # 签名轨：**与插件/模板用同一组契约键名**，不另造一套。
@@ -113,9 +118,30 @@ def _entry_from_component_recipe(recipe_path: Path) -> dict[str, Any]:
         candidate = directory / filename
         if candidate.is_file():
             entry[key] = str(
-                candidate.relative_to(recipe_path.parents[2])
+                candidate.relative_to(_registry_root(recipe_path))
             ).replace("\\", "/")
     return entry
+
+
+def _registry_root(recipe_path: Path) -> Path:
+    """从 `recipe.json` 的路径**反推**注册表根（含 `catalog.json` 的那一层）。
+
+    为什么不能写死 `parents[N]`：组件既支持扁平
+    （`components/<id>/recipe.json`）也支持分类子目录
+    （`components/<分类>/<id>/recipe.json`），深度不固定。
+    写死层级在结构调整后会**静默算错**——不报错，只是路径变错。
+
+    做法：向上找第一个含 `catalog.json` 或 `components/` 的目录。
+    """
+    current = recipe_path.parent
+    for _ in range(8):  # 足够覆盖任何合理布局，且有上限防死循环
+        if (current / "catalog.json").is_file() or (current / "components").is_dir():
+            return current
+        if current.parent == current:  # 到根了
+            break
+        current = current.parent
+    # 兜底：仍返回三层父目录，与旧行为一致
+    return recipe_path.parents[2]
 
 
 def _component_publisher(directory: Path) -> str:
@@ -184,7 +210,10 @@ def build_catalog(
     components_dir = registry / _COMPONENTS_DIR
     if components_dir.is_dir():
         seen_component_ids: set[str] = set()
-        for recipe_path in sorted(components_dir.glob("*/recipe.json")):
+        # 组件现在按**分类子目录**组织：`components/<分类>/<id>/recipe.json`。
+        # 用 rglob 而非 glob：保持向后兼容（扁平的 `components/<id>/` 仍可用），
+        # 且新增分类时不需要再改这里。
+        for recipe_path in sorted(components_dir.rglob("recipe.json")):
             entry = _entry_from_component_recipe(recipe_path)
             cid = str(entry["id"])
             if cid in seen_component_ids:
