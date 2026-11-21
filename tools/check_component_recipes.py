@@ -411,7 +411,13 @@ def check_recipe(recipe_path: Path) -> list[str]:
             problems.append(
                 f"{recipe_path.parent.name}: 配方缺少闭包声明的包 {missing_pkgs}"
             )
-    else:
+    elif component_kind(recipe) == "wheel-pack":
+        # **只有 wheel-pack 需要依赖闭包快照**：它装的是 Python 包集合，
+        # 「装了哪些包」是它的核心声明。
+        #
+        # native（浏览器内核）与 data（语言包）不装 Python 包，
+        # 对它们要求闭包快照没有意义 —— 也生成不出来
+        # （`component_deps_lock.py` 会报「没有可识别的 wheel 文件名」）。
         problems.append(
             f"{recipe_path.parent.name}: 缺少依赖闭包快照 deps.lock.json"
             f"（运行 tools/market/component_deps_lock.py 生成）"
