@@ -156,6 +156,20 @@ def verify_all(root: Path) -> VerifyReport:
                 continue
             smoke = _smoke_of(recipe)
 
+            # **内置组件（source: builtin）在 CI 上无法验证**：
+            # 它的字节随主程序发布，本工作流没有装机包，必然找不到。
+            # 这不是失败 —— 强行判红会让「内置物跟主仓走」的组件永远
+            # 卡住市场闸门。如实记为「跳过」并说明原因。
+            artifacts = recipe.get("artifacts") or []
+            if artifacts and all(
+                str(a.get("source") or "remote").lower() == "builtin"
+                for a in artifacts
+            ):
+                report.skipped.append(
+                    (cid, "内置组件：字节随主程序发布，市场 CI 无装机包可验")
+                )
+                continue
+
             installed = _run(
                 [
                     executable,
