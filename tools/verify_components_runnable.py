@@ -136,7 +136,10 @@ def _smoke_of(recipe: dict[str, Any]) -> dict[str, Any]:
 def verify_all(root: Path) -> VerifyReport:
     """逐个组件验证。"""
     report = VerifyReport()
-    recipes = sorted(root.glob("*/recipe.json"))
+    # 组件按分类子目录组织：`components/<分类>/<id>/recipe.json`。
+    # 一层 glob 会扫到 0 个 —— 而报错文案「未找到任何组件配方」看起来像
+    # 目录不存在，实际是扫描深度不够（真实 CI 踩到，8 个组件被报成 0 个）。
+    recipes = sorted(root.rglob("recipe.json"))
     if not recipes:
         report.failures.append(("*", "扫描", f"未找到任何组件配方：{root}"))
         return report
