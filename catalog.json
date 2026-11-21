@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-21T10:06:58+00:00",
-  "sequence": 1791080225,
+  "generated_at": "2026-11-21T10:15:14+00:00",
+  "sequence": 1791080226,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -1082,7 +1082,7 @@
       "version": "1.0.0",
       "publisher": "starlife",
       "recipe_file": "components/ocr/ocr-doctr/recipe.json",
-      "recipe_digest": "9095c64c0cdb5bebd1a3878b890024cc626f6e48a59d941fda171203ca2edcdd",
+      "recipe_digest": "5f8ac2b828e6a4c417314aeb43aed421931d3c1dadfc96e9af096415dfb0f998",
       "platforms": [
         "windows"
       ],
@@ -1102,7 +1102,7 @@
         "protocol": "ocr-file-v1",
         "engine": "generic",
         "runner": "worker-wheelpack",
-        "module": "site-packages/doctr"
+        "module": "site-packages/doctr/__init__.py"
       },
       "artifacts": [
         {
@@ -1376,7 +1376,7 @@
       "version": "1.0.0",
       "publisher": "starlife",
       "recipe_file": "components/ocr/ocr-easyocr/recipe.json",
-      "recipe_digest": "13518b7c34331f05f2bf34a275510a384368dbf6a51a6d717155c1b146dff936",
+      "recipe_digest": "9b5c066bd2403b838dd431afc807263337fb88634e6a33628888b646eaa8745f",
       "platforms": [
         "windows"
       ],
@@ -1396,7 +1396,7 @@
         "protocol": "ocr-file-v1",
         "engine": "generic",
         "runner": "worker-wheelpack",
-        "module": "site-packages/easyocr"
+        "module": "site-packages/easyocr/__init__.py"
       },
       "artifacts": [
         {
@@ -2295,7 +2295,7 @@
       "version": "1.0.0",
       "publisher": "starlife",
       "recipe_file": "components/ocr/ocr-rapidocr/recipe.json",
-      "recipe_digest": "2a960f48af6bd41d68af01f4dfe98e8a555ffc89ee831f8613984969d9edd336",
+      "recipe_digest": "1431ac667c559e6108f3f99c0cd19f85c0fed5a2cc3108bae3e332c8546ebee8",
       "platforms": [
         "windows"
       ],
@@ -2315,7 +2315,7 @@
         "protocol": "ocr-file-v1",
         "engine": "generic",
         "runner": "worker-wheelpack",
-        "module": "site-packages/rapidocr"
+        "module": "site-packages/rapidocr/__init__.py"
       },
       "artifacts": [
         {
