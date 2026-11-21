@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -97,6 +98,24 @@ def _installed_dir(output: str) -> Path | None:
                 if candidate and candidate != "?":
                     return Path(candidate)
     return None
+
+
+def _entry_path_of(recipe: dict[str, Any], component_dir: Path | None) -> Path | None:
+    """取组件的入口文件路径（支持 `path` 与 `path_by_platform`）。"""
+    if component_dir is None:
+        return None
+    entry = recipe.get("entry") or {}
+    value = str(entry.get("path") or "").strip()
+    if not value:
+        by_platform = entry.get("path_by_platform") or {}
+        if isinstance(by_platform, dict):
+            platform = "windows" if os.name == "nt" else (
+                "macos" if sys.platform == "darwin" else "linux"
+            )
+            value = str(by_platform.get(platform) or "").strip()
+    if not value:
+        return None
+    return component_dir / value
 
 
 def _verify_expect(expect: list[str], stdout: str) -> list[str]:
@@ -192,6 +211,18 @@ def verify_all(root: Path) -> VerifyReport:
                 continue
             report.installed.append(cid)
 
+            # **长驻型组件**（浏览器内核）：启动后不退出，无法用
+            # JSON-over-stdio 验证。判据降级为「可执行文件存在且可执行」——
+            # 这是对这类组件能做出的最强静态断言。
+            if smoke.get("entry_exists"):
+                entry = _entry_path_of(recipe, _installed_dir(installed.stdout or ""))
+                if entry is None or not entry.is_file():
+                    report.failures.append((cid, "运行", f"入口不存在：{entry}"))
+                elif os.name != "nt" and not os.access(entry, os.X_OK):
+                    report.failures.append((cid, "运行", f"入口没有执行权限：{entry}"))
+                else:
+                    report.ran_ok.append(f"{cid}（长驻型：入口存在且可执行）")
+                continue
             if smoke.get("skip_run"):
                 report.ran_ok.append(f"{cid}（声明 skip_run，装好即完成）")
                 continue
