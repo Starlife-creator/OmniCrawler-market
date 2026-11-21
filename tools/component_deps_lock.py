@@ -120,6 +120,10 @@ def _dep_names(requires: list[str] | None) -> list[str]:
         if not _marker_ok(marker):
             continue
         name = re.split(r"[<>=!\[(]", head.strip(), maxsplit=1)[0].strip()
+        # 排除 GPU/CUDA 运行时：与 gen_component_recipe.py 同一条纪律。
+        # Linux 上 torch 默认拉整套 CUDA（约 2.3 GiB），而本项目 OCR 是纯 CPU。
+        if _normalize(name).startswith(("nvidia-", "cuda-", "triton", "pytorch-triton")):
+            continue
         if name and _normalize(name) not in _BUILTIN:
             out.append(name)
     return out
