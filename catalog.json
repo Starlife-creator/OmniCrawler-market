@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-23T10:43:10+00:00",
-  "sequence": 1791080237,
+  "generated_at": "2026-11-23T10:44:10+00:00",
+  "sequence": 1791080238,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -480,6 +480,39 @@
       "versions": {
         "0.6.0": {
           "sha256": "ea1b23fd58a7e77ff2abbd6f886053ffb75a3be017b1db0b54ae1e4b58c4a1f7"
+        }
+      }
+    },
+    {
+      "id": "mask-sensitive",
+      "name": "敏感数据脱敏",
+      "version": "1.0.0",
+      "publisher": "starlife",
+      "category": "processor",
+      "summary": "导出前脱敏邮箱/手机/身份证/银行卡/IP/API Key，输出逐类命中统计。",
+      "description_file": "plugins/mask-sensitive/listing.md",
+      "plugin_file": "plugins/mask-sensitive/plugin.py",
+      "signature_file": "plugins/mask-sensitive/plugin.py.sig",
+      "signature_algorithm": "ed25519",
+      "permissions": [],
+      "compatible_core": ">=0.7.0",
+      "license": "MIT",
+      "tags": [
+        "processor",
+        "privacy",
+        "security",
+        "pii",
+        "gdpr"
+      ],
+      "updated_at": "2026-11-23",
+      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/mask-sensitive",
+      "creator_signature_file": "plugins/mask-sensitive/creator.sig",
+      "creator_identity_file": "plugins/mask-sensitive/creator.identity",
+      "execution_mode": "subprocess",
+      "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+      "versions": {
+        "1.0.0": {
+          "sha256": "77bcbaac7c5f0363f44acd9b193e8332be950cf7cad6c6fc8fb811eeb4a442f8"
         }
       }
     },

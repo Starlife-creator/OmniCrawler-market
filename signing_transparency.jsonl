@@ -84,3 +84,4 @@
 {"timestamp": "2026-11-23T08:50:12+00:00", "plugin": "plugin.py", "plugin_sha256": "5261bfd9f13cca222f1e27b34c912636abcdb194ebca99e49897ca83e6ff84ee", "operator": "local-operator", "operation": "sign", "note": "签名者私钥未导出；本日志仅记录公开元数据"}
 {"timestamp": "2026-11-23T08:50:13+00:00", "plugin": "plugin.py", "plugin_sha256": "c8bcba36069eba85bc2be1a4737a25d490fb82d788479418a90767fae7f847ff", "operator": "local-operator", "operation": "sign", "note": "签名者私钥未导出；本日志仅记录公开元数据"}
 {"timestamp": "2026-11-23T08:50:13+00:00", "plugin": "plugin.py", "plugin_sha256": "3abe1ded68df5cac75f223cc99407e9bcce15e74e27200273dfc8f3fd94dc686", "operator": "local-operator", "operation": "sign", "note": "签名者私钥未导出；本日志仅记录公开元数据"}
+{"timestamp": "2026-11-23T10:44:05+00:00", "plugin": "plugin.py", "plugin_sha256": "77bcbaac7c5f0363f44acd9b193e8332be950cf7cad6c6fc8fb811eeb4a442f8", "operator": "local-operator", "operation": "sign", "note": "签名者私钥未导出；本日志仅记录公开元数据"}
