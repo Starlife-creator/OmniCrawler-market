@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-23T10:40:16+00:00",
-  "sequence": 1791080235,
+  "generated_at": "2026-11-23T10:40:57+00:00",
+  "sequence": 1791080236,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -1544,6 +1544,51 @@
       "creator_package_signature_file": "components/extract/extract-article/package.manifest.creator.sig",
       "creator_identity_file": "components/extract/extract-article/creator.identity",
       "creator_signature_file": "components/extract/extract-article/creator.sig"
+    },
+    {
+      "id": "format-table",
+      "name": "表格文本化（把结构化数据渲染成对齐的文本/Markdown 表）",
+      "version": "1.0.0",
+      "publisher": "starlife",
+      "recipe_file": "components/convert/format-table/recipe.json",
+      "recipe_digest": "1a018f7c9337904847e5929314f46fd279a0f5eb4f3c36a136cf1ba6b80f09ec",
+      "platforms": [
+        "windows",
+        "linux",
+        "macos"
+      ],
+      "architectures": [
+        "x86_64",
+        "aarch64"
+      ],
+      "python_abi": [
+        "cp313"
+      ],
+      "kind": "wheel-pack",
+      "provides": [
+        "ocr.format-table"
+      ],
+      "platform_architectures": {},
+      "entry": {
+        "path": "entry.json",
+        "protocol": "ocr-file-v1",
+        "engine": "generic",
+        "runner": "worker-wheelpack",
+        "module": "site-packages/tabulate/__init__.py"
+      },
+      "artifacts": [
+        {
+          "source": "remote",
+          "url": "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl",
+          "sha256": "f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3",
+          "size": 39814
+        }
+      ],
+      "declared_total_bytes": 39814,
+      "package_manifest_file": "components/convert/format-table/package.manifest.json",
+      "creator_package_signature_file": "components/convert/format-table/package.manifest.creator.sig",
+      "creator_identity_file": "components/convert/format-table/creator.identity",
+      "creator_signature_file": "components/convert/format-table/creator.sig"
     },
     {
       "id": "ocr-doctr",
