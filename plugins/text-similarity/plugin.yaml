@@ -1,0 +1,24 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+
+id: text-similarity
+name: 文本相似度与变更检测
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: processor
+summary: 比较两次采集的文本相似度，区分「相同 / 微调 / 实质变更」三档，避免误告警。
+description_file: plugins/text-similarity/listing.md
+plugin_file: plugins/text-similarity/plugin.py
+signature_file: plugins/text-similarity/plugin.py.sig
+signature_algorithm: ed25519
+creator_signature_file: plugins/text-similarity/creator.sig
+creator_identity_file: plugins/text-similarity/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+execution_mode: subprocess
+tags: [processor, similarity, diff, change-detection, incremental]
+updated_at: "2026-11-23"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/text-similarity
+files:
+  - plugin.py
