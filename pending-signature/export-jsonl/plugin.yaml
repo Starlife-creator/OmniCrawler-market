@@ -1,0 +1,24 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+
+id: export-jsonl
+name: JSONL 导出
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: exporter
+summary: 把采集结果导出为 JSON Lines（每行一条独立 JSON），流式友好、大结果集不 OOM。
+description_file: plugins/export-jsonl/listing.md
+plugin_file: plugins/export-jsonl/plugin.py
+signature_file: plugins/export-jsonl/plugin.py.sig
+signature_algorithm: ed25519
+creator_signature_file: plugins/export-jsonl/creator.sig
+creator_identity_file: plugins/export-jsonl/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+execution_mode: subprocess
+tags: [exporter, jsonl, ndjson, streaming, integration]
+updated_at: "2026-11-23"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/export-jsonl
+files:
+  - plugin.py

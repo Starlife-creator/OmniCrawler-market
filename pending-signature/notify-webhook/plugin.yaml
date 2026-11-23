@@ -1,0 +1,33 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+#
+# 本文件是插件 notify-webhook 在生态中的唯一元数据源。catalog.json
+# 由 tools/generate_catalog.py 从 plugins/*/plugin.yaml 聚合生成，提交/更新
+# 插件时只需改本文件，再运行生成器（或依赖 CI 校验一致）。
+#
+# 所有 *_file 路径均为相对于本仓库（生态目录根）的相对路径。
+
+id: notify-webhook
+name: Webhook 任务通知
+version: 1.0.0
+# B02-028：author_fingerprint 按 templates/README.md 规范填【创作者公钥指纹】。
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: hook
+summary: 任务结束（终态）时向配置的 Webhook 推送摘要：状态、成功/失败/跳过计数。
+description_file: plugins/notify-webhook/listing.md
+plugin_file: plugins/notify-webhook/plugin.py
+signature_file: plugins/notify-webhook/plugin.py.sig
+signature_algorithm: ed25519
+# 创作者轨：starlife（用户身份）对 plugin.py 的签名与公钥身份。
+creator_signature_file: plugins/notify-webhook/creator.sig
+creator_identity_file: plugins/notify-webhook/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+# 契约 2：handle 形态运行于隔离沙箱子进程。
+execution_mode: subprocess
+tags: [hook, notify, webhook, integration]
+updated_at: "2026-11-23"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/notify-webhook
+files:
+  - plugin.py

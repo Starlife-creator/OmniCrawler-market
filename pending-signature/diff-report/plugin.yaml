@@ -1,0 +1,24 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+
+id: diff-report
+name: 变更对比报告
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: processor
+summary: 对比两次采集结果，产出「新增 / 删除 / 修改」三类差异与一行摘要。
+description_file: plugins/diff-report/listing.md
+plugin_file: plugins/diff-report/plugin.py
+signature_file: plugins/diff-report/plugin.py.sig
+signature_algorithm: ed25519
+creator_signature_file: plugins/diff-report/creator.sig
+creator_identity_file: plugins/diff-report/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+execution_mode: subprocess
+tags: [processor, diff, change-tracking, report]
+updated_at: "2026-11-23"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/diff-report
+files:
+  - plugin.py
