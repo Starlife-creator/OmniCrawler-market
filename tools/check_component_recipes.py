@@ -159,6 +159,21 @@ def _abi_from_filename(filename: str) -> str:
     return match.group(0) if match else "?"
 
 
+def _is_pure_python_wheel(filename: str) -> bool:
+    """`py3-none-any.whl` 这类纯 Python 轮子：无平台、无架构标记，通用。
+
+    **为什么需要**：纯 Python 组件的每个构件都写着 platforms=[三平台]，
+    但文件名里没有任何平台 token。若一律要求「文件名含平台 token」，
+    就会把正确配方判成「声明支持 windows 但没有带该平台标记的构件」。
+
+    ★ 2026-11-24：本文件此前**漏了这一条**，而主仓的
+    `tools/gates/check_component_recipes.py` 有 —— 两份实现分叉，
+    结果市场仓自带的门禁对 `schedule-cron` 等纯 Python 组件报了 4 条假阳性，
+    主仓门禁对同一批配方却全绿。判据必须与主仓等价。
+    """
+    return "-none-any.whl" in filename.lower()
+
+
 def _check_builtin_recipe(recipe_path: Path, recipe: dict) -> list[str]:
     """内置构件的专用判据。
 
@@ -323,12 +338,12 @@ def check_recipe(recipe_path: Path) -> list[str]:
             w
             for a, w in zip(recipe["artifacts"], wheels, strict=False)
             if platform in (a.get("platforms") or recipe["platforms"])
-            and any(t in w for t in tokens)
+            and (any(t in w for t in tokens) or _is_pure_python_wheel(w))
         ]
         if not specific:
             problems.append(
                 f"{recipe_path.parent.name}: 声明支持 {platform}，"
-                f"但没有任何带该平台标记的构件"
+                f"但没有任何带该平台标记（或通用纯 Python）的构件"
             )
 
     # ── 2) architectures：每个声明架构都要能从构件文件名推出 ─────────────
@@ -339,6 +354,12 @@ def check_recipe(recipe_path: Path) -> list[str]:
     # 纯 Python 轮子没有架构信息，不算覆盖
     if "universal2" in declared_arch:
         available_arch.add("universal2")
+    # **全是纯 Python 轮子时，架构声明不适用**：它们本就是 `none-any`，
+    # 跑在任何架构上。此时不该按「声明了 x86_64 却没有 x86_64 构件」判虚报。
+    # ★ 与主仓门禁同一口径（2026-11-24 补齐；此前市场仓判假阳性）。
+    all_pure = bool(wheels) and all(_is_pure_python_wheel(w) for w in wheels)
+    if all_pure:
+        available_arch |= declared_arch
     missing_arch = declared_arch - available_arch
     if missing_arch:
         problems.append(
@@ -489,7 +510,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=_REPO / "market" / "components",
+        # ★ 目录是 `<市场仓根>/components/`，不是 `market/components/`。
+        # 此前默认值多了一层 `market/`，于是**不带 `--root` 时恒定报「目录不存在」**，
+        # 退出码 2 —— 看起来像"还没建组件"，实际是路径写错（2026-11-24 实测）。
+        default=_REPO / "components",
         help="含各组件 recipe.json 的目录",
     )
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
