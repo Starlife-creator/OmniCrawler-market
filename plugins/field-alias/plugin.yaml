@@ -1,0 +1,26 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+
+id: field-alias
+name: 字段别名归一
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: processor
+summary: 按别名表把同义列合并成一列，冲突逐行如实回报；零权限、纯函数。
+description_file: plugins/field-alias/listing.md
+plugin_file: plugins/field-alias/plugin.py
+signature_file: plugins/field-alias/plugin.py.sig
+signature_algorithm: ed25519
+creator_signature_file: plugins/field-alias/creator.sig
+creator_identity_file: plugins/field-alias/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+execution_mode: subprocess
+tags: [processor, transformer, schema, field-mapping, data-cleaning]
+updated_at: "2026-11-27"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/field-alias
+files:
+  - plugin.py
+  - README.md
+  - tests/test_field_alias.py

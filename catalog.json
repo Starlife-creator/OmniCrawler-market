@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-23T12:51:15+00:00",
-  "sequence": 1791080241,
+  "generated_at": "2026-11-27T07:32:11+00:00",
+  "sequence": 1791080242,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -401,6 +401,51 @@
       "versions": {
         "1.0.0": {
           "sha256": "c8bcba36069eba85bc2be1a4737a25d490fb82d788479418a90767fae7f847ff"
+        }
+      }
+    },
+    {
+      "id": "field-alias",
+      "name": "field-alias",
+      "version": "1.0.0",
+      "publisher": "starlife",
+      "category": "utility",
+      "plugin_types": [
+        "processor",
+        "transformer"
+      ],
+      "summary": "按别名表把同义列合并成一列，冲突逐行如实回报",
+      "description_file": "plugins/field-alias/listing.md",
+      "plugin_file": "plugins/field-alias/plugin.py",
+      "signature_file": "plugins/field-alias/plugin.py.sig",
+      "signature_algorithm": "ed25519",
+      "permissions": [],
+      "compatible_core": ">=0.7.0",
+      "license": "MIT",
+      "tags": [
+        "processor",
+        "transformer",
+        "schema",
+        "field-mapping",
+        "data-cleaning"
+      ],
+      "updated_at": "2026-11-27",
+      "creator_signature_file": "plugins/field-alias/creator.sig",
+      "creator_identity_file": "plugins/field-alias/creator.identity",
+      "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/field-alias/package.manifest.json",
+      "creator_package_signature_file": "plugins/field-alias/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/field-alias/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "b06550cfd8efe684feb732820d54bfe361778c90d89e64d16abf7ef707db886d",
+      "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
+      "versions": {
+        "1.0.0": {
+          "sha256": "913c5c9c09fa6cf207e5bb700ec58a0c4769bf81fced9efb09ff277260081ae8"
         }
       }
     },
