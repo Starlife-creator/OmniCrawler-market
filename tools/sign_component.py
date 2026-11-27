@@ -72,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--private-key", required=True, help="维护者冷私钥路径（只读，不打印内容）")
     parser.add_argument("--username", default="starlife", help="创作者用户名")
     parser.add_argument(
+        "--expect-fingerprint",
+        default="",
+        help=("先用这把私钥派生公钥，与目录里**现有** creator.identity 的指纹比对；"
+              "不一致就拒绝（防止用错钥匙把已发布身份改成另一把公钥）"),
+    )
+    parser.add_argument(
         "--force", action="store_true", help="覆盖已存在的签名（默认拒绝，防误改已发布身份）"
     )
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
@@ -90,6 +96,26 @@ def main(argv: list[str] | None = None) -> int:
         public_raw = _public_key_of(private_pem)
     except ImportError as exc:
         raise SystemExit(f"缺少 cryptography 依赖：{exc}") from exc
+
+    # ★ 2026-11-27 新增：**重签前先确认手里是同一把钥匙**。
+    #
+    #   事故：我拿 `component_signing_private.pem` 对 11 个组件加了 `--force`，
+    #   它们的 `creator.identity` 被写成了另一把公钥（指纹 085c7770… 而不是
+    #   `4c301480…`）。签名工具当时只说"OK 已签名"，自检验的是"新签名能被新公钥
+    #   验证"—— 那当然成立。
+    #
+    #   `--force` 的语义是「覆盖已有签名」，**不是**「换一把钥匙」。
+    #   这条守卫把二者区分开：给了 `--expect-fingerprint` 就必须对上。
+    if args.expect_fingerprint:
+        from catalog_lib.identity import derive_fingerprint as _derive
+
+        actual = _derive(public_raw)
+        if actual != args.expect_fingerprint.strip():
+            raise SystemExit(
+                f"私钥派生的指纹是 {actual}，与 --expect-fingerprint "
+                f"{args.expect_fingerprint.strip()} 不一致 —— 这把不是同一把钥匙。"
+                "拒绝重签（否则会把已发布的创作者身份改成另一把公钥）。"
+            )
 
     # ── creator.identity ──────────────────────────────────────────────
     from catalog_lib.identity import derive_fingerprint

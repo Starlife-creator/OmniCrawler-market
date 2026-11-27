@@ -37,6 +37,22 @@ from pathlib import Path
 #: （保持判据等价，但不引入跨仓依赖）。
 _REPO = Path(__file__).resolve().parents[1]
 
+#: **真 OCR 引擎**的组件 id。只有这些允许声明 `ocr.*` 能力。
+#:
+#: 2026-11-27 之前 16 个组件里只有 5 个在做 OCR，其余 11 个（转 Markdown、表格、
+#: 导出 docx/xlsx、抽取正文、解析 feed、去重、定时）全声明成 `ocr.*` ——
+#: 因为主仓按域建能力槽位，这会让它们和 OCR 引擎抢同一个槽位
+#: （CI 上内置引擎不可用时 `slot("ocr").active()` 真的选中了 `convert-markdown`）。
+#:
+#: 已用**真正的创作者钥匙**重签并改到各自的域；这条常量防止它再漂回去。
+_OCR_COMPONENT_IDS = frozenset({
+    "ocr-paddle",
+    "ocr-rapidocr",
+    "ocr-easyocr",
+    "ocr-doctr",
+    "tesseract-chi-sim",
+})
+
 #: 架构名归一（与 `component_recipe.normalize_architecture` 保持同义）。
 _ARCH_ALIASES = {
     "amd64": "x86_64",
@@ -498,6 +514,26 @@ def _check_provides(recipe_path, recipe):
     if not isinstance(provides, list):
         problems.append(f"{name}: provides 必须是列表")
         return problems
+    # ★ 2026-11-27：**域前缀必须与组件实际做的事一致**。
+    #
+    #   历史形态：12 个组件里只有 5 个真做 OCR，其余全声明成 `ocr.*`。
+    #   主仓 `capability_slots` 按域前缀建槽位 ⇒ 它们和真正的 OCR 引擎**抢同一个**
+    #   槽位；CI 上内置引擎不可用时 `slot("ocr").active()` 真的选中了
+    #   `convert-markdown` —— 一个根本不做 OCR 的东西。
+    #
+    #   2026-11-27 已用真正的创作者钥匙重签并改到各自的域（`convert.` / `doc.` /
+    #   `extract.` / `parse.` / `dedupe.` / `schedule.` / `text.`）。
+    #   这条判据防止它再漂回去。
+    for item in provides:
+        if not isinstance(item, str):
+            continue
+        capability = item.strip().lower()
+        if capability.startswith("ocr.") and name not in _OCR_COMPONENT_IDS:
+            problems.append(
+                f"{name}: 声明了 {capability!r} 但不是 OCR 引擎组件；"
+                "`ocr.` 是保留前缀，只给真 OCR 引擎 —— 否则它会和 OCR 引擎"
+                "抢同一个能力槽位"
+            )
     normalized = []
     for item in provides:
         if not isinstance(item, str) or not item.strip():
