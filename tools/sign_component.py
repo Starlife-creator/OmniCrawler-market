@@ -127,8 +127,21 @@ def main(argv: list[str] | None = None) -> int:
         "key_fingerprint": fingerprint,
         "fingerprint_algorithm": "sha256-raw32-16",
     }
+    # ★ 必须显式 `newline="\n"`：Windows 上 `write_text` 默认把 `\n` 写成 `\r\n`，
+    #   而 `creator.identity` 的字节**进了 `package.manifest.json` 的 sha256 清单**。
+    #
+    #   实测后果（2026-11-27）：签名脚本在 Windows 上跑 ⇒ 盘上是 CRLF（202 字节），
+    #   manifest 记的是 CRLF 那份的哈希；而 git 按 `.gitattributes` 的
+    #   `* text=auto eol=lf` 把它存成 LF（196 字节）⇒ **CI 检出后哈希对不上**：
+    #
+    #       convert-markdown: 清单与文件不一致 —— creator.identity 记录
+    #       sha256:4e24c9c23cf3…，实际 sha256:37b6ea536be1…
+    #
+    #   本地绿、CI 红，正是这类「Windows 上恰好正确」的缺陷。
     (directory / "creator.identity").write_text(
-        json.dumps(identity, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(identity, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
 
     # ── package.manifest.json ─────────────────────────────────────────

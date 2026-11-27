@@ -224,8 +224,14 @@ def main(argv: list[str] | None = None) -> int:
         "python_version": _ENV["python_version"],
         "packages": closure,
     }
+    # ★ `newline="\n"` 必需：Windows 上默认会把 `\n` 写成 `\r\n`，
+    #   而 `deps.lock.json` 的字节进了 `package.manifest.json` 的 sha256 清单。
+    #   实测后果：本地（CRLF）算的哈希与 CI（git 按 eol=lf 检出成 LF）不一致，
+    #   表现为「本地绿、CI 红：清单与文件不一致」。
     out_path.write_text(
-        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     print(f"已写入 {out_path}：{len(closure)} 个包")
     return 0
