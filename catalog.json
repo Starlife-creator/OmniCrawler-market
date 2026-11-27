@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T08:02:18+00:00",
-  "sequence": 1791080246,
+  "generated_at": "2026-11-27T08:06:16+00:00",
+  "sequence": 1791080247,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -219,11 +219,15 @@
     },
     {
       "id": "csv-io",
-      "name": "CSV 导出/导入",
-      "version": "1.0.0",
+      "name": "csv-io",
+      "version": "1.1.0",
       "publisher": "starlife",
-      "category": "exporter",
-      "summary": "导出/导入 CSV，UTF-8 BOM 兼容 Excel，防公式注入。",
+      "category": "utility",
+      "plugin_types": [
+        "exporter",
+        "processor"
+      ],
+      "summary": "导出/导入 CSV，UTF-8 BOM 兼容 Excel，并防公式注入",
       "description_file": "plugins/csv-io/listing.md",
       "plugin_file": "plugins/csv-io/plugin.py",
       "signature_file": "plugins/csv-io/plugin.py.sig",
@@ -238,15 +242,23 @@
         "privacy",
         "security"
       ],
-      "updated_at": "2026-11-23",
-      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/csv-io",
+      "updated_at": "2026-11-27",
       "creator_signature_file": "plugins/csv-io/creator.sig",
       "creator_identity_file": "plugins/csv-io/creator.identity",
       "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/csv-io/package.manifest.json",
+      "creator_package_signature_file": "plugins/csv-io/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/csv-io/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "88739e8ec0ef97c38503dbe9c1fe5d9e0e0d2eb9466cbde9e17fc3c496cc510f",
       "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
       "versions": {
-        "1.0.0": {
-          "sha256": "95fd73e398aec8a20caa3210dfa1910ce17995592439d5613382c064074bd775"
+        "1.1.0": {
+          "sha256": "24290f05d8779b6b8d97772e99ab61978161626ed4e6a873cf9a2c85ec73e208"
         }
       }
     },

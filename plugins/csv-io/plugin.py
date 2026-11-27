@@ -35,12 +35,14 @@ import io
 
 PLUGIN_METADATA = {
     "name": "csv-io",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "导出/导入 CSV，UTF-8 BOM 兼容 Excel，并防公式注入",
     "plugin_types": ["exporter", "processor"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 会被 Excel 当公式的起始字符。
@@ -59,6 +61,11 @@ def _collect_fieldnames(items: list[dict]) -> list[str]:
     """按**首次出现顺序**收集字段名（保持稳定，便于 diff）。"""
     seen: dict[str, None] = {}
     for item in items:
+        # ★ 2026-11-27 修：上游可能混进 None / 非映射（某个提取器返回 null）。
+        #   旧实现 `for key in item` 直接抛 TypeError: NoneType is not iterable，
+        #   整个导出失败 —— 而正确行为是**跳过该条目**（写入侧本来也是这么做的）。
+        if not isinstance(item, dict):
+            continue
         for key in item:
             seen.setdefault(str(key), None)
     return list(seen)
