@@ -28,12 +28,14 @@ import re
 
 PLUGIN_METADATA = {
     "name": "mask-sensitive",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "导出前脱敏邮箱/手机/身份证/银行卡/IP/API Key，输出命中统计",
     "plugin_types": ["processor", "transformer"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 内置模式。顺序有意义：先匹配更具体的（身份证 18 位比手机号 11 位长）。

@@ -1,0 +1,36 @@
+id: text-similarity
+name: text-similarity
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 比较两次采集的文本相似度，区分「相同/微调/实质变更」三档
+description_file: plugins/text-similarity/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- processor
+- similarity
+- diff
+- change-detection
+- incremental
+updated_at: '2026-11-27'
+creator_signature_file: plugins/text-similarity/creator.sig
+creator_identity_file: plugins/text-similarity/creator.identity
+package_manifest_file: plugins/text-similarity/package.manifest.json
+creator_package_signature_file: plugins/text-similarity/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/text-similarity/package.manifest.maintainer.sig
+package_manifest_sha256: 35bff2b4a7b3047ed0b662088e1f1c9c88ed46be4b4d87349465598845b9960b
+plugin_file: plugins/text-similarity/plugin.py
+signature_file: plugins/text-similarity/plugin.py.sig
+permissions: []
+plugin_types:
+- processor
+- transformer
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1

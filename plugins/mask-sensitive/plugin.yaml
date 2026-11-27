@@ -2,7 +2,7 @@
 
 id: mask-sensitive
 name: 敏感数据脱敏
-version: 1.0.0
+version: 1.1.0
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429
 category: processor

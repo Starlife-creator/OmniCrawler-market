@@ -1,0 +1,24 @@
+# 插件清单源（git-as-registry：目录结构即索引）
+
+id: validate-items
+name: 数据质量校验
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: processor
+summary: 导出前拦下静默失败：必填缺失、键重复、字段被整段 HTML 污染。
+description_file: plugins/validate-items/listing.md
+plugin_file: plugins/validate-items/plugin.py
+signature_file: plugins/validate-items/plugin.py.sig
+signature_algorithm: ed25519
+creator_signature_file: plugins/validate-items/creator.sig
+creator_identity_file: plugins/validate-items/creator.identity
+permissions: []
+compatible_core: ">=0.7.0"
+license: MIT
+execution_mode: subprocess
+tags: [processor, validation, quality, hook]
+updated_at: "2026-11-23"
+homepage: https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/validate-items
+files:
+  - plugin.py

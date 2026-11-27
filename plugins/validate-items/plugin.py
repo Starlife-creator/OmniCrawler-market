@@ -21,12 +21,14 @@
 
 PLUGIN_METADATA = {
     "name": "validate-items",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "导出前校验条目质量：必填缺失、键重复、明显异常值",
     "plugin_types": ["processor", "hook"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 被认为是「空」的值。`0` / `False` **不算空**（它们是合法数据）。

@@ -1,0 +1,36 @@
+id: mask-sensitive
+name: mask-sensitive
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 导出前脱敏邮箱/手机/身份证/银行卡/IP/API Key，输出命中统计
+description_file: plugins/mask-sensitive/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- processor
+- privacy
+- security
+- pii
+- gdpr
+updated_at: '2026-11-27'
+creator_signature_file: plugins/mask-sensitive/creator.sig
+creator_identity_file: plugins/mask-sensitive/creator.identity
+package_manifest_file: plugins/mask-sensitive/package.manifest.json
+creator_package_signature_file: plugins/mask-sensitive/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/mask-sensitive/package.manifest.maintainer.sig
+package_manifest_sha256: 75f2dde490a7e3471efaacda41d5b9c150a29e06ef02d8286a8067b3d332f1dd
+plugin_file: plugins/mask-sensitive/plugin.py
+signature_file: plugins/mask-sensitive/plugin.py.sig
+permissions: []
+plugin_types:
+- processor
+- transformer
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1

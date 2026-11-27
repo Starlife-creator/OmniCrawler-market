@@ -35,12 +35,14 @@ import difflib
 
 PLUGIN_METADATA = {
     "name": "text-similarity",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "比较两次采集的文本相似度，区分「相同/微调/实质变更」三档",
     "plugin_types": ["processor", "transformer"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 默认阈值：>=0.995 视为相同；>=0.85 视为微调（可按语料调整）。

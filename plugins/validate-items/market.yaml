@@ -1,0 +1,35 @@
+id: validate-items
+name: validate-items
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 导出前校验条目质量：必填缺失、键重复、明显异常值
+description_file: plugins/validate-items/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- processor
+- validation
+- quality
+- hook
+updated_at: '2026-11-27'
+creator_signature_file: plugins/validate-items/creator.sig
+creator_identity_file: plugins/validate-items/creator.identity
+package_manifest_file: plugins/validate-items/package.manifest.json
+creator_package_signature_file: plugins/validate-items/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/validate-items/package.manifest.maintainer.sig
+package_manifest_sha256: 8883885367c51f1afd1dd0a2132d9046d5a631efd9fc709c2aa479bf84e82011
+plugin_file: plugins/validate-items/plugin.py
+signature_file: plugins/validate-items/plugin.py.sig
+permissions: []
+plugin_types:
+- processor
+- hook
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1
