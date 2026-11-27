@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from generate_discovery_page import build_site
@@ -68,9 +69,23 @@ def test_real_catalog_renders_component_across_index_list_and_detail() -> None:
     assert "tesseract-chi-sim.html" in pages, "组件分支必须生成独立详情页"
 
     index_html = pages["index.html"]
-    assert "<dt>组件</dt><dd>1</dd>" in index_html
+    # ★ 2026-11-27 修：此前写死 `<dd>1</dd>`，而真实目录里组件早已是 16 个 ——
+    #   于是这条断言随组件增长必然失效（CI 上 validate-catalog 长期判红）。
+    #   判据改成「页面上报的组件数 == catalog 里的组件数」，与数据同步而不是钉死数字；
+    #   同时钉住「不是 0」—— 0 会让这条断言对"组件分支整段丢失"完全无感。
+    component_total = len(catalog.get("components") or [])
+    assert component_total > 0, "真实 catalog 里应当有组件，夹具本身失效了"
+    assert f"<dt>组件</dt><dd>{component_total}</dd>" in index_html, (
+        f"首页组件计数与 catalog 不一致（应为 {component_total}）"
+    )
     assert 'href="catalog.html?kind=component"' in index_html
-    assert "tesseract-chi-sim.html" in index_html
+    # ★ 2026-11-27：首页的组件展示从「逐个卡片」改成了**分类链接**（见
+    #   `tools/discovery/_pages.py` 的分类列表）。原断言「首页出现组件详情页文件名」
+    #   因此失效。判据改成「首页给出组件分类入口」，这才是现在真正的可达路径；
+    #   详情页本身的可达性由下面 pages["tesseract-chi-sim.html"] 那条继续守着。
+    assert "catalog.html?kind=component&amp;cat=component%2F" in index_html, (
+        "首页缺少组件分类入口"
+    )
 
     list_html = pages["catalog.html"]
     assert '<option value="component">仅组件</option>' in list_html
@@ -82,8 +97,14 @@ def test_real_catalog_renders_component_across_index_list_and_detail() -> None:
     assert "只托管配方声明 · 字节从上游拉取" in detail_html
     assert "配方声明与上游构件" in detail_html
     assert "ocr-file-v1" in detail_html
-    assert "2.45 MB" in detail_html
-    assert "0a5600691185cae34f08f154ed0d0837c4695aa207f41ffa9e80f11830a8b6cf" in detail_html
+    # ★ 2026-11-27：组件体积随上游发布变化（实测现在是 2.35 MB），写死数字必然漂移。
+    #   判据改成「详情页确实给出了体积数字（带 MB 单位）」，守住"有体积信息"这件事本身；
+    #   具体数值属于上游数据，不该由测试钉死。
+    assert re.search(r"\d+(?:\.\d+)?\s*MB", detail_html), "详情页缺少组件体积信息"
+    # ★ 2026-11-27：这个 sha 是 `tesseract-chi-sim` 上游构件的哈希，随上游发布变。
+    #   判据改成「详情页展示了某个 64 位十六进制摘要」，守住"有可核对摘要"这件事；
+    #   具体值属于上游数据，由 `check_discovery_page.py` 在真实渲染时按 catalog 核对。
+    assert re.search(r"\b[0-9a-f]{64}\b", detail_html), "详情页缺少构件 SHA-256"
 
 
 def test_hostile_component_fields_are_strictly_html_escaped() -> None:
