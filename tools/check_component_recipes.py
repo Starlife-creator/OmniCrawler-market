@@ -479,8 +479,15 @@ def _check_data_recipe(recipe_path: Path, recipe: dict) -> list[str]:
 def _check_provides(recipe_path, recipe):
     """`provides` 是插件与组件对上的唯一凭据，不能缺。
 
-    插件用 `required_capabilities` 声明「我需要 ocr.paddle」，
+    插件用 **`requires_components`** 声明「我需要 ocr.paddle」
+    （`plugin.yaml` / `PLUGIN_METADATA` 里的数组字段），
     组件必须声明「我提供 ocr.paddle」—— 否则两者只能靠人脑对应。
+
+    ★ 2026-11-27 更正：这段注释此前写的是「插件用 `required_capabilities` 声明
+      我需要 ocr.paddle」，**那是错的**。`required_capabilities` 的每个键必须先过
+      宿主的 `CAPABILITY_VERSIONS`（协议版本表），写 `{"ocr.paddle": ">=1"}`
+      会当场 `ValueError: 宿主不支持插件要求的能力`。组件需求自 2026-11-27 起
+      走 `requires_components`，两个字段语义不同、不可互换。
     """
     problems = []
     name = recipe_path.parent.name

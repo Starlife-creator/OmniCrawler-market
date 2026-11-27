@@ -46,7 +46,8 @@
 | `execution_mode` | string | | `in_process` \| `subprocess`；缺省为 `subprocess`，非法枚举拒绝。`in_process` 需要显式高风险审批 |
 | `domains` | array[string] | | network 权限的域名白名单（随 domains 同机制受门 1 校验） |
 | `input_files` | array[string] | | `files:read` 权限的路径白名单；不得使用旧字段名 `files` |
-| `required_capabilities` | object | | 契约 2 宿主能力最低协议版本，例如 `{"records.page": ">=1"}`；不满足时客户端在执行插件代码前拒载 |
+| `required_capabilities` | object | | **宿主协议**最低版本，例如 `{"records.page": ">=1"}`；不满足时客户端在执行插件代码前拒载。★ 键必须先过 `CAPABILITY_VERSIONS`，写 `ocr.*` 会被当场拒绝 |
+| `requires_components` | array[string] | | **组件能力**需求，例如 `["ocr.paddle"]`；由 `component_capability.check_market()` 判断是否有组件覆盖，未覆盖即拒绝发布。与上一行是两件事：一行是「宿主协议版本」，一行是「要装哪个组件」 |
 | `state_schema_version` | integer | | 插件私有状态 schema，正整数；升级时必须显式迁移，插件版本升级本身不切断状态 |
 | `dependencies` | array[object] | | `[{name, version, license}]`；空数组合法。门 3 校验声明↔实测导入图双向一致 + 许可白名单 |
 | `creator_signature_file` / `creator_identity_file` | string | | 旧版单文件创作者签名与公钥身份字段；现代包使用下方整包签名字段 |
