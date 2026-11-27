@@ -1,0 +1,35 @@
+id: diff-report
+name: diff-report
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 对比两次采集结果，产出新增/删除/修改三类差异摘要
+description_file: plugins/diff-report/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- processor
+- diff
+- change-tracking
+- report
+updated_at: '2026-11-27'
+creator_signature_file: plugins/diff-report/creator.sig
+creator_identity_file: plugins/diff-report/creator.identity
+package_manifest_file: plugins/diff-report/package.manifest.json
+creator_package_signature_file: plugins/diff-report/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/diff-report/package.manifest.maintainer.sig
+package_manifest_sha256: b95d86e03052f58b08d55b0d84ec72eb3480b736fd99ad13b219ec3d42898f04
+plugin_file: plugins/diff-report/plugin.py
+signature_file: plugins/diff-report/plugin.py.sig
+permissions: []
+plugin_types:
+- processor
+- transformer
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1

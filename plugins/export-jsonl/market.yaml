@@ -1,0 +1,35 @@
+id: export-jsonl
+name: export-jsonl
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 把采集结果导出为 JSON Lines（每行一条独立 JSON）
+description_file: plugins/export-jsonl/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- exporter
+- jsonl
+- ndjson
+- streaming
+- integration
+updated_at: '2026-11-27'
+creator_signature_file: plugins/export-jsonl/creator.sig
+creator_identity_file: plugins/export-jsonl/creator.identity
+package_manifest_file: plugins/export-jsonl/package.manifest.json
+creator_package_signature_file: plugins/export-jsonl/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/export-jsonl/package.manifest.maintainer.sig
+package_manifest_sha256: 063e5efcd8210439fd932f3fabb19f87f4b026780c06f83de0400e15b07570a6
+plugin_file: plugins/export-jsonl/plugin.py
+signature_file: plugins/export-jsonl/plugin.py.sig
+permissions: []
+plugin_types:
+- exporter
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1

@@ -16,12 +16,14 @@ JSON Lines（`.jsonl`）是数据管道的通用交换格式：每行一条独�
 
 PLUGIN_METADATA = {
     "name": "export-jsonl",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "把采集结果导出为 JSON Lines（每行一条独立 JSON）",
     "plugin_types": ["exporter"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 单行长度上限保护。超长的行在 JSONL 里几乎无法被下游工具解析，

@@ -17,12 +17,14 @@
 
 PLUGIN_METADATA = {
     "name": "diff-report",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "对比两次采集结果，产出新增/删除/修改三类差异摘要",
     "plugin_types": ["processor", "transformer"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 

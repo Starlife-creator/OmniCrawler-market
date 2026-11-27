@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T08:06:16+00:00",
-  "sequence": 1791080247,
+  "generated_at": "2026-11-27T08:08:28+00:00",
+  "sequence": 1791080249,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -264,11 +264,15 @@
     },
     {
       "id": "diff-report",
-      "name": "变更对比报告",
-      "version": "1.0.0",
+      "name": "diff-report",
+      "version": "1.1.0",
       "publisher": "starlife",
-      "category": "processor",
-      "summary": "对比两次采集结果，产出「新增 / 删除 / 修改」三类差异与一行摘要。",
+      "category": "utility",
+      "plugin_types": [
+        "processor",
+        "transformer"
+      ],
+      "summary": "对比两次采集结果，产出新增/删除/修改三类差异摘要",
       "description_file": "plugins/diff-report/listing.md",
       "plugin_file": "plugins/diff-report/plugin.py",
       "signature_file": "plugins/diff-report/plugin.py.sig",
@@ -282,15 +286,23 @@
         "change-tracking",
         "report"
       ],
-      "updated_at": "2026-11-23",
-      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/diff-report",
+      "updated_at": "2026-11-27",
       "creator_signature_file": "plugins/diff-report/creator.sig",
       "creator_identity_file": "plugins/diff-report/creator.identity",
       "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/diff-report/package.manifest.json",
+      "creator_package_signature_file": "plugins/diff-report/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/diff-report/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "b95d86e03052f58b08d55b0d84ec72eb3480b736fd99ad13b219ec3d42898f04",
       "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
       "versions": {
-        "1.0.0": {
-          "sha256": "5261bfd9f13cca222f1e27b34c912636abcdb194ebca99e49897ca83e6ff84ee"
+        "1.1.0": {
+          "sha256": "f99905506e05e95c1800dfd3d96368fd3240d54594a63f1a25e87cfee1609474"
         }
       }
     },
@@ -385,11 +397,14 @@
     },
     {
       "id": "export-jsonl",
-      "name": "JSONL 导出",
-      "version": "1.0.0",
+      "name": "export-jsonl",
+      "version": "1.1.0",
       "publisher": "starlife",
-      "category": "exporter",
-      "summary": "把采集结果导出为 JSON Lines（每行一条独立 JSON），流式友好、大结果集不 OOM。",
+      "category": "utility",
+      "plugin_types": [
+        "exporter"
+      ],
+      "summary": "把采集结果导出为 JSON Lines（每行一条独立 JSON）",
       "description_file": "plugins/export-jsonl/listing.md",
       "plugin_file": "plugins/export-jsonl/plugin.py",
       "signature_file": "plugins/export-jsonl/plugin.py.sig",
@@ -404,15 +419,23 @@
         "streaming",
         "integration"
       ],
-      "updated_at": "2026-11-23",
-      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/export-jsonl",
+      "updated_at": "2026-11-27",
       "creator_signature_file": "plugins/export-jsonl/creator.sig",
       "creator_identity_file": "plugins/export-jsonl/creator.identity",
       "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/export-jsonl/package.manifest.json",
+      "creator_package_signature_file": "plugins/export-jsonl/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/export-jsonl/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "063e5efcd8210439fd932f3fabb19f87f4b026780c06f83de0400e15b07570a6",
       "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
       "versions": {
-        "1.0.0": {
-          "sha256": "c8bcba36069eba85bc2be1a4737a25d490fb82d788479418a90767fae7f847ff"
+        "1.1.0": {
+          "sha256": "0dce1e8b17808e86c27b6e43e8ad52ff3aca33254523c7e135cd0696a0f89122"
         }
       }
     },
