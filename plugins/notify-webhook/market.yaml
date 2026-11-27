@@ -1,0 +1,34 @@
+id: notify-webhook
+name: notify-webhook
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 任务结束时向配置的 Webhook 推送终态摘要（成功/失败/计数）
+description_file: plugins/notify-webhook/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- hook
+- notify
+- webhook
+- integration
+updated_at: '2026-11-27'
+creator_signature_file: plugins/notify-webhook/creator.sig
+creator_identity_file: plugins/notify-webhook/creator.identity
+package_manifest_file: plugins/notify-webhook/package.manifest.json
+creator_package_signature_file: plugins/notify-webhook/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/notify-webhook/package.manifest.maintainer.sig
+package_manifest_sha256: fd8646cebac5863eaa727231fb7abad5d2d0076478a9a0d4962e69879c93be5d
+plugin_file: plugins/notify-webhook/plugin.py
+signature_file: plugins/notify-webhook/plugin.py.sig
+permissions: []
+plugin_types:
+- hook
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1

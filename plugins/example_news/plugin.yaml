@@ -11,7 +11,7 @@
 
 id: example_news
 name: 示例新闻站点适配器
-version: 1.0.0
+version: 1.1.0
 # B02-028：author_fingerprint 按 templates/README.md 规范填【创作者公钥指纹】。
 # 本插件创作者为 starlife（creator.identity 指向 4c30…），publisher 与之一致；
 # 维护者 starlife-creator 用信任根冷密钥对 plugin.py.sig 背书（独立身份）。

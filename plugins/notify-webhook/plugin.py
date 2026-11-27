@@ -20,12 +20,14 @@ OmniCrawler 的采集是长任务（站点多、页面多、可能跑几十分�
 
 PLUGIN_METADATA = {
     "name": "notify-webhook",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "任务结束时向配置的 Webhook 推送终态摘要（成功/失败/计数）",
     "plugin_types": ["hook"],
     "permissions": [],
     "license": "MIT",
     "execution_mode": "subprocess",
+    #: 门 3 要求显式声明（零依赖也要写 []），且必须与实测导入图互证。
+    "dependencies": [],
 }
 
 #: 默认超时与重试。写在模块级便于测试直接读。

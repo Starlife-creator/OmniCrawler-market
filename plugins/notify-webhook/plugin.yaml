@@ -8,7 +8,7 @@
 
 id: notify-webhook
 name: Webhook 任务通知
-version: 1.0.0
+version: 1.1.0
 # B02-028：author_fingerprint 按 templates/README.md 规范填【创作者公钥指纹】。
 publisher: starlife
 author_fingerprint: 4c3014804d85de2568f85e62a3048429

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T08:12:14+00:00",
-  "sequence": 1791080252,
+  "generated_at": "2026-11-27T08:15:57+00:00",
+  "sequence": 1791080253,
   "publisher": "starlife",
   "trust_model": "dual-rail-ed25519",
   "official_publishers": [
@@ -364,11 +364,14 @@
     },
     {
       "id": "example_news",
-      "name": "示例新闻站点适配器",
-      "version": "1.0.0",
+      "name": "example_news",
+      "version": "1.1.0",
       "publisher": "starlife",
-      "category": "source",
-      "summary": "为示例新闻站点强制附加 XHR 请求头并打站点标记，复用通用发现逻辑。",
+      "category": "utility",
+      "plugin_types": [
+        "source"
+      ],
+      "summary": "示例新闻站点适配器：入口附加 XHR 请求头 + 站点打标",
       "description_file": "plugins/example_news/listing.md",
       "plugin_file": "plugins/example_news/plugin.py",
       "signature_file": "plugins/example_news/plugin.py.sig",
@@ -383,15 +386,23 @@
         "template",
         "contract2"
       ],
-      "updated_at": "2026-08-21",
-      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/example_news",
+      "updated_at": "2026-11-27",
       "creator_signature_file": "plugins/example_news/creator.sig",
       "creator_identity_file": "plugins/example_news/creator.identity",
       "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/example_news/package.manifest.json",
+      "creator_package_signature_file": "plugins/example_news/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/example_news/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "607ea3fa2f34a94c4fff637c4ee72b5656ff817cd365003edce97a1bf970b67c",
       "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
       "versions": {
-        "1.0.0": {
-          "sha256": "2630ed2c32a15a9cc355251e1547a05b0b14b07ee0f94b6aed962f8e75f9db2c"
+        "1.1.0": {
+          "sha256": "6de00a447490f0caee515bc06b6bcbee740bef4ff8800750b1d28cca26426f23"
         }
       }
     },
@@ -643,11 +654,14 @@
     },
     {
       "id": "notify-webhook",
-      "name": "Webhook 任务通知",
-      "version": "1.0.0",
+      "name": "notify-webhook",
+      "version": "1.1.0",
       "publisher": "starlife",
-      "category": "hook",
-      "summary": "任务结束（终态）时向配置的 Webhook 推送摘要：状态、成功/失败/跳过计数。",
+      "category": "utility",
+      "plugin_types": [
+        "hook"
+      ],
+      "summary": "任务结束时向配置的 Webhook 推送终态摘要（成功/失败/计数）",
       "description_file": "plugins/notify-webhook/listing.md",
       "plugin_file": "plugins/notify-webhook/plugin.py",
       "signature_file": "plugins/notify-webhook/plugin.py.sig",
@@ -661,15 +675,23 @@
         "webhook",
         "integration"
       ],
-      "updated_at": "2026-11-23",
-      "homepage": "https://github.com/Starlife-creator/OmniCrawler-market/tree/main/plugins/notify-webhook",
+      "updated_at": "2026-11-27",
       "creator_signature_file": "plugins/notify-webhook/creator.sig",
       "creator_identity_file": "plugins/notify-webhook/creator.identity",
       "execution_mode": "subprocess",
+      "domains": [],
+      "input_files": [],
+      "required_capabilities": {},
+      "state_schema_version": 1,
+      "dependencies": [],
+      "package_manifest_file": "plugins/notify-webhook/package.manifest.json",
+      "creator_package_signature_file": "plugins/notify-webhook/package.manifest.creator.sig",
+      "maintainer_package_signature_file": "plugins/notify-webhook/package.manifest.maintainer.sig",
+      "package_manifest_sha256": "fd8646cebac5863eaa727231fb7abad5d2d0076478a9a0d4962e69879c93be5d",
       "creator_fingerprint": "4c3014804d85de2568f85e62a3048429",
       "versions": {
-        "1.0.0": {
-          "sha256": "842382d0e67c760819aad4b16a9861b7f7cfd550b4d3a3080ef442c596b38109"
+        "1.1.0": {
+          "sha256": "051dab3a400310325a77f5efa70a5fd699d63572b3ca23416658d31e7a6cc0bc"
         }
       }
     },

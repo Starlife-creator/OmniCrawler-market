@@ -1,0 +1,35 @@
+id: example_news
+name: example_news
+version: 1.1.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: utility
+summary: 示例新闻站点适配器：入口附加 XHR 请求头 + 站点打标
+description_file: plugins/example_news/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: MIT
+tags:
+- example
+- source
+- news
+- template
+- contract2
+updated_at: '2026-11-27'
+creator_signature_file: plugins/example_news/creator.sig
+creator_identity_file: plugins/example_news/creator.identity
+package_manifest_file: plugins/example_news/package.manifest.json
+creator_package_signature_file: plugins/example_news/package.manifest.creator.sig
+maintainer_package_signature_file: plugins/example_news/package.manifest.maintainer.sig
+package_manifest_sha256: 607ea3fa2f34a94c4fff637c4ee72b5656ff817cd365003edce97a1bf970b67c
+plugin_file: plugins/example_news/plugin.py
+signature_file: plugins/example_news/plugin.py.sig
+permissions: []
+plugin_types:
+- source
+execution_mode: subprocess
+domains: []
+input_files: []
+dependencies: []
+required_capabilities: {}
+state_schema_version: 1
