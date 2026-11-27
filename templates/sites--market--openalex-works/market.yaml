@@ -1,0 +1,25 @@
+id: sites/market/openalex-works
+name: OpenAlex 学术目录
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: sites/academic
+summary: 使用 OpenAlex 官方 API 检索论文目录；API Key 可按需换取，但默认匿名请求也可使用，限制为每分钟 100 次请求
+description_file: templates/sites--market--openalex-works/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: OpenAlex data CC0; API subject to current service terms and usage budget
+tags:
+- OpenAlex
+- 学术
+- CC0
+- API
+updated_at: '2026-11-27'
+creator_signature_file: templates/sites--market--openalex-works/creator.sig
+creator_identity_file: templates/sites--market--openalex-works/creator.identity
+package_manifest_file: templates/sites--market--openalex-works/package.manifest.json
+creator_package_signature_file: templates/sites--market--openalex-works/package.manifest.creator.sig
+maintainer_package_signature_file: templates/sites--market--openalex-works/package.manifest.maintainer.sig
+package_manifest_sha256: 3c48e64a5b805472c99d4be789aeb8067fd0bd880cfc4de992fac27d30c10e7c
+template_file: templates/sites--market--openalex-works/template.yaml
+signature_file: templates/sites--market--openalex-works/template.yaml.sig

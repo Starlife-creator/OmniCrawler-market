@@ -1,0 +1,25 @@
+id: sites/market/github-public-issues
+name: GitHub 公开仓库 Issues
+version: 1.0.0
+publisher: starlife
+author_fingerprint: 4c3014804d85de2568f85e62a3048429
+category: sites/development
+summary: 使用 GitHub 官方 REST API 获取公开仓库 Issue/PR 列表，支持分页和并发控制以遵守速率额度
+description_file: templates/sites--market--github-public-issues/listing.md
+signature_algorithm: ed25519
+compatible_core: '>=0.7.0'
+license: GitHub API terms; repository content retains its original license
+tags:
+- GitHub
+- Issues
+- REST
+- 开源项目
+updated_at: '2026-11-27'
+creator_signature_file: templates/sites--market--github-public-issues/creator.sig
+creator_identity_file: templates/sites--market--github-public-issues/creator.identity
+package_manifest_file: templates/sites--market--github-public-issues/package.manifest.json
+creator_package_signature_file: templates/sites--market--github-public-issues/package.manifest.creator.sig
+maintainer_package_signature_file: templates/sites--market--github-public-issues/package.manifest.maintainer.sig
+package_manifest_sha256: fba7308b9ec4483369a14b2982e5c79fb90b0326d658a2e418e32e8878642a0c
+template_file: templates/sites--market--github-public-issues/template.yaml
+signature_file: templates/sites--market--github-public-issues/template.yaml.sig
