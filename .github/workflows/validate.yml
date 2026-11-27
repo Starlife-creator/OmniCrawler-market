@@ -29,6 +29,10 @@ on:
       - "tools/**"
       - "catalog.json"
       - "catalog.json.sig"
+      # ★ 2026-11-27：透明日志本身也是 validate-catalog 的校验输入（check_transparency.py），
+      #   但原先**不在触发面**里 ⇒ 只改日志的提交拿不到 CI，违规要等到下一次
+      #   无关改动才发现（实测 7 条 v1/v2 混存就这样躺了两天）。
+      - "signing_transparency.jsonl"
       - "submissions/**"
       - ".github/**"
   pull_request:
@@ -40,6 +44,7 @@ on:
       - "tools/**"
       - "catalog.json"
       - "catalog.json.sig"
+      - "signing_transparency.jsonl"
       - "submissions/**"
       - ".github/**"
 
