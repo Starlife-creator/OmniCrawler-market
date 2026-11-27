@@ -77,6 +77,8 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     "responses:read", "responses:payload", "network:scoped", "temp:write",
     "files:read", "secrets:read", "state:read", "state:write",
     "resources:read", "surfaces:background", "render:local", "render:scripted",
+    # 2026-11-27：运行期切换已注册主题（**不**并进 ui:* 族 —— 那一族自动批准）
+    "theme:apply",
 }
 
 # P2-3：宿主能力名白名单副本（与 catalog_lib.common.ALLOWED_CAPABILITIES 同集合，
@@ -95,6 +97,9 @@ ALLOWED_CAPABILITIES = {
     "surface.background.set", "surface.background.configure",
     "surface.background.clear", "surface.background.capabilities",
     "secrets.get", "view.richtext", "view.progress",
+    "component.ocr.recognize",
+    # 2026-11-27：运行期切换已注册主题
+    "theme.apply",
 }
 
 
@@ -285,6 +290,21 @@ def _validate_plugin_payload(root: Path, package_id: str, version: str) -> None:
     } - ALLOWED_CAPABILITIES
     if unknown_caps:
         raise ValueError(f"{root}: unknown required_capabilities: {sorted(unknown_caps)}")
+    # ★ 2026-11-27：`requires_components` 是**组件**能力需求，与上面那个宿主协议
+    #   字段是两件事。它不过 ALLOWED_CAPABILITIES（那张表只列宿主协议），
+    #   但必须是点分小写名 —— 否则主仓 `component_capability` 无法按域归类。
+    requires_components = metadata.get("requires_components", [])
+    if not isinstance(requires_components, list) or not all(
+        isinstance(item, str) and item.strip() for item in requires_components
+    ):
+        raise ValueError(f"{root}: requires_components must be a string array")
+    for item in requires_components:
+        if not re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z0-9][a-z0-9_.-]*", item.strip()):
+            raise ValueError(
+                f"{root}: requires_components item {item!r} is not a dotted capability name"
+            )
+    if len({item.strip() for item in requires_components}) != len(requires_components):
+        raise ValueError(f"{root}: requires_components has duplicates")
     state_schema_version = metadata.get("state_schema_version", 1)
     if not isinstance(state_schema_version, int) or state_schema_version < 1:
         raise ValueError(f"{root}: state_schema_version must be a positive integer")
