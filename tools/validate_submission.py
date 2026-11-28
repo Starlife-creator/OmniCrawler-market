@@ -79,6 +79,16 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     "resources:read", "surfaces:background", "render:local", "render:scripted",
     # 2026-11-27：运行期切换已注册主题（**不**并进 ui:* 族 —— 那一族自动批准）
     "theme:apply",
+    # ★ 2026-11-27：组件式 OCR 代理。
+    #
+    #   主仓 `plugin_sandbox.ALLOWED_PERMISSIONS` 自 2026-11-17 起就认这一项，
+    #   而这里**漏了** —— 于是用它写的插件「主仓能加载、市场拒收」，
+    #   永远发不出去。而 `docs/PLUGIN_CONTRACT.md` 的能力表里
+    #   `component.ocr.recognize` 是正式承诺的。
+    #
+    #   授予的是「**请宿主代为调用已验签组件**」的权利，不是读信任根、
+    #   拿注册表锁、或直接启动组件的权利 —— 那三项始终留在宿主。
+    "component:ocr",
 }
 
 # P2-3：宿主能力名白名单副本（与 catalog_lib.common.ALLOWED_CAPABILITIES 同集合，
