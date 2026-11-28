@@ -89,6 +89,9 @@ ALLOWED_PLUGIN_PERMISSIONS = {
     #   授予的是「**请宿主代为调用已验签组件**」的权利，不是读信任根、
     #   拿注册表锁、或直接启动组件的权利 —— 那三项始终留在宿主。
     "component:ocr",
+    # ★ 2026-11-28：插件浮层。与 surfaces:background 分开 —— 前景比背景更接近
+    #   「遮住我的界面」，用户应能只给其一。
+    "surfaces:foreground",
 }
 
 # P2-3：宿主能力名白名单副本（与 catalog_lib.common.ALLOWED_CAPABILITIES 同集合，
@@ -110,6 +113,11 @@ ALLOWED_CAPABILITIES = {
     "component.ocr.recognize",
     # 2026-11-27：运行期切换已注册主题
     "theme.apply",
+    # 2026-11-28：插件浮层（surface.foreground.*）
+    "surface.foreground.set",
+    "surface.foreground.configure",
+    "surface.foreground.clear",
+    "surface.foreground.capabilities",
 }
 
 
